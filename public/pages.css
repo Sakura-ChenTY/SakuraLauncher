@@ -985,3 +985,96 @@ body.has-custom-bg .wallpaper {
   opacity: .42;
   cursor: not-allowed;
 }
+
+/* 联机页：frp 配置 / 开房间 / 加入房间 */
+.frp-config {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg-2);
+}
+.frp-config-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 9px;
+}
+.frp-config-title { font-size: 12px; font-weight: 700; color: var(--text); }
+.frp-provider-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.frp-provider-line .select { width: 170px; }
+.frp-provider { display: block; }
+.frp-provider[hidden] { display: none !important; }
+.frp-provider .tool-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.frp-provider .tool-line + .tool-line { margin-top: 8px; }
+.room-card {
+  margin-top: 12px;
+  padding: 17px 17px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 17px;
+  background:
+    radial-gradient(120% 180% at 0% 0%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 55%),
+    var(--bg-2);
+}
+.room-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.room-eyebrow { color: var(--text-dim); font-size: 10.5px; }
+.room-title { margin-top: 3px; color: var(--text); font-size: 19px; font-weight: 700; }
+.room-version-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 14px;
+}
+.room-eula { color: var(--text-dim); font-size: 10.5px; display: inline-flex; align-items: center; gap: 5px; }
+.room-eula input { accent-color: var(--accent); }
+.room-open-btn {
+  width: 100%;
+  margin-top: 13px;
+  padding: 13px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  background: var(--accent);
+  color: #1a1407;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: filter .15s, opacity .15s;
+}
+.room-open-btn:hover:not(:disabled) { filter: brightness(1.07); }
+.room-open-btn:disabled {
+  opacity: .42;
+  cursor: not-allowed;
+  background: var(--bg-3);
+  color: var(--text-dim);
+  border-color: var(--line);
+}
+.room-open-btn.running { background: var(--bg-3); color: var(--text); border-color: var(--line); }
+.room-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 16px;
+  margin-top: 13px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+}
+.room-fields > div { display: flex; justify-content: space-between; gap: 10px; min-width: 0; }
+.room-fields span { color: var(--text-dim); font-size: 10.5px; }
+.room-fields b { color: var(--text); font-size: 10.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.join-block {
+  margin-top: 12px;
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg-2);
+}
+.join-block-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 9px; }
+.join-block-head > span:first-child { font-size: 12px; font-weight: 700; color: var(--text); }
+.online-advanced { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.online-advanced > summary { cursor: pointer; color: var(--text-dim); font-size: 11px; }
+.online-advanced[open] > summary { margin-bottom: 9px; }

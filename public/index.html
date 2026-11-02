@@ -377,125 +377,156 @@
         </section>
 
         <!-- ============ 联机 ============ -->
-        <section class="panel" id="panel-online">
+                <section class="panel" id="panel-online">
           <div class="panel-head">
             <h2>联机</h2>
-            <button class="btn" id="onlineConnect">一键联机</button>
+            <span class="hint" id="frpcHint">正在探测本机 frpc…</span>
           </div>
-          <div class="online-address" id="onlineResult" hidden></div>
-          <div class="hint" id="frpcHint" style="margin:-4px 0 9px">正在探测本机 frpc…</div>
-          <div class="hint" style="margin:-4px 0 9px">同时只开一条隧道，只需要看正在运行的那条。</div>
-          <div class="join-bar">
-            <select id="recentAddresses" class="select" style="max-width:210px">
-              <option value="">最近连接…</option>
-            </select>
-            <input id="joinAddress" class="input grow" type="text" placeholder="粘贴朋友给的地址，例如 frp-top.com:48501" spellcheck="false">
-            <button class="btn" id="joinConnect">加入并启动</button>
-          </div>
-          <div class="hint" id="joinHint">朋友端不用装 frp；先在「版本」页装一个同版本实例，再粘贴地址加入。</div>
 
-          <div class="online-grid">
-            <div class="tool-card">
-              <div class="tool-ico">LAN</div>
-              <div class="tool-main">
-                <div class="tool-title">局域网联机</div>
-                <div class="tool-desc">同一个路由器下最省事：游戏里按「对局域网开放」，把端口填这里，朋友用地址进来</div>
-                <div class="tool-line">
-                  <input id="lanPort" class="input narrow mono" type="number" min="1" max="65535" value="25565" title="游戏对局域网开放的端口">
-                  <button class="btn ghost" id="lanDetect">读游戏端口</button>
-                </div>
-                <div id="lanAddr" class="lan-list">读取中…</div>
-                <div class="hint" id="lanHint">步骤：进游戏 → ESC → 对局域网开放 → 把端口填到上面。</div>
-                <div class="tool-line">
-                  <button class="btn ghost" id="upnpConnect">尝试公网直连（UPnP）</button>
-                  <span class="hint" id="upnpHint"></span>
-                </div>
+          <div class="frp-config">
+            <div class="frp-config-head">
+              <span class="frp-config-title">frp 配置</span>
+              <span class="online-status" id="frpConfigStatus">未配置</span>
+            </div>
+            <div class="frp-provider-line">
+              <select id="onlineProvider" class="select" title="选择联机服务">
+                <option value="sakura">SakuraFrp</option>
+                <option value="openfrp">OpenFrp</option>
+                <option value="custom">自定义 frps</option>
+              </select>
+              <span class="hint" id="frpProviderHint">选一个服务，填一次凭据。</span>
+            </div>
+            <div class="online-address" id="onlineResult" hidden></div>
+
+            <div class="frp-provider" id="providerSakura">
+              <div class="tool-line">
+                <input id="sakuraToken" class="input grow" type="password" placeholder="SakuraFrp 访问 token" autocomplete="off" spellcheck="false">
+                <button class="btn ghost" id="sakuraDetect">识别本机</button>
+                <button class="btn" id="sakuraSave">保存</button>
+                <button class="btn ghost" id="sakuraRefresh">刷新隧道</button>
+                <button class="btn ghost" id="sakuraCreate">新建隧道</button>
+                <button class="btn ghost" id="sakuraRegister">去注册</button>
               </div>
+              <div class="tool-line">
+                <select id="sakuraTunnel" class="select grow"><option value="">先保存 token</option></select>
+                <span class="online-status" id="sakuraStatus">未配置</span>
+              </div>
+              <div class="online-address" id="sakuraAddress" hidden></div>
+              <div class="hint" id="sakuraHint"></div>
             </div>
 
-            <div class="tool-card">
-              <div class="tool-ico">P2P</div>
-              <div class="tool-main">
-                <div class="tool-title">内网穿透（SakuraFrp） <span class="online-status" id="sakuraStatus">未配置</span></div>
-                <div class="tool-desc">填一次访问 token，之后启动/停止/拿地址都在这里</div>
-                <div class="tool-line">
-                  <input id="sakuraToken" class="input grow" type="password" placeholder="SakuraFrp 访问 token" autocomplete="off" spellcheck="false">
-                  <button class="btn ghost" id="sakuraDetect">识别本机</button>
-                  <button class="btn" id="sakuraSave">保存</button>
-                  <button class="btn ghost" id="sakuraRefresh">刷新隧道</button>
-                  <button class="btn ghost" id="sakuraCreate">新建隧道</button>
-                  <button class="btn ghost" id="sakuraRegister">没有账号？去注册</button>
-                </div>
-                <div class="tool-line">
-                  <select id="sakuraTunnel" class="select grow"><option value="">先保存 token</option></select>
-                  <button class="btn" id="sakuraStart">启动</button>
-                  <button class="btn ghost" id="sakuraStop">停止</button>
-                </div>
-                <div class="online-address" id="sakuraAddress" hidden></div>
-                <div class="hint" id="sakuraHint"></div>
+            <div class="frp-provider" id="providerOpenfrp" hidden>
+              <div class="tool-line">
+                <input id="openfrpToken" class="input grow" type="password" placeholder="OpenFrp 用户 token" autocomplete="off" spellcheck="false">
+                <button class="btn ghost" id="openfrpDetect">识别本机</button>
+                <button class="btn" id="openfrpSave">保存</button>
+                <button class="btn ghost" id="openfrpRefresh">刷新隧道</button>
+                <button class="btn ghost" id="openfrpCreate">新建隧道</button>
+                <button class="btn ghost" id="openfrpRegister">去注册</button>
               </div>
+              <div class="tool-line">
+                <select id="openfrpTunnel" class="select grow"><option value="">先保存 token</option></select>
+                <span class="online-status" id="openfrpStatus">未配置</span>
+              </div>
+              <div class="online-address" id="openfrpAddress" hidden></div>
+              <div class="hint" id="openfrpHint"></div>
             </div>
 
-            <div class="tool-card">
-              <div class="tool-ico">FRP</div>
-              <div class="tool-main">
-                <div class="tool-title">内网穿透（OpenFrp） <span class="online-status" id="openfrpStatus">未配置</span></div>
-                <div class="tool-desc">OpenFrp token 同样只存本地；隧道启动后地址可直接复制</div>
-                <div class="tool-line">
-                  <input id="openfrpToken" class="input grow" type="password" placeholder="OpenFrp 用户 token" autocomplete="off" spellcheck="false">
-                  <button class="btn ghost" id="openfrpDetect">识别本机</button>
-                  <button class="btn" id="openfrpSave">保存</button>
-                  <button class="btn ghost" id="openfrpRefresh">刷新隧道</button>
-                  <button class="btn ghost" id="openfrpCreate">新建隧道</button>
-                  <button class="btn ghost" id="openfrpRegister">没有账号？去注册</button>
-                </div>
-                <div class="tool-line">
-                  <select id="openfrpTunnel" class="select grow"><option value="">先保存 token</option></select>
-                  <button class="btn" id="openfrpStart">启动</button>
-                  <button class="btn ghost" id="openfrpStop">停止</button>
-                </div>
-                <div class="online-address" id="openfrpAddress" hidden></div>
-                <div class="hint" id="openfrpHint"></div>
+            <div class="frp-provider" id="providerCustom" hidden>
+              <div class="tool-line">
+                <input id="customServer" class="input grow" type="text" placeholder="frps 地址，例如 frp.example.com" spellcheck="false">
+                <input id="customPort" class="input" style="width:78px" type="number" value="7000" min="1" max="65535" placeholder="7000">
+                <input id="customRemote" class="input" style="width:92px" type="number" value="25565" min="1" max="65535" placeholder="远端端口">
               </div>
-            </div>
-
-            <div class="tool-card">
-              <div class="tool-ico">FRPS</div>
-              <div class="tool-main">
-                <div class="tool-title">自定义 frps <span class="online-status" id="customStatus">未配置</span></div>
-                <div class="tool-desc">有 frpc 和别人的 frps 就能连：填服务器、端口、token、远端端口，不用注册账号</div>
-                <div class="tool-line">
-                  <input id="customServer" class="input grow" type="text" placeholder="frps 地址，例如 frp.example.com" spellcheck="false">
-                  <input id="customPort" class="input" style="width:78px" type="number" value="7000" min="1" max="65535" placeholder="7000">
-                  <input id="customRemote" class="input" style="width:92px" type="number" value="25565" min="1" max="65535" placeholder="远端端口">
-                </div>
-                <div class="tool-line">
-                  <input id="customToken" class="input grow" type="password" placeholder="frps token（没有就留空）" autocomplete="off" spellcheck="false">
-                  <button class="btn" id="customSave">保存</button>
-                  <button class="btn" id="customStart">启动</button>
-                  <button class="btn ghost" id="customStop">停止</button>
-                </div>
-                <div class="online-address" id="customAddress" hidden></div>
-                <div class="hint" id="customHint"></div>
+              <div class="tool-line">
+                <input id="customToken" class="input grow" type="password" placeholder="frps token（没有就留空）" autocomplete="off" spellcheck="false">
+                <button class="btn" id="customSave">保存</button>
               </div>
-            </div>
-
-            <div class="tool-card">
-              <div class="tool-ico">SRV</div>
-              <div class="tool-main">
-                <div class="tool-title">服务器地址速查</div>
-                <div class="tool-desc">填一个服务器地址，真做 Minecraft status 查询（SRV、版本、MOTD、玩家数、延迟）</div>
-                <div class="tool-line">
-                  <input id="mcHost" class="input grow" type="text" placeholder="play.example.com 或 IP:端口" spellcheck="false">
-                  <button class="btn" id="mcPingBtn">测试</button>
-                </div>
-                <div class="hint" id="mcPingResult"></div>
-              </div>
+              <div class="online-address" id="customAddress" hidden></div>
+              <div class="hint" id="customHint"></div>
             </div>
           </div>
+
+          <div class="room-card" id="roomCard">
+            <div class="room-head">
+              <div>
+                <div class="room-eyebrow">原版服务端 · 固定端口 25565</div>
+                <div class="room-title">开房间</div>
+              </div>
+              <span class="online-status" id="roomStatus">未开房</span>
+            </div>
+
+            <div class="room-version-line">
+              <span class="hint">房间版本</span>
+              <select id="roomVersion" class="select" title="用哪个原版版本开服"></select>
+              <label class="room-eula"><input id="roomEula" type="checkbox"> 我同意 Minecraft EULA</label>
+            </div>
+
+            <button class="room-open-btn" id="roomToggle" type="button" disabled>先配置 frp</button>
+            <div class="hint" id="roomHint">先在顶部配置 frp，再开房间。</div>
+
+            <div class="room-fields" id="roomFields" hidden>
+              <div><span>服务端版本</span><b id="roomVersionValue">—</b></div>
+              <div><span>本地端口</span><b id="roomPortValue">25565</b></div>
+              <div><span>frp</span><b id="roomProviderValue">—</b></div>
+              <div><span>隧道</span><b id="roomTunnelValue">—</b></div>
+              <div><span>公网地址</span><b id="roomAddressValue">—</b></div>
+              <div><span>world 目录</span><b id="roomWorldValue">—</b></div>
+            </div>
+          </div>
+
+          <div class="join-block">
+            <div class="join-block-head">
+              <span>加入房间</span>
+              <span class="hint">不用分房主/朋友，粘贴地址直接进</span>
+            </div>
+            <div class="join-bar">
+              <select id="recentAddresses" class="select" style="max-width:210px">
+                <option value="">最近连接…</option>
+              </select>
+              <input id="joinAddress" class="input grow" type="text" placeholder="粘贴朋友给的地址，例如 frp-top.com:48501" spellcheck="false">
+              <button class="btn" id="joinConnect">加入并启动</button>
+            </div>
+            <div class="hint" id="joinHint">朋友端不用装 frp；先在「版本」页装一个同版本实例，再粘贴地址加入。</div>
+          </div>
+
+          <details class="online-advanced">
+            <summary>高级：局域网与自动识别</summary>
+            <div class="online-grid">
+              <div class="tool-card">
+                <div class="tool-ico">LAN</div>
+                <div class="tool-main">
+                  <div class="tool-title">局域网联机</div>
+                  <div class="tool-desc">同一个路由器下最省事：游戏里按「对局域网开放」，把端口填这里，朋友用地址进来</div>
+                  <div class="tool-line">
+                    <input id="lanPort" class="input narrow mono" type="number" min="1" max="65535" value="25565" title="游戏对局域网开放的端口">
+                    <button class="btn ghost" id="lanDetect">读游戏端口</button>
+                  </div>
+                  <div id="lanAddr" class="lan-list">读取中…</div>
+                  <div class="hint" id="lanHint">步骤：进游戏 → ESC → 对局域网开放 → 把端口填到上面。</div>
+                  <div class="tool-line">
+                    <button class="btn ghost" id="upnpConnect">尝试公网直连（UPnP）</button>
+                    <span class="hint" id="upnpHint"></span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="tool-card">
+                <div class="tool-ico">SRV</div>
+                <div class="tool-main">
+                  <div class="tool-title">服务器地址速查</div>
+                  <div class="tool-desc">填一个服务器地址，真做 Minecraft status 查询（SRV、版本、MOTD、玩家数、延迟）</div>
+                  <div class="tool-line">
+                    <input id="mcHost" class="input grow" type="text" placeholder="play.example.com 或 IP:端口" spellcheck="false">
+                    <button class="btn" id="mcPingBtn">测试</button>
+                  </div>
+                  <div class="hint" id="mcPingResult"></div>
+                </div>
+              </div>
+            </div>
+          </details>
         </section>
-
-        <!-- ============ 设置 ============ -->
+<!-- ============ 设置 ============ -->
         <section class="panel" id="panel-settings">
           <div class="panel-head">
             <h2>设置</h2>

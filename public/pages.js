@@ -453,10 +453,14 @@ function applyExclusiveStatus(s) {
 async function refreshOnline() {
   try {
     let s = await api('/api/online/state');
+    onlineStateCache = s;
     renderOnline('sakura', s.sakura);
     renderOnline('openfrp', s.openfrp);
     renderOnline('custom', s.custom);
     applyExclusiveStatus(s);
+    syncFrpProviderView();
+    renderRoom(onlineRoom);
+    renderRoomVersions();
 
     // 首屏拿到 token 但还没有隧道缓存时，自动拉一次，不用用户点刷新
     let fetched = false;
@@ -477,10 +481,14 @@ async function refreshOnline() {
     }
     if (fetched) {
       s = await api('/api/online/state');
+      onlineStateCache = s;
       renderOnline('sakura', s.sakura);
       renderOnline('openfrp', s.openfrp);
       renderOnline('custom', s.custom);
       applyExclusiveStatus(s);
+      syncFrpProviderView();
+      renderRoom(onlineRoom);
+      renderRoomVersions();
     }
   } catch (e) {
     for (const p of ['sakura', 'openfrp']) {
@@ -920,6 +928,179 @@ async function toggleUpnp() {  const btn = document.getElementById('upnpConnect'
   }
 }
 
+/* ---------------- 联机：frp 配置 / 开房间 ---------------- */
+
+let onlineStateCache = null;
+let onlineRoom = { status: 'idle' };
+
+function selectedFrpProvider() {
+  return document.getElementById('onlineProvider')?.value || 'sakura';
+}
+
+function providerConfigured(provider) {
+  return Boolean(onlineStateCache?.[provider]?.configured);
+}
+
+function syncFrpProviderView() {
+  const p = selectedFrpProvider();
+  localStorage.setItem('sakura.onlineProvider', p);
+  for (const id of ['sakura', 'openfrp', 'custom']) {
+    const el = document.getElementById('provider' + (id === 'sakura' ? 'Sakura' : id === 'openfrp' ? 'Openfrp' : 'Custom'));
+    if (el) el.hidden = id !== p;
+  }
+  const configured = providerConfigured(p);
+  const status = document.getElementById('frpConfigStatus');
+  if (status) {
+    status.textContent = configured ? '已配置' : '未配置';
+    status.className = 'online-status' + (configured ? ' on' : '');
+  }
+  const hint = document.getElementById('frpProviderHint');
+  if (hint) hint.textContent = configured
+    ? '凭据已保存；开房时使用当前 provider。'
+    : '选一个服务，填一次凭据。';
+  renderRoom(onlineRoom);
+}
+
+function renderRoomVersions() {
+  const sel = document.getElementById('roomVersion');
+  if (!sel) return;
+  const previous = sel.value || state.selectedVersion || '';
+  const details = state.versionDetails || [];
+  const candidates = (state.versions || []).filter((id) => {
+    const d = details.find((x) => x.id === id) || {};
+    const kind = d.kind || d.loader || 'vanilla';
+    return kind === 'vanilla' || kind === 'snapshot' || !d.loader;
+  });
+  sel.innerHTML = candidates.length
+    ? candidates.map((id) => `<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`).join('')
+    : '<option value="">先安装一个原版实例</option>';
+  if (candidates.includes(previous)) sel.value = previous;
+}
+
+function roomProviderLabel(provider) {
+  return { sakura: 'SakuraFrp', openfrp: 'OpenFrp', custom: '自定义 frps' }[provider] || provider;
+}
+
+function renderRoom(room) {
+  onlineRoom = room || { status: 'idle' };
+  const card = document.getElementById('roomCard');
+  if (!card) return;
+  const status = onlineRoom.status || 'idle';
+  const p = selectedFrpProvider();
+  const configured = providerConfigured(p);
+  const btn = document.getElementById('roomToggle');
+  const statusEl = document.getElementById('roomStatus');
+  const fields = document.getElementById('roomFields');
+  const hint = document.getElementById('roomHint');
+  const running = status === 'running';
+
+  if (statusEl) {
+    statusEl.textContent = running
+      ? '运行中'
+      : status === 'starting' ? '启动中'
+        : status === 'stopping' ? '停止中'
+          : status === 'error' ? '启动失败' : '未开房';
+    statusEl.className = 'online-status' + (running ? ' on' : status === 'error' ? ' err' : '');
+  }
+  if (btn) {
+    btn.disabled = !running && !configured;
+    btn.classList.toggle('running', running);
+    btn.textContent = running
+      ? '停止房间'
+      : status === 'starting' ? '正在启动…'
+        : status === 'stopping' ? '正在停止…'
+          : configured ? '开房间' : '先配置 frp';
+  }
+  if (fields) fields.hidden = status === 'idle';
+  if (hint) {
+    hint.textContent = status === 'error'
+      ? (onlineRoom.error || '开房失败')
+      : running
+        ? `server 已在 25565 监听；world 会保留在 ${onlineRoom.worldDir || '服务端目录'}`
+        : configured
+          ? '勾选 EULA 后点击开房间；固定端口 25565，停服不删 world。'
+          : '先在顶部配置 frp，再开房间。';
+  }
+  if (onlineRoom.versionId) {
+    const v = document.getElementById('roomVersionValue');
+    if (v) v.textContent = onlineRoom.versionId;
+  }
+  const portEl = document.getElementById('roomPortValue');
+  if (portEl) portEl.textContent = String(onlineRoom.port || 25565);
+  const providerEl = document.getElementById('roomProviderValue');
+  if (providerEl) providerEl.textContent = roomProviderLabel(p);
+  const tunnelEl = document.getElementById('roomTunnelValue');
+  if (tunnelEl) {
+    const tunnel = document.getElementById(p + 'Tunnel');
+    tunnelEl.textContent = tunnel?.selectedOptions?.[0]?.textContent || '未选择';
+  }
+  const addressEl = document.getElementById('roomAddressValue');
+  if (addressEl) addressEl.textContent = onlineStateCache?.[p]?.address || '—';
+  const worldEl = document.getElementById('roomWorldValue');
+  if (worldEl) worldEl.textContent = onlineRoom.worldDir || '—';
+}
+
+async function loadRoomState() {
+  try {
+    const r = await api('/api/online/room/state');
+    renderRoom(r.room);
+  } catch { /* 房间接口不可用时保持禁用状态 */ }
+}
+
+async function toggleRoom() {
+  const btn = document.getElementById('roomToggle');
+  if (btn?.disabled && onlineRoom.status !== 'running') return;
+  if (onlineRoom.status === 'running' || onlineRoom.status === 'starting') {
+    if (btn) { btn.disabled = true; btn.textContent = '正在停止…'; }
+    try {
+      const r = await api('/api/online/room/stop', { method: 'POST', body: '{}' });
+      renderRoom(r.room);
+      if (typeof toast === 'function') toast('房间已停止，world 保留');
+    } catch (e) {
+      if (typeof toast === 'function') toast('停止失败：' + e.message, 'err');
+      await loadRoomState();
+    }
+    return;
+  }
+  if (!providerConfigured(selectedFrpProvider())) {
+    if (typeof toast === 'function') toast('先配置 frp', 'err');
+    return;
+  }
+  if (!document.getElementById('roomEula')?.checked) {
+    if (typeof toast === 'function') toast('先勾选同意 Minecraft EULA', 'err');
+    return;
+  }
+  const versionId = document.getElementById('roomVersion')?.value;
+  if (!versionId) {
+    if (typeof toast === 'function') toast('先安装一个原版实例', 'err');
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = '正在准备 server…'; }
+  const hint = document.getElementById('roomHint');
+  if (hint) hint.textContent = '正在下载/启动官方 server.jar…';
+  try {
+    const r = await api('/api/online/room/start', {
+      method: 'POST',
+      body: JSON.stringify({ versionId, eulaAccepted: true }),
+    });
+    renderRoom(r.room);
+    if (typeof toast === 'function') toast('房间已开，端口 25565');
+  } catch (e) {
+    if (typeof toast === 'function') toast('开房失败：' + e.message, 'err');
+    await loadRoomState();
+  }
+}
+
+async function loadOnlineConfig() {
+  try {
+    const s = await api('/api/online/state');
+    onlineStateCache = s;
+    renderOnline('sakura', s.sakura);
+    renderOnline('openfrp', s.openfrp);
+    renderOnline('custom', s.custom);
+    syncFrpProviderView();
+  } catch { /* 保持禁用 */ }
+}
 function initOnline() {
   const port = document.getElementById('lanPort');
   port?.addEventListener('input', loadLanInfo);
@@ -934,6 +1115,17 @@ function initOnline() {
     if (e.target.value) document.getElementById('joinAddress').value = e.target.value;
   });
   renderRecentAddresses();
+  const providerSel = document.getElementById('onlineProvider');
+  if (providerSel) {
+    providerSel.value = localStorage.getItem('sakura.onlineProvider') || 'sakura';
+    providerSel.addEventListener('change', syncFrpProviderView);
+  }
+  document.getElementById('roomToggle')?.addEventListener('click', toggleRoom);
+  document.getElementById('roomEula')?.addEventListener('change', () => renderRoom(onlineRoom));
+  document.getElementById('roomVersion')?.addEventListener('change', () => renderRoom(onlineRoom));
+  renderRoomVersions();
+  loadRoomState();
+  setTimeout(renderRoomVersions, 1200);
   document.getElementById('customSave')?.addEventListener('click', saveCustomFrps);
   document.getElementById('customStart')?.addEventListener('click', startCustomFrps);
   document.getElementById('customStop')?.addEventListener('click', () => stopProviderTunnel('custom'));
