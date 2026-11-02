@@ -14,6 +14,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
+import yaml from 'js-yaml';
 import net from 'node:net';
 import dns from 'node:dns/promises';
 import { EventEmitter } from 'node:events';
@@ -279,6 +280,64 @@ function isNewerVersion(current, latest) {
     if ((b[i] ?? 0) < (a[i] ?? 0)) return false;
   }
   return false;
+}
+
+/** latest.yml 旁边通常没有 latest.json；旧配置写 latest.json 时自动改试 yml。 */
+function updateFileCandidates(urls) {
+  const out = [];
+  for (const u of urls) {
+    out.push(u);
+    if (/latest\.json(?:[?#].*)?$/i.test(u)) out.push(u.replace(/latest\.json/i, 'latest.yml'));
+    else if (/latest\.yml(?:[?#].*)?$/i.test(u)) out.push(u.replace(/latest\.yml/i, 'latest.json'));
+  }
+  return [...new Set(out)];
+}
+
+/** electron-builder 的 latest.yml -> 启动器当前需要的更新对象。 */
+function updateFromLatestYml(text, sourceUrl) {
+  let doc;
+  try {
+    doc = yaml.load(text);
+  } catch (e) {
+    throw new Error('latest.yml 解析失败：' + e.message);
+  }
+  if (!doc || typeof doc !== 'object') throw new Error('latest.yml 内容为空');
+  const version = String(doc.version ?? '').trim().replace(/^v/i, '');
+  const files = Array.isArray(doc.files) ? doc.files : [];
+  const file = files.find((f) => f && f.url) || (doc.path ? {
+    url: doc.path,
+    sha512: doc.sha512,
+    size: doc.size,
+  } : null);
+  if (!version || !file?.url) throw new Error('latest.yml 缺 version/文件地址');
+  let url;
+  try {
+    url = new URL(String(file.url), sourceUrl).toString();
+  } catch {
+    throw new Error('latest.yml 文件地址不合法');
+  }
+  return {
+    version,
+    url,
+    notes: String(doc.releaseNotes ?? doc.notes ?? ''),
+    // electron-builder 默认只写 sha512；保留空 sha256，前端不依赖它做一键更新。
+    sha256: String(file.sha256 ?? doc.sha256 ?? '').trim().toLowerCase(),
+  };
+}
+
+function updateFromResponse(text, sourceUrl) {
+  try {
+    const data = JSON.parse(text);
+    if (data?.version && data?.url) {
+      return {
+        version: String(data.version).replace(/^v/i, ''),
+        url: String(data.url),
+        notes: String(data.notes ?? ''),
+        sha256: String(data.sha256 ?? '').trim().toLowerCase(),
+      };
+    }
+  } catch { /* 不是 JSON，继续按 latest.yml 解析 */ }
+  return updateFromLatestYml(text, sourceUrl);
 }
 
 /* ---- options.txt：只改认识的键，保留其它行 ---- */
@@ -2549,19 +2608,19 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/update/check' && req.method === 'GET') {
       const configured = String(getSettings().updateUrl ?? '').trim() ||
-        'https://gh-proxy.com/https://github.com/Sakura-ChenTY/SakuraLauncher/releases/latest/download/latest.json';
-      const candidates = updateUrlCandidates(configured);
+        'https://gh-proxy.com/https://github.com/Sakura-ChenTY/SakuraLauncher/releases/latest/download/latest.yml';
+      const candidates = updateFileCandidates(updateUrlCandidates(configured));
       const errors = [];
       for (const candidate of candidates) {
         try {
           if (!/^https?:\/\//i.test(candidate)) throw new Error('更新地址不是 http(s)');
           const r = await fetch(candidate, {
-            headers: { Accept: 'application/json' },
+            headers: { Accept: 'application/json, text/yaml, text/plain, */*' },
             signal: AbortSignal.timeout(8000),
           });
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          const data = JSON.parse(await r.text());
-          if (!data?.version || !data?.url) throw new Error('latest.json 缺 version/url');
+          const data = updateFromResponse(await r.text(), candidate);
+          if (!data?.version || !data?.url) throw new Error('更新清单缺 version/url');
           return json(res, 200, {
             current: APP_VERSION,
             update: isNewerVersion(APP_VERSION, data.version) ? {
@@ -2569,6 +2628,7 @@ const server = http.createServer(async (req, res) => {
               url: String(data.url),
               notes: String(data.notes ?? ''),
               sha256: String(data.sha256 ?? ''),
+              feedUrl: new URL('.', candidate).toString(),
             } : null,
           });
         } catch (e) {

@@ -50,7 +50,7 @@ export const DEFAULTS = {
   // 界面不透明度（百分比）。数值越大越不透明；30 = 几乎全透，90 = 接近实心。
   // 前端把它当成 --glass-alpha 写进 CSS，亚克力与贴壁纸两种模式共用。
   glassOpacity: 42,
-  updateUrl: 'https://gh-proxy.com/https://github.com/Sakura-ChenTY/SakuraLauncher/releases/latest/download/latest.json',
+  updateUrl: 'https://gh-proxy.com/https://github.com/Sakura-ChenTY/SakuraLauncher/releases/latest/download/latest.yml',
 };
 
 import { VALID_SOURCE_SETTINGS } from './sources.js';
@@ -102,8 +102,10 @@ export function normalize(raw = {}, base = DEFAULTS) {
     if (!u) out.updateUrl = DEFAULTS.updateUrl;
     else if (/^https:\/\/ghfast\.top\/https:\/\/github\.com\//i.test(u)) {
       out.updateUrl = u.replace(/^https:\/\/ghfast\.top\//i, 'https://gh-proxy.com/');
-    } else if (/^https?:\/\/.+/i.test(u)) out.updateUrl = u;
-    else notes.push('更新地址必须是 http(s) 的 latest.json');
+    } else if (/^https?:\/\/.+/i.test(u)) {
+      // 旧配置里写的是 latest.json；当前发布只保留 electron-builder 的 latest.yml。
+      out.updateUrl = u.replace(/latest\.json(?=([?#]|$))/i, 'latest.yml');
+    } else notes.push('更新地址必须是 http(s) 的 latest.yml');
   }
 
   if (['external', 'auto'].includes(raw.javaMode)) out.javaMode = raw.javaMode;
