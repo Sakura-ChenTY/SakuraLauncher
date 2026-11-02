@@ -52,6 +52,7 @@ import {
   onlineSnapshot,
   detectLanPort,
 } from './online.js';
+import { startRoom, stopRoom, getRoomState } from './gameserver.js';
 import { openPort as openUpnp, closePort as closeUpnp, mappingState as upnpState } from './upnp.js';
 import { installContent, listInstalled, removeContent, toggleContent } from './content.js';
 import { checkModUpdates, applyModUpdates } from './modupdate.js';
@@ -2407,6 +2408,45 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/online/state') {
       return json(res, 200, { ...onlineSnapshot(), upnp: upnpState() });
+    }
+
+    if (p === '/api/online/room/state' && req.method === 'GET') {
+      return json(res, 200, { room: getRoomState() });
+    }
+
+    if (p === '/api/online/room/start' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const room = await startRoom({
+          versionId: body.versionId,
+          gameDir: state.gameDir,
+          eulaAccepted: body.eulaAccepted === true,
+          memoryMb: body.memoryMb,
+          onStage: (message) => {
+            emit('room-stage', { message });
+            pushLog(`[room] ${message}`);
+          },
+          onLog: (line) => emit('room-log', { line }),
+        });
+        emit('room-state', { room });
+        return json(res, 200, { ok: true, room });
+      } catch (e) {
+        emit('room-state', { room: getRoomState() });
+        return json(res, 400, { error: e.message, room: getRoomState() });
+      }
+    }
+
+    if (p === '/api/online/room/stop' && req.method === 'POST') {
+      try {
+        const room = await stopRoom({
+          keepWorld: true,
+          onLog: (line) => emit('room-log', { line }),
+        });
+        emit('room-state', { room });
+        return json(res, 200, { ok: true, room });
+      } catch (e) {
+        return json(res, 500, { error: e.message, room: getRoomState() });
+      }
     }
 
     if (p === '/api/online/detect') {
