@@ -173,6 +173,10 @@
             </div>
 
             <button class="launch-btn" id="launchBtn" disabled>启动游戏</button>
+            <button class="recent-play-btn" id="recentPlayBtn" type="button" hidden>
+              <span>最近游玩</span>
+              <small id="recentPlayHint"></small>
+            </button>
             <button class="link-btn" id="lastFailure" hidden></button>
             <button class="link-btn" id="manageContent">管理内容</button>
           </div>
@@ -453,13 +457,20 @@
                 <div class="room-eyebrow">原版服务端 · 固定端口 25565</div>
                 <div class="room-title">开房间</div>
               </div>
-              <span class="online-status" id="roomStatus">未开房</span>
+              <div class="room-head-actions">
+                <button class="btn ghost" id="worldParamsBtn" type="button">世界参数</button>
+                <span class="online-status" id="roomStatus">未开房</span>
+              </div>
             </div>
 
             <div class="room-version-line">
               <span class="hint">房间版本</span>
               <select id="roomVersion" class="select" title="用哪个原版版本开服"></select>
               <label class="room-eula"><input id="roomEula" type="checkbox"> 我同意 Minecraft EULA</label>
+            </div>
+            <div class="room-options">
+              <label class="room-eula"><input id="roomJoinGame" type="checkbox" checked> 开房后同时进入游戏</label>
+              <label class="room-eula"><input id="roomAutoStop" type="checkbox" checked> 退出游戏后自动关服</label>
             </div>
 
             <button class="room-open-btn" id="roomToggle" type="button" disabled>先配置 frp</button>
@@ -1206,6 +1217,51 @@
     <div class="assistant-bubble-text">要我看看日志吗？</div>
     <button class="btn" id="assistantBubbleAnalyze">看看</button>
   </div>
+
+  <!-- 世界参数 -->
+  <div class="modal" id="worldParamsModal" hidden>
+    <div class="modal-box world-params-box">
+      <div class="modal-head">
+        <h3>世界参数</h3>
+        <button class="btn ghost" id="worldParamsClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="world-params-grid">
+          <label class="world-param-check"><input type="checkbox" id="wpKeepInventory"> 死亡不掉落（keepInventory）</label>
+          <div class="field compact">
+            <label for="wpDifficulty">难度</label>
+            <select id="wpDifficulty" class="select">
+              <option value="peaceful">和平</option>
+              <option value="easy">简单</option>
+              <option value="normal">普通</option>
+              <option value="hard">困难</option>
+            </select>
+          </div>
+          <label class="world-param-check"><input type="checkbox" id="wpOnlineMode" checked> 正版验证（online-mode）</label>
+          <div class="field compact">
+            <label for="wpMaxPlayers">最大人数</label>
+            <input id="wpMaxPlayers" class="input" type="number" min="1" max="100" value="20">
+          </div>
+          <div class="field compact">
+            <label for="wpViewDistance">视距</label>
+            <input id="wpViewDistance" class="input" type="number" min="2" max="32" value="10">
+          </div>
+          <label class="world-param-check"><input type="checkbox" id="wpPvp" checked> PvP</label>
+          <div class="field compact">
+            <label for="wpSpawnProtection">出生点保护</label>
+            <input id="wpSpawnProtection" class="input" type="number" min="0" max="1000" value="16">
+          </div>
+        </div>
+        <div class="field-note">难度和死亡不掉落会尝试通过服务器命令立即生效；正版验证、最大人数、视距、PvP、出生点保护需要重开房间生效。</div>
+        <div class="hint" id="worldParamsNote"></div>
+        <div class="field-line" style="margin-top:14px;justify-content:flex-end">
+          <button class="btn ghost" id="worldParamsCancel">取消</button>
+          <button class="btn" id="worldParamsSave">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
 
   <script src="/face2d.js"></script>
   <script src="/head3d.js"></script>

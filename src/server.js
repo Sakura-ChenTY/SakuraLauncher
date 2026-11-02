@@ -52,7 +52,8 @@ import {
   onlineSnapshot,
   detectLanPort,
 } from './online.js';
-import { startRoom, stopRoom, getRoomState } from './gameserver.js';
+import { startRoom, stopRoom, getRoomState, attachHostGame, onHostGameExit, getWorldSettings, saveWorldSettings } from './gameserver.js';
+import { readRecent, saveRecent, clearRecent, validateRecent } from './recent-play.js';
 import { openPort as openUpnp, closePort as closeUpnp, mappingState as upnpState } from './upnp.js';
 import { installContent, listInstalled, removeContent, toggleContent } from './content.js';
 import { checkModUpdates, applyModUpdates } from './modupdate.js';
@@ -891,7 +892,7 @@ function parseLanPortLine(line) {
   return null;
 }
 
-async function handleLaunch({ versionId, joinAddress }) {
+async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta }) {
   if (state.installing) throw new Error('正在安装，稍后再启动');
   if (state.running) throw new Error(`已有游戏在运行（PID ${state.running.pid}）`);
 
@@ -902,6 +903,8 @@ async function handleLaunch({ versionId, joinAddress }) {
     const port = Number(m[2]);
     if (!(port > 0 && port < 65536)) throw new Error('加入端口不合法');
     extraGame = ['--server', m[1], '--port', String(port)];
+  } else if (quickPlaySave) {
+    extraGame = ['--quickPlaySingleplayer', String(quickPlaySave)];
   }
 
   const override = readInstanceOverride(versionId) ?? {};
@@ -927,6 +930,28 @@ async function handleLaunch({ versionId, joinAddress }) {
     startedAt: Date.now(),
     nativesDir: r.nativesDir,
   };
+  const roomNow = getRoomState();
+  const isHostGame = roomNow.status === 'running' || roomNow.status === 'starting';
+  if (isHostGame) attachHostGame(r.child.pid);
+  try {
+    const mode = (joinAddress || isHostGame) ? 'multiplayer' : 'single';
+    const role = isHostGame ? 'host' : (joinAddress ? 'guest' : 'single');
+    saveRecent({
+      ...(recentMeta && typeof recentMeta === 'object' ? recentMeta : {}),
+      versionId,
+      loader: recentMeta?.loader || '',
+      gameVersion: recentMeta?.gameVersion || versionId,
+      gameDir: state.gameDir,
+      mode,
+      role,
+      joinAddress: joinAddress || '',
+      saveName: quickPlaySave || recentMeta?.saveName || '',
+      serverWorldPath: recentMeta?.serverWorldPath || roomNow.worldDir || '',
+      worldSettings: recentMeta?.worldSettings || roomNow.settings,
+      hostJoined: isHostGame ? true : Boolean(recentMeta?.hostJoined),
+      room: recentMeta?.room || (isHostGame ? { provider: '', tunnelId: '', remotePort: 0, address: '' } : null),
+    });
+  } catch { /* 最近游玩失败不阻断启动 */ }
   state.lanPort = null;
   // 每次启动都是新会话：日志面板先清空，避免把上一次的启动行续在前面
   state.logs = [];
@@ -946,6 +971,15 @@ async function handleLaunch({ versionId, joinAddress }) {
   let forcedExit = false;
   const noteGameLine = (line) => {
     pushLog(line);
+    const levelMatch = /(?:Loading level|Preparing level)\s+['"](.+?)['"]/i.exec(String(line));
+    if (levelMatch) {
+      const rec = readRecent();
+      if (rec?.mode === 'single') {
+        try {
+          saveRecent({ ...rec, saveName: levelMatch[1], savePath: rec.savePath || '' });
+        } catch { /* ignore */ }
+      }
+    }
     const lanPort = parseLanPortLine(line);
     if (lanPort) {
       state.lanPort = { port: lanPort, at: Date.now(), versionId };
@@ -986,6 +1020,9 @@ async function handleLaunch({ versionId, joinAddress }) {
     }
     emit('game-exit', { versionId, code: uiCode, forced: forcedExit, reason: reasonLine.slice(0, 500) });
     pushLog(forcedExit ? '游戏已强制结束，状态回到空闲' : `游戏退出，code=${code}`);
+    void onHostGameExit(r.child.pid).then((stopped) => {
+      if (stopped) pushLog('房主退出，已自动关服；world 保留');
+    }).catch(() => {});
     // 清掉本次 natives 临时目录
     try {
       fs.rmSync(r.nativesDir, { recursive: true, force: true });
@@ -2414,6 +2451,27 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { room: getRoomState() });
     }
 
+    if (p === '/api/online/room/settings' && req.method === 'GET') {
+      const versionId = url.searchParams.get('versionId') || '';
+      return json(res, 200, { settings: getWorldSettings({ gameDir: state.gameDir, versionId }) });
+    }
+
+    if (p === '/api/online/room/settings' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const result = saveWorldSettings({
+          gameDir: state.gameDir,
+          versionId: body.versionId,
+          settings: body.settings,
+          onLog: (line) => emit('room-log', { line }),
+        });
+        emit('room-settings', result);
+        return json(res, 200, { ok: true, ...result });
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
     if (p === '/api/online/room/start' && req.method === 'POST') {
       const body = await readBody(req);
       try {
@@ -2422,14 +2480,65 @@ const server = http.createServer(async (req, res) => {
           gameDir: state.gameDir,
           eulaAccepted: body.eulaAccepted === true,
           memoryMb: body.memoryMb,
+          autoStopOnExit: body.autoStopOnExit !== false,
+          settings: body.settings,
           onStage: (message) => {
             emit('room-stage', { message });
             pushLog(`[room] ${message}`);
           },
           onLog: (line) => emit('room-log', { line }),
         });
+        try {
+          saveRecent({
+            mode: 'multiplayer',
+            role: 'host',
+            versionId: body.versionId,
+            loader: body.loader || '',
+            gameVersion: body.gameVersion || body.versionId,
+            gameDir: state.gameDir,
+            serverWorldPath: room.worldDir,
+            hostJoined: Boolean(body.joinGame),
+            eulaAccepted: body.eulaAccepted === true,
+            autoStopOnExit: body.autoStopOnExit !== false,
+            worldSettings: room.settings,
+            room: {
+              provider: body.provider || '',
+              tunnelId: body.tunnelId || '',
+              remotePort: Number(body.remotePort) || 0,
+              address: body.address || '',
+            },
+          });
+        } catch { /* recent 失败不影响开房 */ }
+        let gameError = '';
+        if (body.joinGame) {
+          try {
+            await handleLaunch({
+              versionId: body.versionId,
+              joinAddress: '127.0.0.1:25565',
+              recentMeta: {
+                mode: 'multiplayer',
+                role: 'host',
+                versionId: body.versionId,
+                loader: body.loader || '',
+                gameVersion: body.gameVersion || body.versionId,
+                gameDir: state.gameDir,
+                serverWorldPath: room.worldDir,
+                hostJoined: true,
+                room: {
+                  provider: body.provider || '',
+                  tunnelId: body.tunnelId || '',
+                  remotePort: Number(body.remotePort) || 0,
+                  address: body.address || '',
+                },
+              },
+            });
+          } catch (e) {
+            gameError = e.message;
+            pushLog(`开房后启动游戏失败：${e.message}`);
+          }
+        }
         emit('room-state', { room });
-        return json(res, 200, { ok: true, room });
+        return json(res, 200, { ok: true, room, gameError });
       } catch (e) {
         emit('room-state', { room: getRoomState() });
         return json(res, 400, { error: e.message, room: getRoomState() });
@@ -2446,6 +2555,82 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ok: true, room });
       } catch (e) {
         return json(res, 500, { error: e.message, room: getRoomState() });
+      }
+    }
+
+    if (p === '/api/recent' && req.method === 'GET') {
+      const recent = readRecent();
+      if (!recent) return json(res, 200, { recent: null });
+      const check = validateRecent(recent, state.gameDir);
+      if (!check.valid) {
+        clearRecent();
+        return json(res, 200, { recent: null, cleared: check.reason });
+      }
+      return json(res, 200, { recent });
+    }
+
+    if (p === '/api/recent/launch' && req.method === 'POST') {
+      const recent = readRecent();
+      if (!recent) return json(res, 404, { error: '没有最近游玩记录' });
+      const check = validateRecent(recent, state.gameDir);
+      if (!check.valid) {
+        clearRecent();
+        return json(res, 400, { error: check.reason });
+      }
+      try {
+        if (recent.mode === 'single') {
+          const launch = await handleLaunch({
+            versionId: recent.versionId,
+            quickPlaySave: recent.saveName || '',
+            recentMeta: recent,
+          });
+          return json(res, 200, { ok: true, launch, recent });
+        }
+        if (recent.mode === 'multiplayer' && recent.role === 'guest') {
+          const launch = await handleLaunch({
+            versionId: recent.versionId,
+            joinAddress: recent.joinAddress,
+            recentMeta: recent,
+          });
+          return json(res, 200, { ok: true, launch, recent });
+        }
+        if (recent.mode === 'multiplayer' && recent.role === 'host') {
+          if (getRoomState().status !== 'idle') throw new Error('当前已有房间在运行');
+          const provider = recent.room?.provider;
+          const configured = provider ? onlineSnapshot()[provider]?.configured : false;
+          if (!configured) throw new Error('原来的 frp 配置不可用，请重新配置');
+          const room = await startRoom({
+            versionId: recent.versionId,
+            gameDir: state.gameDir,
+            eulaAccepted: true,
+            autoStopOnExit: recent.autoStopOnExit !== false,
+            settings: recent.worldSettings,
+            onStage: (message) => {
+              emit('room-stage', { message });
+              pushLog(`[room] ${message}`);
+            },
+            onLog: (line) => emit('room-log', { line }),
+          });
+          saveRecent({
+            ...recent,
+            serverWorldPath: room.worldDir,
+            hostJoined: Boolean(recent.hostJoined),
+            room: { ...recent.room, address: recent.room?.address || '' },
+          });
+          let launch = null;
+          if (recent.hostJoined) {
+            launch = await handleLaunch({
+              versionId: recent.versionId,
+              joinAddress: '127.0.0.1:25565',
+              recentMeta: recent,
+            });
+          }
+          emit('room-state', { room });
+          return json(res, 200, { ok: true, room, launch, recent });
+        }
+        throw new Error('未知的最近游玩模式');
+      } catch (e) {
+        return json(res, 400, { error: e.message });
       }
     }
 

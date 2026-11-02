@@ -24,6 +24,92 @@ import { JAVA_SCAN_CACHE } from './paths.js';
 
 export const ROOM_PORT = 25565;
 const ROOM_MEMORY_MB = 2048;
+const WORLD_DEFAULTS = Object.freeze({
+  keepInventory: false,
+  difficulty: 'normal',
+  onlineMode: true,
+  maxPlayers: 20,
+  viewDistance: 10,
+  pvp: true,
+  spawnProtection: 16,
+});
+
+function normalizeWorldSettings(raw = {}) {
+  const r = raw && typeof raw === 'object' ? raw : {};
+  const difficulty = ['peaceful', 'easy', 'normal', 'hard'].includes(String(r.difficulty).toLowerCase())
+    ? String(r.difficulty).toLowerCase() : WORLD_DEFAULTS.difficulty;
+  const int = (value, fallback, min, max) => {
+    const n = Number(value);
+    return Number.isFinite(n) && n >= min && n <= max ? Math.floor(n) : fallback;
+  };
+  return {
+    keepInventory: typeof r.keepInventory === 'boolean' ? r.keepInventory : WORLD_DEFAULTS.keepInventory,
+    difficulty,
+    onlineMode: typeof r.onlineMode === 'boolean' ? r.onlineMode : WORLD_DEFAULTS.onlineMode,
+    maxPlayers: int(r.maxPlayers, WORLD_DEFAULTS.maxPlayers, 1, 100),
+    viewDistance: int(r.viewDistance, WORLD_DEFAULTS.viewDistance, 2, 32),
+    pvp: typeof r.pvp === 'boolean' ? r.pvp : WORLD_DEFAULTS.pvp,
+    spawnProtection: int(r.spawnProtection, WORLD_DEFAULTS.spawnProtection, 0, 1000),
+  };
+}
+
+function settingsFile(serverDir) {
+  return path.join(serverDir, 'server-settings.json');
+}
+
+function readWorldSettingsFromDisk(serverDir) {
+  try {
+    const sidecar = settingsFile(serverDir);
+    if (fs.existsSync(sidecar)) return normalizeWorldSettings(JSON.parse(fs.readFileSync(sidecar, 'utf8')));
+  } catch { /* fall through to properties */ }
+  const out = { ...WORLD_DEFAULTS };
+  const file = path.join(serverDir, 'server.properties');
+  try {
+    const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
+    for (const line of lines) {
+      const i = line.indexOf('=');
+      if (i <= 0) continue;
+      const k = line.slice(0, i).trim();
+      const v = line.slice(i + 1).trim();
+      if (k === 'difficulty') out.difficulty = v;
+      else if (k === 'online-mode') out.onlineMode = v === 'true';
+      else if (k === 'max-players') out.maxPlayers = Number(v) || out.maxPlayers;
+      else if (k === 'view-distance') out.viewDistance = Number(v) || out.viewDistance;
+      else if (k === 'pvp') out.pvp = v === 'true';
+      else if (k === 'spawn-protection') out.spawnProtection = Number(v) || 0;
+    }
+  } catch { /* defaults */ }
+  return normalizeWorldSettings(out);
+}
+
+export function getWorldSettings({ gameDir, versionId }) {
+  if (!gameDir || !versionId) return { ...WORLD_DEFAULTS };
+  try {
+    const { serverDir } = resolveServerPaths(gameDir, versionId);
+    return readWorldSettingsFromDisk(serverDir);
+  } catch {
+    return { ...WORLD_DEFAULTS };
+  }
+}
+
+export function saveWorldSettings({ gameDir, versionId, settings, onLog }) {
+  if (!gameDir || !versionId) throw new Error('缺少 gameDir/versionId');
+  const { serverDir } = resolveServerPaths(gameDir, versionId);
+  fs.mkdirSync(serverDir, { recursive: true });
+  const value = normalizeWorldSettings(settings);
+  fs.writeFileSync(settingsFile(serverDir), JSON.stringify(value, null, 2), 'utf8');
+  writeServerProperties(path.join(serverDir, 'server.properties'), value);
+  if (room.status === 'running' && room.versionId === versionId && child?.stdin?.writable) {
+    sendCommand(`/difficulty ${value.difficulty}`);
+    sendCommand(`gamerule ${keepInventoryRule(versionId)} ${value.keepInventory}`);
+    return {
+      settings: value,
+      applied: ['difficulty', 'keepInventory'],
+      restartRequired: ['onlineMode', 'maxPlayers', 'viewDistance', 'pvp', 'spawnProtection'],
+    };
+  }
+  return { settings: value, applied: [], restartRequired: [] };
+}
 
 let room = emptyRoom();
 let child = null;
@@ -40,6 +126,9 @@ function emptyRoom() {
     startedAt: null,
     stoppedAt: null,
     error: '',
+    autoStopOnExit: true,
+    settings: { ...WORLD_DEFAULTS },
+    hostGamePid: null,
     logs: [],
   };
 }
@@ -75,35 +164,48 @@ async function assertPortFree(port) {
   });
 }
 
-function writeServerProperties(file) {
-  const defaults = [
-    'server-port=25565',
-    'motd=SakuraLauncher',
-    'online-mode=true',
-    'enable-query=false',
-    'enable-rcon=false',
-  ];
+function writeServerProperties(file, settings = WORLD_DEFAULTS) {
+  const s = normalizeWorldSettings(settings);
+  const values = {
+    'server-port': '25565',
+    'motd': 'SakuraLauncher',
+    'online-mode': String(s.onlineMode),
+    'max-players': String(s.maxPlayers),
+    'view-distance': String(s.viewDistance),
+    'difficulty': s.difficulty,
+    'pvp': String(s.pvp),
+    'spawn-protection': String(s.spawnProtection),
+    'enable-query': 'false',
+    'enable-rcon': 'false',
+  };
+  const lines = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split(/\r?\n/) : [];
   const seen = new Set();
-  let lines = [];
-  if (fs.existsSync(file)) {
-    lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
+  const out = lines.map((line) => {
+    const i = line.indexOf('=');
+    if (i <= 0) return line;
+    const key = line.slice(0, i).trim();
+    if (!Object.prototype.hasOwnProperty.call(values, key)) return line;
+    seen.add(key);
+    return `${key}=${values[key]}`;
+  });
+  for (const [key, value] of Object.entries(values)) {
+    if (!seen.has(key)) out.push(`${key}=${value}`);
   }
-  for (const raw of lines) {
-    const key = raw.split('=')[0]?.trim();
-    if (!key) {
-      lines[lines.indexOf(raw)] = raw;
-      continue;
-    }
-    if (key === 'server-port') {
-      lines[lines.indexOf(raw)] = 'server-port=25565';
-      seen.add(key);
-    }
+  fs.writeFileSync(file, `${out.filter((x, i, a) => x !== '' || i < a.length - 1).join('\n')}\n`, 'utf8');
+}
+
+function keepInventoryRule(versionId) {
+  // 26.x 的 gamerule 使用蛇形命名；老版本仍用 keepInventory。
+  return /^26\./i.test(String(versionId)) ? 'keep_inventory' : 'keepInventory';
+}
+function sendCommand(command) {
+  if (!child?.stdin?.writable) return false;
+  try {
+    child.stdin.write(`${command}\n`);
+    return true;
+  } catch {
+    return false;
   }
-  for (const line of defaults) {
-    const key = line.split('=')[0];
-    if (!seen.has(key)) lines.push(line);
-  }
-  fs.writeFileSync(file, `${lines.filter((x, i, a) => x !== '' || i < a.length - 1).join('\n')}\n`, 'utf8');
 }
 
 function resolveServerPaths(gameDir, versionId) {
@@ -112,7 +214,7 @@ function resolveServerPaths(gameDir, versionId) {
   return { serverDir, worldDir: path.join(serverDir, 'world') };
 }
 
-async function prepareJar({ gameDir, versionId, onStage, onLog }) {
+async function prepareJar({ gameDir, versionId, settings, onStage, onLog }) {
   const versionsDir = path.join(gameDir, 'versions');
   const { json: versionJson } = loadVersion(versionsDir, versionId);
   const server = versionJson?.downloads?.server;
@@ -138,7 +240,7 @@ async function prepareJar({ gameDir, versionId, onStage, onLog }) {
   const eulaPath = path.join(serverDir, 'eula.txt');
   await fsp.writeFile(eulaPath, 'eula=true\n', 'utf8');
   const propertiesPath = path.join(serverDir, 'server.properties');
-  writeServerProperties(propertiesPath);
+  writeServerProperties(propertiesPath, settings);
   const requiredJava = versionJson.javaVersion?.majorVersion ?? null;
   const java = await findJava(getSettings().javaPath, requiredJava, JAVA_SCAN_CACHE);
   if (!java?.path) throw new Error(`找不到可用的 Java${requiredJava ? ` ${requiredJava}` : ''}`);
@@ -182,7 +284,7 @@ function waitForReady(onLog) {
   });
 }
 
-export async function startRoom({ versionId, gameDir, eulaAccepted = false, memoryMb = ROOM_MEMORY_MB, onStage, onLog } = {}) {
+export async function startRoom({ versionId, gameDir, eulaAccepted = false, memoryMb = ROOM_MEMORY_MB, autoStopOnExit = true, settings = {}, onStage, onLog } = {}) {
   if (!versionId) throw new Error('缺少 versionId');
   if (!gameDir) throw new Error('缺少 gameDir');
   if (!eulaAccepted) throw new Error('需要先同意 Minecraft EULA');
@@ -193,10 +295,12 @@ export async function startRoom({ versionId, gameDir, eulaAccepted = false, memo
   room = emptyRoom();
   room.status = 'starting';
   room.versionId = versionId;
+  room.autoStopOnExit = autoStopOnExit !== false;
+  room.settings = normalizeWorldSettings(settings);
   room.error = '';
   try {
     await assertPortFree(ROOM_PORT);
-    const prepared = await prepareJar({ gameDir, versionId, onStage, onLog });
+    const prepared = await prepareJar({ gameDir, versionId, settings: room.settings, onStage, onLog });
     room.serverDir = prepared.serverDir;
     room.worldDir = path.join(prepared.serverDir, 'world');
     append(`启动 Java ${prepared.javaMajor ?? '?'}：${prepared.javaBin}`, onLog);
@@ -219,6 +323,8 @@ export async function startRoom({ versionId, gameDir, eulaAccepted = false, memo
     await readyPromise;
     if (room.status === 'starting') {
       room.status = 'running';
+      sendCommand(`/difficulty ${room.settings.difficulty}`);
+      sendCommand(`gamerule ${keepInventoryRule(room.versionId)} ${room.settings.keepInventory}`);
       append('server 已就绪', onLog);
     }
     return publicRoom();
@@ -271,6 +377,22 @@ export async function stopRoom({ keepWorld = true, onLog } = {}) {
   return publicRoom();
 }
 
+export function attachHostGame(pid) {
+  if (!pid) return false;
+  if (room.status !== 'running' && room.status !== 'starting') return false;
+  room.hostGamePid = Number(pid) || null;
+  return true;
+}
+
+/** 房主客户端退出时由 server.js 调用；true 表示已经自动关房。 */
+export async function onHostGameExit(pid) {
+  if (!room.hostGamePid) return false;
+  if (pid && Number(room.hostGamePid) !== Number(pid)) return false;
+  if (!room.autoStopOnExit) return false;
+  if (room.status !== 'running' && room.status !== 'starting') return false;
+  await stopRoom({ keepWorld: true });
+  return true;
+}
 export function getRoomState() {
   return publicRoom();
 }
