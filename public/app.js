@@ -1139,7 +1139,8 @@ async function loadFabricLoaders() {
   const hint = $('fabricHint');
 
   if (!gameVersion) {
-    sel.innerHTML = '<option value="">先选 MC 版本</option>';
+    sel.disabled = true;
+    sel.innerHTML = '<option value="">—</option>';
     hint.textContent = '先在上面刷新清单，再选版本。';
     return;
   }
