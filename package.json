@@ -1,0 +1,21 @@
+{
+  "name": "sakura-launcher",
+  "productName": "Sakura Minecraft Launcher",
+  "version": "0.9.19",
+  "private": true,
+  "type": "module",
+  "description": "A from-scratch Minecraft launcher core (no third-party launcher libs).",
+  "main": "electron/main.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "45.0.0"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
+  }
+}
