@@ -21,6 +21,7 @@ import { loadVersion } from './launch.js';
 import { findJava } from './launch.js';
 import { getSettings } from './settings.js';
 import { JAVA_SCAN_CACHE } from './paths.js';
+import { prepareModrinthServer } from './packserver.js';
 
 export const ROOM_PORT = 25565;
 const ROOM_MEMORY_MB = 2048;
@@ -101,7 +102,7 @@ export function saveWorldSettings({ gameDir, versionId, settings, onLog }) {
   writeServerProperties(path.join(serverDir, 'server.properties'), value);
   if (room.status === 'running' && room.versionId === versionId && child?.stdin?.writable) {
     sendCommand(`/difficulty ${value.difficulty}`);
-    sendCommand(`gamerule ${keepInventoryRule(versionId)} ${value.keepInventory}`);
+    sendCommand(`gamerule ${keepInventoryRule(room.gameVersion || versionId)} ${value.keepInventory}`);
     return {
       settings: value,
       applied: ['difficulty', 'keepInventory'],
@@ -119,6 +120,8 @@ function emptyRoom() {
   return {
     status: 'idle', // idle | starting | running | stopping | error
     versionId: '',
+    gameVersion: '',
+    pack: null,
     pid: null,
     port: ROOM_PORT,
     serverDir: '',
@@ -285,7 +288,7 @@ function waitForReady(onLog) {
   });
 }
 
-export async function startRoom({ versionId, gameDir, eulaAccepted = false, memoryMb = ROOM_MEMORY_MB, autoStopOnExit = true, settings = {}, onStage, onLog } = {}) {
+export async function startRoom({ versionId, gameDir, eulaAccepted = false, memoryMb = ROOM_MEMORY_MB, autoStopOnExit = true, settings = {}, pack = null, onStage, onLog } = {}) {
   if (!versionId) throw new Error('缺少 versionId');
   if (!gameDir) throw new Error('缺少 gameDir');
   if (!eulaAccepted) throw new Error('需要先同意 Minecraft EULA');
@@ -296,36 +299,52 @@ export async function startRoom({ versionId, gameDir, eulaAccepted = false, memo
   room = emptyRoom();
   room.status = 'starting';
   room.versionId = versionId;
+  room.gameVersion = pack?.gameVersion || versionId;
+  room.pack = pack && typeof pack === 'object' ? { ...pack } : null;
   room.autoStopOnExit = autoStopOnExit !== false;
   room.settings = normalizeWorldSettings(settings);
   room.error = '';
   try {
     await assertPortFree(ROOM_PORT);
-    const prepared = await prepareJar({ gameDir, versionId, settings: room.settings, onStage, onLog });
+    const serverPaths = resolveServerPaths(gameDir, versionId);
+    let prepared;
+    if (pack) {
+      if (String(pack.kind || '') !== 'modrinth') throw new Error('当前只支持 Modrinth 整合包服务端');
+      prepared = await prepareModrinthServer({
+        serverDir: serverPaths.serverDir,
+        pack,
+        onStage: (message) => onStage?.(message),
+      });
+      await fsp.writeFile(path.join(prepared.serverDir, 'eula.txt'), 'eula=true\n', 'utf8');
+      writeServerProperties(path.join(prepared.serverDir, 'server.properties'), room.settings);
+    } else {
+      prepared = await prepareJar({ gameDir, versionId, settings: room.settings, onStage, onLog });
+    }
     room.serverDir = prepared.serverDir;
     room.worldDir = path.join(prepared.serverDir, 'world');
+    if (prepared.pack) {
+      room.pack = { ...room.pack, ...prepared.pack };
+      room.gameVersion = prepared.pack.gameVersion || prepared.gameVersion || room.gameVersion;
+    }
     append(`启动 Java ${prepared.javaMajor ?? '?'}：${prepared.javaBin}`, onLog);
     append(`固定端口 ${ROOM_PORT}`, onLog);
 
     child = spawn(prepared.javaBin, [
       `-Xms512M`,
       `-Xmx${Math.max(512, Number(memoryMb) || ROOM_MEMORY_MB)}M`,
-      '-jar',
-      prepared.jarPath,
-      'nogui',
+      ...(prepared.args || ['-jar', prepared.jarPath, 'nogui']),
     ], {
       cwd: prepared.serverDir,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
-    });
-    room.pid = child.pid;
+    });    room.pid = child.pid;
     room.startedAt = Date.now();
     readyPromise = waitForReady(onLog);
     await readyPromise;
     if (room.status === 'starting') {
       room.status = 'running';
       sendCommand(`/difficulty ${room.settings.difficulty}`);
-      sendCommand(`gamerule ${keepInventoryRule(room.versionId)} ${room.settings.keepInventory}`);
+      sendCommand(`gamerule ${keepInventoryRule(room.gameVersion || room.versionId)} ${room.settings.keepInventory}`);
       append('server 已就绪', onLog);
     }
     return publicRoom();
@@ -334,6 +353,12 @@ export async function startRoom({ versionId, gameDir, eulaAccepted = false, memo
     room.error = e.message || String(e);
     append(`启动失败：${room.error}`, onLog);
     await stopRoom({ keepWorld: true }).catch(() => {});
+    // stopRoom 会把状态复位为 idle；启动失败需要保留 error，卡片才能显示
+    // 原因和“改用局域网/frp”的建议。
+    room.status = 'error';
+    room.error = e.message || String(e);
+    room.pid = null;
+    room.frp = null;
     throw e;
   }
 }

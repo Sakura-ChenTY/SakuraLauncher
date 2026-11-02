@@ -2500,6 +2500,7 @@ const server = http.createServer(async (req, res) => {
           memoryMb: body.memoryMb,
           autoStopOnExit: body.autoStopOnExit !== false,
           settings: body.settings,
+          pack: body.pack || null,
           onStage: (message) => {
             emit('room-stage', { message });
             pushLog(`[room] ${message}`);
@@ -2577,6 +2578,7 @@ const server = http.createServer(async (req, res) => {
             eulaAccepted: body.eulaAccepted === true,
             autoStopOnExit: body.autoStopOnExit !== false,
             worldSettings: room.settings,
+            pack: body.pack || null,
             room: {
               provider: body.provider || '',
               tunnelId: body.tunnelId || '',

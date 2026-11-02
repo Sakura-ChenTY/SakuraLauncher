@@ -949,6 +949,7 @@ async function toggleUpnp() {  const btn = document.getElementById('upnpConnect'
 
 let onlineStateCache = null;
 let onlineRoom = { status: 'idle' };
+let roomFallbackError = '';
 let roomWorldSettings = null;
 
 function selectedFrpProvider() {
@@ -1032,16 +1033,23 @@ function renderRoom(room) {
   if (fields) fields.hidden = status === 'idle';
   if (hint) {
     hint.textContent = status === 'error'
-      ? (onlineRoom.error || '开房失败')
+      ? (onlineRoom.error || roomFallbackError || '开房失败')
       : running
         ? `server 已在 25565 监听；world 会保留在 ${onlineRoom.worldDir || '服务端目录'}`
         : configured
           ? '勾选 EULA 后点击开房间；固定端口 25565，停服不删 world。'
           : '先在顶部配置 frp，再开房间。';
   }
-  if (onlineRoom.versionId) {
+  const fallbackBtn = document.getElementById('roomFallbackBtn');
+  if (fallbackBtn) {
+    const failedPack = Boolean(onlineRoom.pack) && status === 'error';
+    fallbackBtn.hidden = !(status === 'error' || failedPack || roomFallbackError);
+  }
+  if (running) roomFallbackError = '';
+  const shownVersion = onlineRoom.pack?.gameVersion || onlineRoom.gameVersion || onlineRoom.versionId;
+  if (shownVersion) {
     const v = document.getElementById('roomVersionValue');
-    if (v) v.textContent = onlineRoom.versionId;
+    if (v) v.textContent = shownVersion;
   }
   const portEl = document.getElementById('roomPortValue');
   if (portEl) portEl.textContent = String(onlineRoom.port || 25565);
@@ -1059,6 +1067,31 @@ function renderRoom(room) {
   if (copyBtn) copyBtn.hidden = !roomAddress;
   const worldEl = document.getElementById('roomWorldValue');
   if (worldEl) worldEl.textContent = onlineRoom.worldDir || '—';
+}
+
+function showRoomFallback(message) {
+  roomFallbackError = String(message || '');
+  const btn = document.getElementById('roomFallbackBtn');
+  if (btn) btn.hidden = false;
+}
+
+function openRoomFallback() {
+  const details = document.querySelector('.online-advanced');
+  if (details) {
+    details.open = true;
+    details.classList.add('attention');
+    details.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  const lan = document.getElementById('lanPort');
+  lan?.focus();
+  const detect = document.getElementById('lanDetect');
+  if (detect) {
+    detect.classList.add('attention');
+    setTimeout(() => detect.classList.remove('attention'), 2600);
+  }
+  if (typeof toast === 'function') {
+    toast('已打开高级联机：先让游戏对局域网开放，再点「读游戏端口」');
+  }
 }
 
 async function loadRoomState() {
@@ -1216,6 +1249,9 @@ async function toggleRoom() {
   } catch (e) {
     if (typeof toast === 'function') toast('开房失败：' + e.message, 'err');
     await loadRoomState();
+    showRoomFallback(e.message);
+    const hint = document.getElementById('roomHint');
+    if (hint) hint.textContent = String(e.message || '开房失败');
   }
 }
 
@@ -1297,6 +1333,7 @@ function initOnline() {
     providerSel.addEventListener('change', syncFrpProviderView);
   }
   document.getElementById('roomToggle')?.addEventListener('click', toggleRoom);
+  document.getElementById('roomFallbackBtn')?.addEventListener('click', openRoomFallback);
   document.getElementById('worldParamsBtn')?.addEventListener('click', openWorldParams);
   document.getElementById('roomAddressCopy')?.addEventListener('click', async () => {
     const text = document.getElementById('roomAddressValue')?.textContent || '';

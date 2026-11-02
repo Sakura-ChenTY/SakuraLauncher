@@ -1114,3 +1114,26 @@ body.has-custom-bg .wallpaper {
 .room-field-address { align-items: center; }
 .room-field-address b { flex: 1; min-width: 0; }
 .room-copy-btn { flex: none; padding: 2px 7px; font-size: 9.5px; }
+
+.room-hint-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.room-hint-row .hint { flex: 1; min-width: 180px; }
+.room-fallback-btn { flex: none; font-size: 10px; }
+.online-advanced.attention { border-color: rgba(255, 141, 177, .65); box-shadow: 0 0 0 2px rgba(255, 141, 177, .12); }
+
+.btn.attention { border-color: rgba(255, 141, 177, .75); box-shadow: 0 0 0 2px rgba(255, 141, 177, .14); }
+
+/* 联机页内容比窗口高时，只有这个 panel 自己滚；其它页保持原样 */
+#panel-online {
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+  padding-right: 14px;
+}
+#panel-online::-webkit-scrollbar { width: 6px; }
+#panel-online::-webkit-scrollbar-track { background: transparent; }
+#panel-online::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 999px;
+}
+#panel-online::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }

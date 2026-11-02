@@ -474,7 +474,10 @@
             </div>
 
             <button class="room-open-btn" id="roomToggle" type="button" disabled>先配置 frp</button>
-            <div class="hint" id="roomHint">先在顶部配置 frp，再开房间。</div>
+            <div class="room-hint-row">
+              <div class="hint" id="roomHint">先在顶部配置 frp，再开房间。</div>
+              <button class="btn ghost room-fallback-btn" id="roomFallbackBtn" type="button" hidden>改用局域网 / frp 联机</button>
+            </div>
 
             <div class="room-fields" id="roomFields" hidden>
               <div><span>服务端版本</span><b id="roomVersionValue">—</b></div>
