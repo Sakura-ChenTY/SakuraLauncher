@@ -979,3 +979,9 @@ body.has-custom-bg .wallpaper {
 }
 .mem-optimize input { accent-color: var(--accent); }
 .mem-system { margin-top: 7px; }
+
+/* 未选 MC 版本时，加载器版本下拉只作为占位符 */
+.select:disabled {
+  opacity: .42;
+  cursor: not-allowed;
+}

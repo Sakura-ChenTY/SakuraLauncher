@@ -205,7 +205,7 @@ function renderVanillaList() {
     // 服务端已经只返回 release，所以这里就是「正式版」，不再读 v.type（那个字段没传）
     const installed = (state.versions || []).includes(v.id);
     return `<div class="item-row">
-      <div class="ver-ico vanilla">原版</div>
+      <img class="ver-ico-img ver-block-icon" src="/version-icons/grass-block.png" alt="" loading="lazy">
       <div class="item-main">
         <div class="item-title">${escapeHtml(v.id)}</div>
         <div class="item-meta">
@@ -431,7 +431,10 @@ function renderOnline(provider, s) {
     addr.innerHTML = '';
   }
 
-  const lastLine = (s.lines || []).slice(-1)[0] || '';
+  // frpc 的授权声明不是用户状态，不往卡片底部渲染。
+  const frpLicenseLine = /(modified version of frp|distributed by\s*SakuraFrp|SakuraFrp\s+license)/i;
+  const lastLine = [...(s.lines || [])].reverse()
+    .find((line) => !frpLicenseLine.test(String(line))) || '';
   hint.textContent = s.error || lastLine || (s.configured
     ? '隧道已连接；先让游戏开好局域网，再点启动。'
     : `填 ${label} token 后会自动拉隧道列表。`);
