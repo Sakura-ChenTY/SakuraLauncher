@@ -1110,3 +1110,7 @@ body.has-custom-bg .wallpaper {
 .field.compact { margin: 0; }
 .field.compact label { margin-bottom: 5px; }
 .world-params-box .field-note { margin-top: 13px; }
+
+.room-field-address { align-items: center; }
+.room-field-address b { flex: 1; min-width: 0; }
+.room-copy-btn { flex: none; padding: 2px 7px; font-size: 9.5px; }

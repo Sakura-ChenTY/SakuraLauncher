@@ -51,8 +51,9 @@ import {
   prepareFrpc,
   onlineSnapshot,
   detectLanPort,
+  setSakuraTunnelLocalPort,
 } from './online.js';
-import { startRoom, stopRoom, getRoomState, attachHostGame, onHostGameExit, getWorldSettings, saveWorldSettings } from './gameserver.js';
+import { startRoom, stopRoom, getRoomState, setRoomFrp, failRoom, attachHostGame, onHostGameExit, getWorldSettings, saveWorldSettings } from './gameserver.js';
 import { readRecent, saveRecent, clearRecent, validateRecent } from './recent-play.js';
 import { openPort as openUpnp, closePort as closeUpnp, mappingState as upnpState } from './upnp.js';
 import { installContent, listInstalled, removeContent, toggleContent } from './content.js';
@@ -892,6 +893,16 @@ function parseLanPortLine(line) {
   return null;
 }
 
+async function restoreRoomSakuraPort(frp) {
+  if (!frp || frp.provider !== 'sakura') return '';
+  if (!frp.originalLocalPort || Number(frp.originalLocalPort) === Number(frp.localPort)) return '';
+  try {
+    await setSakuraTunnelLocalPort(frp.tunnelId, frp.originalLocalPort);
+    return '';
+  } catch (e) {
+    return e.message || String(e);
+  }
+}
 async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta }) {
   if (state.installing) throw new Error('正在安装，稍后再启动');
   if (state.running) throw new Error(`已有游戏在运行（PID ${state.running.pid}）`);
@@ -1020,8 +1031,15 @@ async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta 
     }
     emit('game-exit', { versionId, code: uiCode, forced: forcedExit, reason: reasonLine.slice(0, 500) });
     pushLog(forcedExit ? '游戏已强制结束，状态回到空闲' : `游戏退出，code=${code}`);
-    void onHostGameExit(r.child.pid).then((stopped) => {
-      if (stopped) pushLog('房主退出，已自动关服；world 保留');
+    const roomBefore = getRoomState();
+    void onHostGameExit(r.child.pid).then(async (stopped) => {
+      if (stopped) {
+        if (roomBefore.frp?.provider && !roomBefore.frp.external) {
+          try { stopTunnel(roomBefore.frp.provider); } catch { /* ignore */ }
+        }
+        await restoreRoomSakuraPort(roomBefore.frp);
+        pushLog('房主退出，已自动关服；world 保留');
+      }
     }).catch(() => {});
     // 清掉本次 natives 临时目录
     try {
@@ -2488,6 +2506,64 @@ const server = http.createServer(async (req, res) => {
           },
           onLog: (line) => emit('room-log', { line }),
         });
+
+        let frp = null;
+        let sakuraPortInfo = null;
+        try {
+          if (!body.provider) throw new Error('没有选择 frp provider');
+          if (!body.tunnelId && body.provider !== 'custom') throw new Error('没有选择隧道');
+          if (body.provider === 'sakura') {
+            sakuraPortInfo = await setSakuraTunnelLocalPort(body.tunnelId, 25565);
+            pushLog(`Sakura 隧道 ${body.tunnelId} local_port → 25565${sakuraPortInfo.changed ? `（原 ${sakuraPortInfo.previousLocalPort}）` : ''}`);
+          }
+          const r = await startTunnel(body.provider, body.tunnelId, 25565);
+          if (!r?.address) throw new Error('frpc 已启动但没有拿到公网地址');
+          frp = {
+            provider: body.provider,
+            tunnelId: body.tunnelId || '',
+            address: r.address,
+            ipAddress: r.ipAddress || '',
+            pid: r.pid || null,
+            localPort: 25565,
+            originalLocalPort: sakuraPortInfo?.previousLocalPort ?? null,
+          };
+          setRoomFrp(frp);
+          room.frp = frp;
+          pushLog(`frpc 已启动：${frp.address}`);
+        } catch (e) {
+          // SakuraFrp 发行版 frpc 拒绝第三方直接启动；若本机服务已把这条
+          // 隧道挂到 25565，则复用它的真实地址，否则必须报错。
+          const external = onlineSnapshot()[body.provider]?.tunnels
+            ?.find((t) => String(t.id) === String(body.tunnelId));
+          if (external?.online && external.address && Number(external.localPort) === 25565) {
+            frp = {
+              provider: body.provider,
+              tunnelId: body.tunnelId || '',
+              address: external.address,
+              ipAddress: external.ipAddress || '',
+              pid: null,
+              external: true,
+              localPort: 25565,
+              originalLocalPort: sakuraPortInfo?.previousLocalPort ?? null,
+            };
+            setRoomFrp(frp);
+            room.frp = frp;
+            pushLog(`复用已运行的 frp 隧道：${frp.address}`);
+          } else {
+            try { stopTunnel(body.provider); } catch { /* ignore */ }
+            const restoreError = await restoreRoomSakuraPort({
+              provider: body.provider,
+              tunnelId: body.tunnelId,
+              originalLocalPort: sakuraPortInfo?.previousLocalPort,
+              localPort: 25565,
+            });
+            await stopRoom({ keepWorld: true, onLog: (line) => emit('room-log', { line }) });
+            const failed = failRoom(`frpc 启动失败：${e.message}${restoreError ? `；还原隧道端口失败：${restoreError}` : ''}`);
+            emit('room-state', { room: failed });
+            return json(res, 400, { error: failed.error, room: failed });
+          }
+        }
+
         try {
           saveRecent({
             mode: 'multiplayer',
@@ -2505,10 +2581,11 @@ const server = http.createServer(async (req, res) => {
               provider: body.provider || '',
               tunnelId: body.tunnelId || '',
               remotePort: Number(body.remotePort) || 0,
-              address: body.address || '',
+              address: frp?.address || body.address || '',
             },
           });
         } catch { /* recent 失败不影响开房 */ }
+
         let gameError = '';
         if (body.joinGame) {
           try {
@@ -2523,12 +2600,15 @@ const server = http.createServer(async (req, res) => {
                 gameVersion: body.gameVersion || body.versionId,
                 gameDir: state.gameDir,
                 serverWorldPath: room.worldDir,
+                worldSettings: room.settings,
                 hostJoined: true,
+                eulaAccepted: body.eulaAccepted === true,
+                autoStopOnExit: body.autoStopOnExit !== false,
                 room: {
                   provider: body.provider || '',
                   tunnelId: body.tunnelId || '',
                   remotePort: Number(body.remotePort) || 0,
-                  address: body.address || '',
+                  address: frp?.address || body.address || '',
                 },
               },
             });
@@ -2544,15 +2624,19 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, { error: e.message, room: getRoomState() });
       }
     }
-
     if (p === '/api/online/room/stop' && req.method === 'POST') {
       try {
+        const current = getRoomState();
+        if (current.frp?.provider && !current.frp.external) {
+          try { stopTunnel(current.frp.provider); } catch { /* frpc 可能已退出 */ }
+        }
         const room = await stopRoom({
           keepWorld: true,
           onLog: (line) => emit('room-log', { line }),
         });
+        const restoreError = await restoreRoomSakuraPort(current.frp);
         emit('room-state', { room });
-        return json(res, 200, { ok: true, room });
+        return json(res, 200, { ok: true, room, restoreError });
       } catch (e) {
         return json(res, 500, { error: e.message, room: getRoomState() });
       }
@@ -2611,18 +2695,63 @@ const server = http.createServer(async (req, res) => {
             },
             onLog: (line) => emit('room-log', { line }),
           });
+          let frp = null;
+          try {
+            let sakuraPortInfo = null;
+            if (provider === 'sakura') {
+              sakuraPortInfo = await setSakuraTunnelLocalPort(recent.room?.tunnelId || '', 25565);
+            }
+            const r = await startTunnel(provider, recent.room?.tunnelId || '', 25565);
+            if (!r?.address) throw new Error('frpc 已启动但没有拿到公网地址');
+            frp = {
+              provider,
+              tunnelId: recent.room?.tunnelId || '',
+              address: r.address,
+              ipAddress: r.ipAddress || '',
+              pid: r.pid || null,
+              localPort: 25565,
+              originalLocalPort: sakuraPortInfo?.previousLocalPort ?? null,
+            };
+            setRoomFrp(frp);
+            room.frp = frp;
+          } catch (e) {
+            const external = onlineSnapshot()[provider]?.tunnels
+              ?.find((t) => String(t.id) === String(recent.room?.tunnelId));
+            if (external?.online && external.address && Number(external.localPort) === 25565) {
+              frp = {
+                provider,
+                tunnelId: recent.room?.tunnelId || '',
+                address: external.address,
+                ipAddress: external.ipAddress || '',
+                pid: null,
+                external: true,
+                localPort: 25565,
+                originalLocalPort: null,
+              };
+              setRoomFrp(frp);
+              room.frp = frp;
+            } else {
+              try { stopTunnel(provider); } catch { /* ignore */ }
+              await stopRoom({ keepWorld: true, onLog: (line) => emit('room-log', { line }) });
+              const failed = failRoom(`frpc 启动失败：${e.message}`);
+              emit('room-state', { room: failed });
+              return json(res, 400, { error: failed.error, room: failed });
+            }
+          }
+          const roomMeta = { ...recent.room, address: frp.address };
           saveRecent({
             ...recent,
             serverWorldPath: room.worldDir,
             hostJoined: Boolean(recent.hostJoined),
-            room: { ...recent.room, address: recent.room?.address || '' },
+            room: roomMeta,
           });
+          room.frp = frp;
           let launch = null;
           if (recent.hostJoined) {
             launch = await handleLaunch({
               versionId: recent.versionId,
               joinAddress: '127.0.0.1:25565',
-              recentMeta: recent,
+              recentMeta: { ...recent, room: roomMeta },
             });
           }
           emit('room-state', { room });

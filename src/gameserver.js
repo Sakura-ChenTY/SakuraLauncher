@@ -128,6 +128,7 @@ function emptyRoom() {
     error: '',
     autoStopOnExit: true,
     settings: { ...WORLD_DEFAULTS },
+    frp: null,
     hostGamePid: null,
     logs: [],
   };
@@ -372,11 +373,25 @@ export async function stopRoom({ keepWorld = true, onLog } = {}) {
   child = null;
   room.status = 'idle';
   room.pid = null;
+  room.frp = null;
   room.stoppedAt = Date.now();
   append('server 已停止', onLog);
   return publicRoom();
 }
 
+export function setRoomFrp(frp) {
+  room.frp = frp && typeof frp === 'object' ? { ...frp } : null;
+  return room.frp;
+}
+
+export function failRoom(error) {
+  room.status = 'error';
+  room.error = String(error || '房间启动失败');
+  room.pid = null;
+  room.frp = null;
+  append(`房间错误：${room.error}`);
+  return publicRoom();
+}
 export function attachHostGame(pid) {
   if (!pid) return false;
   if (room.status !== 'running' && room.status !== 'starting') return false;

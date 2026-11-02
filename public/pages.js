@@ -1053,7 +1053,10 @@ function renderRoom(room) {
     tunnelEl.textContent = tunnel?.selectedOptions?.[0]?.textContent || '未选择';
   }
   const addressEl = document.getElementById('roomAddressValue');
-  if (addressEl) addressEl.textContent = onlineStateCache?.[p]?.address || '—';
+  const roomAddress = onlineRoom.frp?.address || onlineStateCache?.[p]?.address || '';
+  if (addressEl) addressEl.textContent = roomAddress || '—';
+  const copyBtn = document.getElementById('roomAddressCopy');
+  if (copyBtn) copyBtn.hidden = !roomAddress;
   const worldEl = document.getElementById('roomWorldValue');
   if (worldEl) worldEl.textContent = onlineRoom.worldDir || '—';
 }
@@ -1295,6 +1298,11 @@ function initOnline() {
   }
   document.getElementById('roomToggle')?.addEventListener('click', toggleRoom);
   document.getElementById('worldParamsBtn')?.addEventListener('click', openWorldParams);
+  document.getElementById('roomAddressCopy')?.addEventListener('click', async () => {
+    const text = document.getElementById('roomAddressValue')?.textContent || '';
+    if (!text || text === '—') return;
+    try { await navigator.clipboard.writeText(text); if (typeof toast === 'function') toast('地址已复制'); } catch { if (typeof toast === 'function') toast('复制失败', 'err'); }
+  });
   document.getElementById('worldParamsClose')?.addEventListener('click', () => { const m = document.getElementById('worldParamsModal'); if (m) m.hidden = true; });
   document.getElementById('worldParamsCancel')?.addEventListener('click', () => { const m = document.getElementById('worldParamsModal'); if (m) m.hidden = true; });
   document.getElementById('worldParamsSave')?.addEventListener('click', saveWorldParams);
