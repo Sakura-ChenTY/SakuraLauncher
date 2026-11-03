@@ -1982,7 +1982,15 @@ async function pickVersion(slug) {
         const v = data.versions[Number(btn.dataset.installFile)];
         const f = v.files?.find((x) => x.primary) ?? v.files?.[0];
         $('versionModal').hidden = true;
-        await installFiles(type, [{ url: f.url, filename: f.filename, sha1: f.sha1, size: f.size }], v.versionNumber);
+        await installFiles(type, [{
+          url: f.url,
+          filename: f.filename,
+          sha1: f.sha1,
+          size: f.size,
+          source: 'modrinth',
+          projectId: v.projectId,
+          dependencies: v.dependencies || [],
+        }], v.versionNumber);
       });
     });
   } catch (e) {
@@ -2001,7 +2009,7 @@ async function installFiles(type, files, label) {
   try {
     await api('/api/content/install', {
       method: 'POST',
-      body: JSON.stringify({ versionId, projectType: type, files }),
+      body: JSON.stringify({ versionId, projectType: type, files, source: files[0]?.source || '' }),
     });
   } catch (e) {
     showProgress(false);
@@ -2613,9 +2621,14 @@ function connectEvents() {
 
       case 'content-done': {
         const r = msg.result || {};
+        const depAdded = r.dependencies?.added || 0;
+        const depFailed = r.dependencies?.failed || [];
+        const depLine = depFailed.length
+          ? `；以下依赖没装上：${depFailed.map((x) => `${x.name}（${x.reason}）`).join('、')}`
+          : '';
         updateProgress({
           stage: 'done',
-          message: `完成：新装 ${r.installed?.length ?? 0}，已有 ${r.skipped?.length ?? 0}，失败 ${r.failed?.length ?? 0}`,
+          message: `完成：新装 ${r.installed?.length ?? 0}，已有 ${r.skipped?.length ?? 0}，失败 ${r.failed?.length ?? 0}；已自动补 ${depAdded} 个依赖${depLine}`,
         });
         state.installing = null;
         disableCancelButton();

@@ -203,6 +203,7 @@ export async function getProjectFiles(id, opts = {}) {
 
   return files.map((f) => ({
     id: f.id,
+    projectId: f.modId,
     name: f.displayName ?? f.fileName,
     fileName: f.fileName,
     size: f.fileLength ?? 0,
@@ -214,6 +215,9 @@ export async function getProjectFiles(id, opts = {}) {
     loaders: (f.sortableGameVersions ?? []).map((g) => g.gameVersionName).filter(Boolean),
     datePublished: f.fileDate ?? null,
     downloads: f.downloadCount ?? 0,
+    dependencies: (f.dependencies ?? [])
+      .filter((d) => d.relationType === 3)
+      .map((d) => ({ projectId: d.modId, dependencyType: 'required' })),
   }));
 }
 

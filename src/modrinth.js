@@ -99,6 +99,7 @@ export async function getProjectVersions(slugOrId, { gameVersion, loader } = {})
 
   const mapped = all.map((v) => ({
     id: v.id,
+    projectId: v.project_id,
     name: v.name,
     versionNumber: v.version_number,
     gameVersions: v.game_versions ?? [],
@@ -113,6 +114,13 @@ export async function getProjectVersions(slugOrId, { gameVersion, loader } = {})
       sha1: f.hashes?.sha1 ?? null,
       primary: Boolean(f.primary),
     })),
+    dependencies: (v.dependencies ?? [])
+      .filter((d) => d.dependency_type === 'required')
+      .map((d) => ({
+        projectId: d.project_id,
+        versionId: d.version_id,
+        dependencyType: 'required',
+      })),
   }));
 
   // 兼容性排序：游戏版本命中 > 加载器命中 > 发布时间新

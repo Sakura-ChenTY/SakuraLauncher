@@ -92,6 +92,7 @@ import { getSettings, saveSettings, DEFAULTS, SETTINGS_FILE } from './settings.j
 import { resolveSource, measureSources, clearSourceCache } from './speedtest.js';
 import { appendLogLine } from './logfile.js';
 import { listTrash, restoreTrash, purgeTrash } from './trash.js';
+import { resolveRequiredDependencies } from './dependencies.js';
 import { ensureVersionFiles } from './preflight.js';
 import { SOURCES, SOURCE_IDS } from './sources.js';
 import {
@@ -3950,23 +3951,42 @@ async function handleContentInstall(body) {
 
   (async () => {
     try {
+      const info = readInstanceInfo(versionId) || {};
+      let dep = { files: [], added: 0, failed: [] };
+      if (projectType === 'mod') {
+        dep = await resolveRequiredDependencies({
+          source: body.source || files[0]?.source || '',
+          gameVersion: info.gameVersion || '',
+          loader: info.loader || '',
+          files,
+          maxDepth: 3,
+          onProgress: (p) => {
+            state.installing = { ...state.installing, ...p };
+            emit('content-progress', { versionId, ...p });
+          },
+        });
+      }
       const r = await installContent({
         gameDir: state.gameDir,
         versionId,
         projectType,
-        files,
+        files: [...files, ...dep.files],
         source: (await awaitOrCancel(resolveSource(getSettings().downloadSource))).source,
         onProgress: (p) => {
           state.installing = { ...state.installing, ...p };
           emit('content-progress', { versionId, ...p });
         },
       });
+      r.dependencies = dep;
       state.installing = null;
       endJob();
       emit('content-done', { versionId, projectType, result: r });
       pushLog(
-        `内容安装完成：${r.installed.length} 个新装，${r.skipped.length} 个已存在，${r.failed.length} 个失败 → ${r.dir}`
+        `内容安装完成：${r.installed.length} 个新装，${r.skipped.length} 个已存在，${r.failed.length} 个失败；已自动补 ${r.dependencies?.added || 0} 个依赖 → ${r.dir}`
       );
+      for (const depFail of r.dependencies?.failed || []) {
+        pushLog(`依赖未安装：${depFail.name}（${depFail.reason}）`);
+      }
     } catch (e) {
       const cancelled = e?.cancelled || e instanceof CancelledError;
       let wiped = null;
