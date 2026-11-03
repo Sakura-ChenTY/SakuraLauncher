@@ -70,7 +70,7 @@ import {
 } from './curseforge.js';
 import { installCurseForgePack, previewCurseForgePack } from './cfpack.js';
 import { createSession, getSession, chatSession } from './assistant-session.js';
-import { detectSymptom, collectSymptomContext, SYMPTOMS, IMPLEMENTATION_NOTES } from './assistant-diagnostics.js';
+import { detectSymptom, guessSymptom, collectSymptomContext, SYMPTOMS, IMPLEMENTATION_NOTES } from './assistant-diagnostics.js';
 import {
   addTracked,
   removeTracked,
@@ -3191,12 +3191,10 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/assistant/diagnose' && req.method === 'POST') {
       const body = await readBody(req);
       try {
-        const category = body.category && SYMPTOMS[body.category]
+        let category = body.category && SYMPTOMS[body.category]
           ? body.category
           : detectSymptom(body.message || '');
-        if (category === 'unknown') {
-          return json(res, 200, { category, text: '是启动不了，还是联机进不去？先告诉我是哪一类，我再收集对应的信息。' });
-        }
+        if (category === 'unknown') category = guessSymptom(body.message || '', state);
         const text = await collectSymptomContext(category, {
           gameDir: state.gameDir,
           versionId: body.versionId || state.running?.versionId || state.lastFailure?.versionId || '',

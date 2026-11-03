@@ -53,6 +53,39 @@ export function isTechnicalQuestion(message) {
   return /失败|不行|打不开|有问题|报错|错误|怎么办|怎么回事|连不上|卡住/i.test(String(message || ''));
 }
 
+/** 分类不确定时，不追问；按房间/日志里最像的证据猜一个类别。 */
+export function guessSymptom(message, state = {}) {
+  const detected = detectSymptom(message);
+  if (detected !== 'unknown') return detected;
+  let room = null;
+  try { room = getRoomState(); } catch { /* ignore */ }
+  const texts = [
+    message,
+    room?.error,
+    room?.pack ? JSON.stringify(room.pack) : '',
+    state?.lastFailure?.reason,
+    ...(state?.logs || []).slice(-80).map((x) => x?.line ?? x),
+  ].filter(Boolean).join('\n');
+  if (room?.pack || /curseforge|modrinth|mrpack|server\s*pack|整合包/i.test(texts)) return 'modpack';
+  if (/frpc|frp|隧道|provider|房间.*(启动|错误)|local_port|25565|联机/i.test(texts)) return 'online';
+  if (/HTTP\s*\d{3}|状态码|hash|校验|下载失败|URL|代理/i.test(texts)) return 'download';
+  if (/duplicate|missing depend|incompatible|mixin|mod.*冲突/i.test(texts)) return 'mod';
+  if (/lag|tps|掉帧|卡顿|Can't keep up/i.test(texts)) return 'performance';
+  return 'startup';
+}
+
+export function evidenceSummary(category, state = {}) {
+  let room = null;
+  try { room = getRoomState(); } catch { /* ignore */ }
+  const candidates = [
+    room?.error,
+    state?.lastFailure?.reason,
+    ...(state?.logs || []).slice(-80).map((x) => x?.line ?? x).filter((l) => /error|错误|失败|HTTP\s*\d{3}|frpc|mod|crash|hs_err|内存/i.test(String(l || ''))),
+  ].filter(Boolean);
+  const line = candidates[0] || '没有读到明确的实例/房间错误行';
+  return redact(String(line).slice(0, 260));
+}
+
 function readJson(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
 }
