@@ -193,6 +193,29 @@
             <div class="mod-updates" id="modUpdates" hidden></div>
             <div class="content-groups" id="contentGroups"></div>
           </div>
+
+          <!-- 主页常驻小助手：输入 + 最近几条回复；窄窗口可收起 -->
+          <aside class="home-assistant" id="homeAssistant">
+            <div class="home-assistant-head">
+              <div class="home-assistant-title">
+                <b>绘梨衣小助手</b>
+                <span class="hint" id="aiTarget"></span>
+              </div>
+              <div class="home-assistant-actions">
+                <button class="btn ghost" id="aiAnalyze" type="button">分析最近失败</button>
+                <button class="btn ghost" id="homeAssistantToggle" type="button" aria-expanded="true">收起</button>
+              </div>
+            </div>
+            <div class="assistant-result home-assistant-log" id="aiResult">
+              <div class="empty">问吧。我会带着这次启动的上下文回答。</div>
+            </div>
+            <div class="field-line assistant-chat-line">
+              <input id="aiChatInput" class="input grow" type="text" placeholder="问：为什么进不去游戏？" autocomplete="off">
+              <button class="btn" id="aiChatSend" type="button">发送</button>
+              <button class="btn ghost" id="aiChatNew" type="button">新会话</button>
+            </div>
+            <div class="hint home-assistant-hint">同一会话保留上下文；回复也会在右下角弹出。</div>
+          </aside>
         </section>
 
         <!-- ============ 下载 ============ -->
@@ -704,14 +727,6 @@
               <div class="group-title">启动器设置</div>
 
               <div class="field">
-                <label class="check-line" for="setMascot">
-                  <input type="checkbox" id="setMascot">
-                  <span>显示绘梨衣形象</span>
-                </label>
-                <div class="field-note">右下角的小助手；窄窗口会自动隐藏</div>
-              </div>
-
-              <div class="field">
                 <label>壁纸</label>
                 <div class="field-line">
                   <select id="setWallpaper" class="select grow">
@@ -1007,21 +1022,8 @@
               <div class="field-note">密钥用系统加密保存在本机；日志脱敏后才发给模型。</div>
             </div>
             <div class="assistant-main">
-              <div class="field-line">
-                <button class="btn" id="aiAnalyze">分析最近一次失败</button>
-                <span class="hint" id="aiTarget"></span>
-              </div>
-              <div class="assistant-result" id="aiResult">
-                <div class="empty">问吧。我会带着这次启动的上下文回答。</div>
-              </div>
-              <div class="field-line assistant-chat-line">
-                <input id="aiChatInput" class="input grow" type="text" placeholder="问：为什么进不去游戏？" autocomplete="off">
-                <button class="btn" id="aiChatSend">发送</button>
-                <button class="btn ghost" id="aiChatNew">新会话</button>
-              </div>
-              <div class="hint">同一会话保留上下文；不会每次重新读取全部日志。</div>
-            </div>
-          </div>
+              <div class="field-note assistant-moved-note">对话区已经移到主页右下角，常驻显示。模型配置仍在这里。</div>
+            </div>          </div>
         </section>
 
       </main>
@@ -1040,14 +1042,6 @@
         </div>
       </div>
     </footer>
-  </div>
-
-  <!-- Q 版绘梨衣形象；图片按需加载，点击进入小助手 -->
-  <div class="mascot-layer" id="mascotLayer" hidden>
-    <div class="mascot-bubble" id="mascotBubble" hidden></div>
-    <button class="mascot-button" id="mascotButton" type="button" aria-label="打开绘梨衣小助手">
-      <img id="mascotImage" alt="绘梨衣" decoding="async">
-    </button>
   </div>
 
   <!-- 版本选择弹窗 -->
@@ -1306,6 +1300,7 @@
   </div>
 
 
+  <div class="assistant-toast" id="assistantToast" hidden></div>
   <script src="/face2d.js"></script>
   <script src="/head3d.js"></script>
   <script src="/skin3d.js"></script>
@@ -1313,7 +1308,6 @@
   <script src="/app.js"></script>
   <script src="/pages.js"></script>
   <script src="/assistant.js"></script>
-  <script src="/mascot.js"></script>
   <script src="/update.js"></script>
   <script src="/onboarding.js"></script>
 </body>
