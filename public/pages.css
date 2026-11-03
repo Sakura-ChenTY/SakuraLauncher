@@ -1317,7 +1317,8 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .home-assistant-title .hint { display: none; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .home-assistant-actions { display: flex; gap: 5px; flex: 0 0 auto; flex-wrap: nowrap; }
 .home-assistant-actions .btn { padding: 3px 5px; font-size: 10px; white-space: nowrap; }
-.home-assistant-log { min-height: 54px; max-height: 146px; overflow-y: auto; scrollbar-gutter: stable; margin: 0; white-space: normal; font-size: 11px; line-height: 1.55; }
+.home-assistant-log { min-height: 54px; max-height: 146px; overflow-y: auto; scrollbar-width: none; margin: 0; white-space: normal; font-size: 11px; line-height: 1.55; }
+.home-assistant-log::-webkit-scrollbar { width: 0; height: 0; }
 .home-assistant.is-animating .home-assistant-log,
 .home-assistant.is-collapsed .home-assistant-log { overflow-y: hidden; }
 .home-assistant-log .assistant-msg { margin: 5px 0; padding: 6px 8px; border-radius: 7px; }
@@ -1332,7 +1333,7 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .home-assistant.is-collapsed {
   width: auto;
   max-width: none;
-  max-height: 56px;
+  max-height: none;
   left: 12px;
   right: 12px;
   box-sizing: border-box;
@@ -1345,10 +1346,11 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .home-assistant.is-collapsed .assistant-expand {
   grid-template-rows: 0fr;
   margin-bottom: 0;
+  transition-delay: 100ms;
 }
 .home-assistant.is-collapsed .assistant-expand-inner {
   opacity: 0;
-  transition-delay: 0ms;
+  transition: opacity 100ms ease 0ms;
 }
 .home-assistant.is-collapsed .home-assistant-head {
   display: contents;

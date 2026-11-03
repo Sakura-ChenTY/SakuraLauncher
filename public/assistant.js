@@ -449,6 +449,7 @@
     if (changed) {
       if (assistantExpandTimer) clearTimeout(assistantExpandTimer);
       home.classList.add('is-animating');
+      // 收起先让内容淡出 100ms，再花 240ms 收高度；总时长留 360ms。
       assistantExpandTimer = setTimeout(() => {
         assistantExpandTimer = 0;
         home.classList.remove('is-animating');
@@ -456,7 +457,7 @@
           const box = el('aiResult');
           if (box) box.scrollTop = box.scrollHeight;
         }
-      }, 260);
+      }, collapsed ? 360 : 260);
     }
     home.classList.toggle('is-collapsed', Boolean(collapsed));
     if (btn) {
