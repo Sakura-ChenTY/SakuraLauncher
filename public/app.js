@@ -2301,6 +2301,7 @@ function connectEvents() {
       case 'launch-preflight':
         setStatus('busy', msg.message || '启动前检查…');
         appendLog(`[preflight] ${msg.message || ''}`);
+        if (msg.missing?.length) appendLog(`[preflight] 缺失：${msg.missing.join(' / ')}`);
         showProgress(true);
         updateProgress({ stage: 'preflight', message: msg.message || '启动前检查…' });
         break;
