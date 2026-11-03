@@ -71,6 +71,7 @@ import {
 import { installCurseForgePack, previewCurseForgePack } from './cfpack.js';
 import { createSession, getSession, chatSession } from './assistant-session.js';
 import { detectSymptom, guessSymptom, collectSymptomContext, SYMPTOMS, IMPLEMENTATION_NOTES } from './assistant-diagnostics.js';
+import { previewDiagnosticPackage, createDiagnosticPackage } from './diagnostic-package.js';
 import {
   addTracked,
   removeTracked,
@@ -3195,6 +3196,35 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    if (p === '/api/assistant/diagnose/package/preview' && req.method === 'POST') {
+      const body = await readBody(req);
+      const versionId = String(body.versionId || state.running?.versionId || state.lastFailure?.versionId || '').trim();
+      return json(res, 200, previewDiagnosticPackage({ gameDir: state.gameDir, versionId }));
+    }
+
+    if (p === '/api/assistant/diagnose/package' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const versionId = String(body.versionId || state.running?.versionId || state.lastFailure?.versionId || '').trim();
+        const result = await createDiagnosticPackage({ gameDir: state.gameDir, versionId });
+        return json(res, 200, result);
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
+    if (p === '/api/assistant/diagnose/package/open' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const target = path.resolve(String(body.path || ''));
+        const root = path.resolve(HOME_DIR, 'diagnostic-packages');
+        if (!target.startsWith(root + path.sep)) throw new Error('诊断包目录不合法');
+        spawn('explorer.exe', [path.dirname(target)], { detached: true, stdio: 'ignore' }).unref();
+        return json(res, 200, { ok: true });
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
     if (p === '/api/assistant/diagnose' && req.method === 'POST') {
       const body = await readBody(req);
       try {

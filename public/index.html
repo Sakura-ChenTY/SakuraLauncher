@@ -204,7 +204,8 @@
               </div>
               <div class="home-assistant-actions">
                 <button class="btn ghost" id="aiAnalyze" type="button">分析最近失败</button>
-                <button class="btn ghost" id="homeDiagBtn" type="button">收集诊断</button>`n                <button class="btn ghost" id="homeAssistantToggle" type="button" aria-expanded="true">收起</button>
+                <button class="btn ghost" id="homeDiagBtn" type="button">收集诊断信息</button>
+                <button class="btn ghost" id="homeAssistantToggle" type="button" aria-expanded="true">收起</button>
               </div>
             </div>
             <div class="assistant-result home-assistant-log" id="aiResult">
@@ -1055,6 +1056,9 @@
       <div class="modal-body">
         <pre class="diag-text" id="diagText"></pre>
         <div class="field-line" style="margin-top:12px;justify-content:flex-end">
+          <button class="btn" id="diagPackBtn" hidden>开始打包</button>
+          <button class="btn ghost" id="diagCopyPath" hidden>复制路径</button>
+          <button class="btn ghost" id="diagOpenBtn" hidden>打开所在文件夹</button>
           <button class="btn ghost" id="diagCopy">复制</button>
           <button class="btn" id="diagDone">关闭</button>
         </div>

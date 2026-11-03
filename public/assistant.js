@@ -178,21 +178,102 @@
   }
 
   let lastUserText = '';
+  let diagPreview = null;
+  let diagPackage = null;
 
-  async function collectDiagnosticInfo() {
-    const message = String(el('aiChatInput')?.value || lastUserText || '启动不了').trim();
+  function renderDiagnosticPreview(data) {
+    diagPreview = data;
+    diagPackage = null;
+    if (el('diagTitle')) el('diagTitle').textContent = '收集诊断信息';
+    const lines = [
+      `实例：${data.versionId || '未选择'}`,
+      `输出目录：${data.outputDir || ''}`,
+      '',
+      '将要收集：',
+      ...(data.files || []).map((f) => `· ${f.label}${f.size ? `（${Math.round(f.size / 1024)} KB）` : ''}`),
+      '',
+      '脱敏规则：',
+      ...(data.redaction || []).map((r) => `· ${r}`),
+      '',
+      '只在本机生成 zip，不上传。',
+    ];
+    if (el('diagText')) el('diagText').textContent = lines.join('\n');
+    if (el('diagPackBtn')) el('diagPackBtn').hidden = false;
+    if (el('diagCopyPath')) el('diagCopyPath').hidden = true;
+    if (el('diagOpenBtn')) el('diagOpenBtn').hidden = true;
+    if (el('diagModal')) el('diagModal').hidden = false;
+  }
+
+  function renderDiagnosticPackage(pkg) {
+    diagPackage = pkg;
+    if (el('diagTitle')) el('diagTitle').textContent = '诊断包已生成';
+    const lines = [
+      `路径：${pkg.zipPath || ''}`,
+      '',
+      '包内文件：',
+      ...(pkg.files || []).map((f) => `· ${f.name}（${f.bytes} bytes）`),
+      '',
+      '脱敏规则：',
+      ...(pkg.redaction || []).map((r) => `· ${r}`),
+      '',
+      '没有上传，文件只在本机。',
+    ];
+    if (el('diagText')) el('diagText').textContent = lines.join('\n');
+    if (el('diagPackBtn')) el('diagPackBtn').hidden = true;
+    if (el('diagCopyPath')) el('diagCopyPath').hidden = false;
+    if (el('diagOpenBtn')) el('diagOpenBtn').hidden = false;
+    if (el('diagModal')) el('diagModal').hidden = false;
+  }
+
+  async function openDiagnosticPreview() {
     try {
-      const d = await api('/api/assistant/diagnose', {
+      const versionId = state.selectedVersion || state.lastFailure?.versionId || '';
+      const data = await api('/api/assistant/diagnose/package/preview', {
         method: 'POST',
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ versionId }),
       });
-      if (el('diagTitle')) el('diagTitle').textContent = `诊断信息 · ${d.label || d.category || ''}`;
-      if (el('diagText')) el('diagText').textContent = d.text || '没有收集到信息';
-      if (el('diagModal')) el('diagModal').hidden = false;
+      renderDiagnosticPreview(data);
     } catch (e) {
-      showAssistantToast('收集诊断信息失败：' + e.message, { timeout: 6000 });
+      showAssistantToast('列出诊断文件失败：' + e.message, { timeout: 6000 });
     }
   }
+
+  async function createDiagnosticPackageNow() {
+    try {
+      const versionId = diagPreview?.versionId || state.selectedVersion || '';
+      const data = await api('/api/assistant/diagnose/package', {
+        method: 'POST',
+        body: JSON.stringify({ versionId }),
+      });
+      renderDiagnosticPackage(data);
+      showAssistantToast('诊断包已生成，可复制路径或打开文件夹。', { timeout: 5000 });
+    } catch (e) {
+      showAssistantToast('生成诊断包失败：' + e.message, { timeout: 7000 });
+    }
+  }
+
+  async function openDiagnosticFolder() {
+    if (!diagPackage?.zipPath) return;
+    try {
+      await api('/api/assistant/diagnose/package/open', {
+        method: 'POST',
+        body: JSON.stringify({ path: diagPackage.zipPath }),
+      });
+    } catch (e) {
+      showAssistantToast('打开文件夹失败：' + e.message, { timeout: 5000 });
+    }
+  }
+
+  async function copyDiagnosticPath() {
+    if (!diagPackage?.zipPath) return;
+    try {
+      await navigator.clipboard.writeText(diagPackage.zipPath);
+      if (typeof toast === 'function') toast('诊断包路径已复制');
+    } catch {
+      if (typeof toast === 'function') toast('复制失败，请手动选中路径', 'err');
+    }
+  }
+
   async function sendChat(text, { diagnostic = false } = {}) {
     const message = String(text ?? '').trim();
     if (!message || sending) return;
@@ -220,6 +301,7 @@
       renderChat(msgs, chatActions);
       if (el('aiTarget')) el('aiTarget').textContent = `会话 ${sessionId.slice(0, 8)} · ${targetVersion() || '最近失败'}`;
       showAssistantToast(d.reply || '没有新的分析结果。');
+      if (d.package) renderDiagnosticPackage(d.package);
     } catch (e) {
       if (pending) pending.querySelector('.assistant-msg-text').textContent = '出了点问题：' + e.message;
       showAssistantToast('出错了：' + e.message, { sticky: false, timeout: 6000 });
@@ -325,7 +407,10 @@
     el('aiAnalyze')?.addEventListener('click', runAnalyze);
     el('aiChatSend')?.addEventListener('click', () => sendChat(el('aiChatInput')?.value));
     el('aiChatNew')?.addEventListener('click', newSession);
-    el('homeDiagBtn')?.addEventListener('click', collectDiagnosticInfo);
+    el('homeDiagBtn')?.addEventListener('click', openDiagnosticPreview);
+    el('diagPackBtn')?.addEventListener('click', createDiagnosticPackageNow);
+    el('diagOpenBtn')?.addEventListener('click', openDiagnosticFolder);
+    el('diagCopyPath')?.addEventListener('click', copyDiagnosticPath);
     el('diagClose')?.addEventListener('click', () => { el('diagModal').hidden = true; });
     el('diagDone')?.addEventListener('click', () => { el('diagModal').hidden = true; });
     el('diagCopy')?.addEventListener('click', async () => {
