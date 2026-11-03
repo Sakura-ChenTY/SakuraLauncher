@@ -1680,3 +1680,50 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
   right: 8px;
   z-index: 2;
 }
+
+/* 标题/收起固定在容器上边框，随容器高度动画一起移动；底行输入区域让位 */
+.home-assistant .home-assistant-title {
+  position: absolute;
+  top: 0;
+  left: 8px;
+  padding-top: 6px;
+  z-index: 2;
+  flex: 0 0 auto;
+}
+.home-assistant #homeAssistantToggle {
+  position: absolute;
+  top: 0;
+  right: 8px;
+  padding-top: 6px;
+  z-index: 2;
+}
+.home-assistant-bar {
+  transition: padding-left 240ms cubic-bezier(.2,.8,.2,1), padding-right 240ms cubic-bezier(.2,.8,.2,1);
+}
+.home-assistant.is-collapsed .home-assistant-bar {
+  padding-left: 74px;
+  padding-right: 34px;
+}
+.home-assistant:not(.is-collapsed) .home-assistant-bar {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.home-assistant:not(.is-collapsed) .home-assistant-title {
+  top: 0;
+  left: 8px;
+  padding-top: 6px;
+}
+.home-assistant:not(.is-collapsed) #homeAssistantToggle {
+  top: 0;
+  right: 8px;
+  padding-top: 6px;
+}
+
+.home-assistant .home-assistant-title,
+.home-assistant #homeAssistantToggle { top: -0.6px; }
+
+.home-assistant:not(.is-collapsed) .home-assistant-title,
+.home-assistant.is-collapsed .home-assistant-title,
+.home-assistant:not(.is-collapsed) #homeAssistantToggle,
+.home-assistant.is-collapsed #homeAssistantToggle { top: -0.6px; }

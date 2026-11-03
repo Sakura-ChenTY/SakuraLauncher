@@ -443,13 +443,11 @@
   let assistantReflowTimer = 0;
   function barReflowItems(home) {
     return [
-      home.querySelector('.home-assistant-title'),
       el('aiChatInput'),
       el('aiChatSend'),
       el('aiAnalyze'),
       el('homeDiagBtn'),
       el('homeAssistantMore'),
-      el('homeAssistantToggle'),
     ].filter(Boolean);
   }
   function captureBarReflow(home) {
