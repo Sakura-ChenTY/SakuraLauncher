@@ -167,5 +167,11 @@ export async function exportMrpack({ gameDir, versionId, destination, options = 
     recognized,
     overridesCount: overrides.length + clientOverrides.length,
     summary: `已识别 ${recognized} 个 Modrinth 文件，${overrides.length + clientOverrides.length} 个文件放进 overrides`,
+    shareText: [
+      `${index.name} ${index.version}`,
+      `MC ${index.game.version}`,
+      `${index.game.loader || 'vanilla'}`,
+      `${index.files.length} 个 Mod`,
+    ].join('\n'),
   };
 }

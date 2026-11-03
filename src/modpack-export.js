@@ -15,6 +15,22 @@ const DEFAULT_SELECTED = new Set(['mods', 'config', 'resourcepacks']);
 const SECRET_RE = /token|api_key|secret|password|passwd|session|cookie|access_key/i;
 const FORBIDDEN = new Set(['logs', 'crash-reports', '.cache', '.backup', 'server', '.mclauncher']);
 
+function toolVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version || '0.0.0';
+  } catch { return '0.0.0'; }
+}
+
+function loaderLabel(loader) {
+  return {
+    vanilla: 'Vanilla',
+    fabric: 'Fabric',
+    forge: 'Forge',
+    neoforge: 'NeoForge',
+    quilt: 'Quilt',
+  }[loader] || loader || 'Vanilla';
+}
+
 function selectedDirs(options = {}, whileRunning = false) {
   const selected = new Set();
   for (const key of CATEGORY_DIRS) {
@@ -166,7 +182,41 @@ export async function exportInstance({ gameDir, versionId, destination, options 
     options: preview.options,
     whileRunning,
   };
+  const packName = preview.meta.packName || versionId;
+  const packVersion = String(options.version || preview.meta.packVersion || '1.0');
+  const loaderName = loaderLabel(preview.meta.loader);
+  const modCount = files.filter((f) => /^mods\/[^/]+\.jar(?:\.disabled)?$/i.test(f.rel)).length;
+  const packInfo = {
+    format: 'sakura-instance',
+    name: packName,
+    version: packVersion,
+    minecraft: preview.meta.gameVersion,
+    loader: loaderName,
+    mods: modCount,
+    exportedAt: new Date().toISOString(),
+    exporter: `SakuraLauncher ${toolVersion()}`,
+  };
+  const readme = [
+    `${packName} ${packVersion}`,
+    '',
+    '这是一个 Minecraft 实例整合包。',
+    `MC 版本：${preview.meta.gameVersion}`,
+    `加载器：${loaderName}`,
+    `Mod 数量：${modCount}`,
+    '',
+    '用 SakuraLauncher 打开这个 zip 即可导入；如果使用其他启动器，请按 zip 内的版本描述手动建立实例。',
+    '装之前先备份你的存档。',
+    '',
+  ].join('\n');
+  const shareText = [
+    `${packName} ${packVersion}`,
+    `MC ${preview.meta.gameVersion}`,
+    loaderName,
+    `${modCount} 个 Mod`,
+  ].join('\n');
   const entries = files.map((file) => ({ name: file.rel, file: file.full }));
+  entries.push({ name: 'pack-info.json', data: Buffer.from(JSON.stringify(packInfo, null, 2), 'utf8') });
+  entries.push({ name: 'README.txt', data: Buffer.from(readme, 'utf8') });
   entries.push({ name: 'manifest.json', data: Buffer.from(JSON.stringify(manifest, null, 2), 'utf8') });
   try {
     await writeZipStream(zipPath, entries, {
@@ -188,12 +238,14 @@ export async function exportInstance({ gameDir, versionId, destination, options 
     outputDir: outDir,
     name: zipName,
     bytes: fs.statSync(zipPath).size,
-    files: entries.filter((e) => e.name !== 'manifest.json').map((e) => e.name),
+    files: entries.filter((e) => !['manifest.json', 'pack-info.json', 'README.txt'].includes(e.name)).map((e) => e.name),
     errors,
     warnings: preview.warnings || [],
     included: preview.included,
     skipped: preview.skipped,
     secretScan: preview.secretScan,
+    packInfo,
+    shareText,
     preview,
   };
 }

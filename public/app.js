@@ -575,7 +575,7 @@ function showVerMenu(x, y, versionId) {
 }
 
 /* ---- 实例导出 ---- */
-const exportState = { versionId: '', preview: null, zipPath: '' };
+const exportState = { versionId: '', preview: null, zipPath: '', shareText: '' };
 
 let activeTask = null;
 
@@ -645,6 +645,7 @@ async function openExport(versionId) {
     exportState.versionId = versionId;
     exportState.preview = p;
     exportState.zipPath = '';
+    exportState.shareText = '';
     const info = $('exportInfo');
     if (info) {
       info.textContent = [
@@ -669,6 +670,7 @@ async function openExport(versionId) {
     if ($('exportProgress')) $('exportProgress').textContent = state.running ? '游戏开着，存档没带' : '';
     if ($('exportResult')) $('exportResult').textContent = '';
     if ($('exportCopyPath')) $('exportCopyPath').hidden = true;
+    if ($('exportShareInfo')) $('exportShareInfo').hidden = true;
     if ($('exportOpenFolder')) $('exportOpenFolder').hidden = true;
     if ($('exportStart')) {
       $('exportStart').disabled = false;
@@ -748,6 +750,7 @@ async function startExport() {
       return;
     }
     exportState.zipPath = r.zipPath;
+    exportState.shareText = r.shareText || '';
     if ($('exportProgress')) $('exportProgress').textContent = r.warnings?.length ? `导出完成：${r.warnings.join('；')}` : '导出完成';
     if (r.format === 'mrpack') {
       if ($('exportResult')) {
@@ -781,6 +784,7 @@ async function startExport() {
       }
     }
     if ($('exportCopyPath')) $('exportCopyPath').hidden = false;
+    if ($('exportShareInfo')) $('exportShareInfo').hidden = !exportState.shareText;
     if ($('exportOpenFolder')) $('exportOpenFolder').hidden = false;
     if ($('exportStart')) {
       $('exportStart').textContent = '重新导出';
@@ -806,6 +810,16 @@ async function copyExportPath() {
     toast('导出包路径已复制');
   } catch {
     toast('复制失败，请手动选中路径', 'err');
+  }
+}
+
+async function copyExportShare() {
+  if (!exportState.shareText) return;
+  try {
+    await navigator.clipboard.writeText(exportState.shareText);
+    toast('分享信息已复制');
+  } catch {
+    toast('复制失败，请手动选中', 'err');
   }
 }
 
@@ -4950,6 +4964,7 @@ $('taskCancel')?.addEventListener('click', cancelActiveTask);
 $('exportCancel')?.addEventListener('click', cancelActiveTask);
 $('savesPageCancel')?.addEventListener('click', cancelActiveTask);
 $('exportCopyPath')?.addEventListener('click', copyExportPath);
+$('exportShareInfo')?.addEventListener('click', copyExportShare);
 $('exportOpenFolder')?.addEventListener('click', openExportFolder);
 
 $('launchRetryBtn')?.addEventListener('click', () => {
