@@ -1316,10 +1316,7 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
   gap: 7px;
 }
 .home-assistant.is-collapsed .home-assistant-head {
-  flex: 1 1 auto;
-  min-width: 0;
-  gap: 6px;
-  overflow: hidden;
+  display: contents;
 }
 .home-assistant.is-collapsed .home-assistant-title {
   flex-direction: row;
@@ -1334,7 +1331,13 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
   text-overflow: ellipsis;
 }
 .home-assistant.is-collapsed .home-assistant-title .hint { display: none; }
-.home-assistant.is-collapsed .home-assistant-actions { flex: 0 1 auto; min-width: 0; }
+.home-assistant.is-collapsed .home-assistant-actions { display: contents; }
+.home-assistant.is-collapsed .home-assistant-title { order: 1; }
+.home-assistant.is-collapsed .assistant-chat-line { order: 2; }
+.home-assistant.is-collapsed #aiAnalyze { order: 3; }
+.home-assistant.is-collapsed #homeDiagBtn { order: 4; }
+.home-assistant.is-collapsed #homeAssistantMore { order: 5; }
+.home-assistant.is-collapsed #homeAssistantToggle { order: 6; }
 .home-assistant.is-collapsed .home-assistant-actions .btn { padding: 3px 5px; }
 .home-assistant.is-collapsed .assistant-chat-line {
   display: flex;
