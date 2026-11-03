@@ -1575,6 +1575,8 @@ async function doLaunch(versionId, joinAddress, opts = {}) {
     const retry = $('launchRetryBtn');
     if (retry) retry.hidden = false;
     if (e.code === 'PREFLIGHT_MISSING') {
+      state.preflightMissing = e.missing || [];
+      state.preflightMessage = e.message || '';
       showPreflightError(e.missing, e.message);
       return;
     }
@@ -4266,6 +4268,14 @@ $('launchRetryBtn')?.addEventListener('click', () => {
 });
 
 $('preflightClose')?.addEventListener('click', () => { $('preflightModal').hidden = true; });
+$('preflightAssistant')?.addEventListener('click', () => {
+  const v = state.launchRetryVersion || state.selectedVersion || '';
+  const missing = state.preflightMissing || [];
+  const message = state.preflightMessage || '';
+  $('preflightModal').hidden = true;
+  document.querySelector('.nav-item[data-tab="home"]')?.click();
+  setTimeout(() => window.assistantExplainPreflight?.({ versionId: v, missing, message }), 80);
+});
 $('preflightRetry')?.addEventListener('click', () => {
   const v = state.launchRetryVersion || state.selectedVersion;
   $('preflightModal').hidden = true;

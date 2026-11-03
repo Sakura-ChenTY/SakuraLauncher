@@ -380,6 +380,22 @@
     await sendChat('分析最近一次启动失败，为什么进不去游戏？', { diagnostic: true });
   }
 
+  window.assistantExplainPreflight = async ({ versionId, missing = [], message = '' } = {}) => {
+    const detail = (missing || []).slice(0, 80).map((x) => {
+      const label = x.label || x.kind || '文件';
+      return x.path ? `- ${label}：${x.path}` : `- ${label}`;
+    }).join('\n');
+    const text = [
+      '启动前文件检查没有通过。',
+      `版本：${versionId || '当前实例'}`,
+      detail ? `缺失文件：\n${detail}` : '',
+      message ? `后端信息：${message}` : '',
+      '请解释这些文件为什么会影响启动，并给出最小、可执行的处理建议。',
+    ].filter(Boolean).join('\n\n');
+    setHomeCollapsed(false, { persist: true });
+    return sendChat(text, { diagnostic: true });
+  };
+
   async function onCrash(incident) {
     if (!incident?.id) return;
     try {
