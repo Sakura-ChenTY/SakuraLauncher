@@ -67,6 +67,23 @@ html[data-theme="violet"], body[data-theme="violet"] {
   --accent-2: #8465d6;
 }
 
+html[data-theme="light"], body[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f5f2eb;
+  --bg-2: #fffefb;
+  --bg-2-rgb: 255, 254, 251;
+  --bg-3: #eae4d8;
+  --line: #d8d0c2;
+  --text: #29251f;
+  --text-dim: #746b5d;
+  --accent: #b7791f;
+  --accent-2: #8f5c14;
+  --glass: rgba(255, 254, 251, .72);
+  --glass-strong: rgba(255, 254, 251, .88);
+  --glass-line: rgba(41, 37, 31, .14);
+  --glass-hi: rgba(41, 37, 31, .05);
+}
+
 /* 自定义主题色只需覆盖这两个变量，JS 会写进 <html> 的 style */
 html[data-theme="custom"], body[data-theme="custom"] {
   --bg: #0b0b0d;
@@ -78,6 +95,40 @@ html[data-theme="custom"], body[data-theme="custom"] {
   --text-dim: #9a9280;
   --accent: #d4af37;
   --accent-2: #b8952c;
+}
+
+body.theme-light {
+  --glass: rgba(255, 254, 251, .72);
+  --glass-strong: rgba(255, 254, 251, .88);
+  --glass-line: rgba(41, 37, 31, .14);
+  --glass-hi: rgba(41, 37, 31, .05);
+}
+
+/* 浅色主题下把深色玻璃换成浅色玻璃，否则白底会被一层灰雾压暗。 */
+body[data-theme="light"] .wallpaper, body.theme-light .wallpaper {
+  background-color: #f5f2eb;
+  filter: blur(13px) saturate(105%) brightness(1.04);
+  opacity: .28;
+}
+body[data-theme="light"] .wallpaper::after, body.theme-light .wallpaper::after {
+  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.30));
+}
+body[data-theme="light"] .topbar, body.theme-light .topbar {
+  background: rgba(255, 254, 251, .78);
+  border-bottom-color: rgba(41, 37, 31, .12);
+}
+body[data-theme="light"] .sidebar, body.theme-light .sidebar {
+  background: rgba(255, 254, 251, .62);
+  border-right-color: rgba(41, 37, 31, .12);
+}
+body[data-theme="light"] .glass,
+body[data-theme="light"] .panel,
+body[data-theme="light"] .content-panel,
+body.theme-light .glass,
+body.theme-light .panel,
+body.theme-light .content-panel {
+  background: rgba(255, 254, 251, .82);
+  border-color: rgba(41, 37, 31, .14);
 }
 
 /* ---------------- 左侧导航 ---------------- */
@@ -1938,3 +1989,9 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .content-backup-row .kind { color: var(--accent); }
 
 .task-cancel { margin-left: 8px; flex: 0 0 auto; }
+
+/* 设置分类：只影响展示，不改变保存逻辑 */
+.settings-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; padding: 4px; width: fit-content; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); }
+.settings-tab { border: 0; border-radius: 7px; padding: 6px 12px; background: transparent; color: var(--text-dim); font: inherit; font-size: 12px; cursor: pointer; }
+.settings-tab:hover { color: var(--text); background: var(--bg-3); }
+.settings-tab.active { color: #12100b; background: var(--accent); }

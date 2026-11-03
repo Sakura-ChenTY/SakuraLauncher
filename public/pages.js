@@ -1550,11 +1550,61 @@ const THEMES = [
   { id: 'ocean', name: '深海', note: '冷色 · 清爽', bg: '#101a2b', accent: '#4a9eff' },
   { id: 'forest', name: '初音绿', note: '经典 · 明亮', bg: '#161c24', accent: '#39c5bb' },
   { id: 'violet', name: '紫罗兰', note: '安静 · 夜晚', bg: '#171424', accent: '#a78bfa' },
+  { id: 'light', name: '白昼', note: '浅色 · 白底', bg: '#f5f2eb', accent: '#b7791f' },
 ];
 
 const THEME_KEY = 'sakura.theme';
 const ACCENT_KEY = 'sakura.accent';
+const BG_COLOR_KEY = 'sakura.bgColor';
+const TEXT_COLOR_KEY = 'sakura.textColor';
 const BG_KEY = 'sakura.bg';
+
+function rgbOf(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return { r: 15, g: 20, b: 25 };
+  const n = parseInt(m[1], 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+function hexOf({ r, g, b }) {
+  return '#' + [r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+}
+
+function mixHex(a, b, t) {
+  const x = rgbOf(a);
+  const y = rgbOf(b);
+  return hexOf({ r: x.r + (y.r - x.r) * t, g: x.g + (y.g - x.g) * t, b: x.b + (y.b - x.b) * t });
+}
+
+function applyCustomTheme(accent, bg, text) {
+  const accentHex = /^#[0-9a-f]{6}$/i.test(accent) ? accent : '#d4af37';
+  const bgHex = /^#[0-9a-f]{6}$/i.test(bg) ? bg : '#0b0b0d';
+  const textHex = /^#[0-9a-f]{6}$/i.test(text) ? text : '#f0e9d8';
+  const bg2 = mixHex(bgHex, '#ffffff', 0.07);
+  const bg3 = mixHex(bgHex, '#ffffff', 0.12);
+  const dim = mixHex(textHex, bgHex, 0.48);
+  const c = rgbOf(bg2);
+  document.documentElement.dataset.theme = 'custom';
+  document.body.dataset.theme = 'custom';
+  const root = document.documentElement.style;
+  root.setProperty('--accent', accentHex);
+  root.setProperty('--accent-2', shade(accentHex, -0.18));
+  root.setProperty('--bg', bgHex);
+  root.setProperty('--bg-2', bg2);
+  root.setProperty('--bg-3', bg3);
+  root.setProperty('--bg-2-rgb', `${c.r}, ${c.g}, ${c.b}`);
+  root.setProperty('--text', textHex);
+  root.setProperty('--text-dim', dim);
+  const luminance = (c.r * 0.299 + c.g * 0.587 + c.b * 0.114) / 255;
+  const light = luminance > 0.55;
+  document.documentElement.style.colorScheme = light ? 'light' : 'dark';
+  document.body.classList.toggle('theme-light', light);
+  localStorage.setItem(ACCENT_KEY, accentHex);
+  localStorage.setItem(BG_COLOR_KEY, bgHex);
+  localStorage.setItem(TEXT_COLOR_KEY, textHex);
+  localStorage.setItem(THEME_KEY, 'custom');
+  renderThemeGrid();
+}
 
 function applyTheme(id) {
   // html 和 body 都写：CSS 变量在 html 上也能立刻级联，
@@ -1562,23 +1612,27 @@ function applyTheme(id) {
   document.documentElement.dataset.theme = id;
   document.body.dataset.theme = id;
   // 预设主题优先于之前自定义留下的 inline 变量
-  for (const v of ['--accent', '--accent-2', '--bg', '--bg-2', '--bg-3']) {
+  for (const v of ['--accent', '--accent-2', '--bg', '--bg-2', '--bg-3', '--bg-2-rgb', '--text', '--text-dim']) {
     document.documentElement.style.removeProperty(v);
   }
+  document.documentElement.style.colorScheme = id === 'light' ? 'light' : 'dark';
+  document.body.classList.toggle('theme-light', id === 'light');
   localStorage.setItem(THEME_KEY, id);
   renderThemeGrid();
 }
 
+function currentVar(name, fallback) {
+  const value = getComputedStyle(document.body).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
 /** 自定义主题色：直接改 CSS 变量，优先级高于预设 */
 function applyCustomAccent(hex) {
-  localStorage.setItem(ACCENT_KEY, hex);
-  document.documentElement.dataset.theme = 'custom';
-  document.body.dataset.theme = 'custom';
-  localStorage.setItem(THEME_KEY, 'custom');
-  document.documentElement.style.setProperty('--accent', hex);
-  // 深一档给 --accent-2，让渐变/悬停有层次
-  document.documentElement.style.setProperty('--accent-2', shade(hex, -0.18));
-  renderThemeGrid();
+  applyCustomTheme(
+    hex,
+    localStorage.getItem(BG_COLOR_KEY) || currentVar('--bg', '#0b0b0d'),
+    localStorage.getItem(TEXT_COLOR_KEY) || currentVar('--text', '#f0e9d8')
+  );
 }
 
 /** 把 #rrggbb 调亮/调暗，amount 为负变暗 */
@@ -1610,8 +1664,11 @@ function renderThemeGrid() {
       applyTheme(btn.dataset.themeId);
       // 换了预设就把自定义色清掉，否则两套规则打架
       localStorage.removeItem(ACCENT_KEY);
-      document.documentElement.style.removeProperty('--accent');
-      document.documentElement.style.removeProperty('--accent-2');
+      localStorage.removeItem(BG_COLOR_KEY);
+      localStorage.removeItem(TEXT_COLOR_KEY);
+      for (const v of ['--accent', '--accent-2', '--bg', '--bg-2', '--bg-3', '--bg-2-rgb', '--text', '--text-dim']) {
+        document.documentElement.style.removeProperty(v);
+      }
     });
   });
 }
@@ -1619,6 +1676,22 @@ function renderThemeGrid() {
 /* 自定义色 / 背景图 */
 document.getElementById('customAccent').addEventListener('input', (e) => {
   applyCustomAccent(e.target.value);
+});
+
+document.getElementById('customBg')?.addEventListener('input', (e) => {
+  applyCustomTheme(
+    localStorage.getItem(ACCENT_KEY) || currentVar('--accent', '#d4af37'),
+    e.target.value,
+    localStorage.getItem(TEXT_COLOR_KEY) || currentVar('--text', '#f0e9d8')
+  );
+});
+
+document.getElementById('customText')?.addEventListener('input', (e) => {
+  applyCustomTheme(
+    localStorage.getItem(ACCENT_KEY) || currentVar('--accent', '#d4af37'),
+    localStorage.getItem(BG_COLOR_KEY) || currentVar('--bg', '#0b0b0d'),
+    e.target.value
+  );
 });
 
 document.getElementById('bgPick').addEventListener('click', () => {
@@ -1668,15 +1741,21 @@ function applyBg() {
 (function restoreTheme() {
   const id = localStorage.getItem(THEME_KEY);
   const accent = localStorage.getItem(ACCENT_KEY);
+  const bg = localStorage.getItem(BG_COLOR_KEY);
+  const text = localStorage.getItem(TEXT_COLOR_KEY);
   if (id) {
     document.documentElement.dataset.theme = id;
     document.body.dataset.theme = id;
   }
-  // 只有当前就是 custom 才恢复自定义 accent；否则预设会被 inline 色盖掉
-  if (accent && id === 'custom') {
-    document.documentElement.style.setProperty('--accent', accent);
-    document.documentElement.style.setProperty('--accent-2', shade(accent, -0.18));
+  // 只有当前就是 custom 才恢复自定义色；否则预设会被 inline 色盖掉
+  if (id === 'custom') {
+    applyCustomTheme(accent || '#d4af37', bg || '#0b0b0d', text || '#f0e9d8');
+  } else if (id === 'light') {
+    document.documentElement.style.colorScheme = 'light';
   }
+  if (document.getElementById('customAccent')) document.getElementById('customAccent').value = accent || '#d4af37';
+  if (document.getElementById('customBg')) document.getElementById('customBg').value = bg || '#0b0b0d';
+  if (document.getElementById('customText')) document.getElementById('customText').value = text || '#f0e9d8';
   applyBg();
 })();
 
@@ -1952,3 +2031,38 @@ document.getElementById('setMemMaxRange')?.addEventListener('pointerdown', () =>
 document.getElementById('setMemMax')?.addEventListener('input', () => {
   if (typeof updateMemTotal === 'function') updateMemTotal();
 });
+
+/* ---------------- 设置分类 ---------------- */
+function initSettingsCategories() {
+  const panel = document.getElementById('panel-settings');
+  const tabs = document.getElementById('settingsTabs');
+  if (!panel || !tabs) return;
+  const groups = [...panel.querySelectorAll('.settings-group')];
+  const byTitle = {
+    '游戏设置': 'game',
+    '更新检查': 'download',
+    '下载设置': 'download',
+    '启动器设置': 'launcher',
+    '高级配置（插件）': 'advanced',
+    'CurseForge API': 'advanced',
+  };
+  for (const group of groups) {
+    const title = group.querySelector('.group-title')?.textContent.trim() || '';
+    group.dataset.settingsCat = byTitle[title] || 'advanced';
+  }
+  const buttons = [...tabs.querySelectorAll('[data-settings-cat]')];
+  const apply = (cat) => {
+    for (const group of groups) group.hidden = cat !== 'all' && group.dataset.settingsCat !== cat;
+    for (const btn of buttons) {
+      const on = btn.dataset.settingsCat === cat;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-selected', String(on));
+    }
+    localStorage.setItem('sakura.settingsCategory', cat);
+  };
+  const saved = localStorage.getItem('sakura.settingsCategory') || 'all';
+  apply(buttons.some((b) => b.dataset.settingsCat === saved) ? saved : 'all');
+  for (const btn of buttons) btn.addEventListener('click', () => apply(btn.dataset.settingsCat));
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initSettingsCategories);
+else initSettingsCategories();

@@ -644,6 +644,14 @@
             </div>
           </div>
 
+          <div class="settings-tabs" id="settingsTabs" role="tablist" aria-label="设置分类">
+            <button class="settings-tab active" type="button" data-settings-cat="all">全部</button>
+            <button class="settings-tab" type="button" data-settings-cat="game">游戏</button>
+            <button class="settings-tab" type="button" data-settings-cat="download">下载与更新</button>
+            <button class="settings-tab" type="button" data-settings-cat="launcher">启动器</button>
+            <button class="settings-tab" type="button" data-settings-cat="advanced">高级</button>
+          </div>
+
           <div class="settings-scroll">
             <!-- 游戏设置 -->
             <div class="settings-group">
@@ -937,6 +945,22 @@
                 <div class="field-line">
                   <input id="customAccent" class="input color-input" type="color" value="#d4af37">
                   <span class="hint">按钮、高亮、开关都会跟着变</span>
+                </div>
+              </div>
+
+              <div class="field">
+                <label>背景色</label>
+                <div class="field-line">
+                  <input id="customBg" class="input color-input" type="color" value="#0b0b0d">
+                  <span class="hint">自定义底色，浅色深色都可以</span>
+                </div>
+              </div>
+
+              <div class="field">
+                <label>文字色</label>
+                <div class="field-line">
+                  <input id="customText" class="input color-input" type="color" value="#f0e9d8">
+                  <span class="hint">建议和背景色保持足够对比</span>
                 </div>
               </div>
 
