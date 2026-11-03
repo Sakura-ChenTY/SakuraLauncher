@@ -1291,13 +1291,13 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
   grid-template-rows: 1fr;
   overflow: hidden;
   margin-bottom: 7px;
-  transition: grid-template-rows 220ms cubic-bezier(.2,.8,.2,1);
+  transition: grid-template-rows 240ms cubic-bezier(.4,0,.2,1);
 }
 .assistant-expand-inner {
   min-height: 0;
   overflow: hidden;
   opacity: 1;
-  transition: opacity 220ms cubic-bezier(.2,.8,.2,1) 0ms;
+  transition: opacity 160ms cubic-bezier(.4,0,.2,1) 0ms;
 }
 .home-assistant-bar {
   display: flex;
@@ -1389,7 +1389,7 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
   overflow: hidden;
 
 }
-.home-assistant.is-collapsed .assistant-expand-inner { opacity: 0; transition: opacity 220ms cubic-bezier(.2,.8,.2,1) 0ms; }
+.home-assistant.is-collapsed .assistant-expand-inner { opacity: 0; transition: opacity 160ms cubic-bezier(.4,0,.2,1) 0ms; }
 .home-assistant.is-collapse-done .assistant-expand {
   visibility: hidden;
   pointer-events: none;
