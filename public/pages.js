@@ -1550,7 +1550,7 @@ const THEMES = [
   { id: 'ocean', name: '深海', note: '冷色 · 清爽', bg: '#101a2b', accent: '#4a9eff' },
   { id: 'forest', name: '初音绿', note: '经典 · 明亮', bg: '#161c24', accent: '#39c5bb' },
   { id: 'violet', name: '紫罗兰', note: '安静 · 夜晚', bg: '#171424', accent: '#a78bfa' },
-  { id: 'light', name: '白昼', note: '浅色 · 白底', bg: '#f5f2eb', accent: '#b7791f' },
+  { id: 'light', name: 'PCL 蓝白', note: '蓝白 · 浅色', bg: '#f5f5f5', accent: '#1370f3' },
 ];
 
 const THEME_KEY = 'sakura.theme';

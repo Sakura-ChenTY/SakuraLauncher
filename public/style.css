@@ -557,7 +557,7 @@ main { flex: 1; overflow: hidden; position: relative; min-width: 0; }
   transition: background .15s, opacity .15s;
   white-space: nowrap;
 }
-.btn:hover:not(:disabled) { background: var(--accent-2); }
+.btn:hover:not(:disabled) { background: var(--accent-hover, var(--accent-2)); }
 .btn:disabled { opacity: .4; cursor: not-allowed; }
 
 .btn.ghost {
