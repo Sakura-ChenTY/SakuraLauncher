@@ -420,6 +420,28 @@
   window.assistantOnFailure = showBubble;
   window.assistantCrash = onCrash;
 
+  let assistantReserveFrame = 0;
+  let assistantResizeObserver = null;
+  function syncAssistantReserve() {
+    const panel = el('panel-home');
+    const home = el('homeAssistant');
+    if (!panel || !home) return;
+    const collapsed = home.classList.contains('is-collapsed');
+    panel.classList.toggle('has-collapsed-assistant', collapsed);
+    if (!collapsed) {
+      panel.style.removeProperty('--assistant-bar-height');
+      return;
+    }
+    const height = Math.ceil(home.getBoundingClientRect().height || 0);
+    if (height > 0) panel.style.setProperty('--assistant-bar-height', `${height}px`);
+  }
+  function scheduleAssistantReserve() {
+    if (assistantReserveFrame) cancelAnimationFrame(assistantReserveFrame);
+    assistantReserveFrame = requestAnimationFrame(() => {
+      assistantReserveFrame = 0;
+      syncAssistantReserve();
+    });
+  }
   function setHomeCollapsed(collapsed, { persist = false } = {}) {
     const home = el('homeAssistant');
     const btn = el('homeAssistantToggle');
@@ -437,6 +459,7 @@
     if (more) more.hidden = !collapsed;
     if (!collapsed && el('homeAssistantMoreMenu')) el('homeAssistantMoreMenu').hidden = true;
     if (persist) localStorage.setItem('sakura.homeAssistantCollapsed', collapsed ? '1' : '0');
+    scheduleAssistantReserve();
   }
   function init() {
     if (!el('aiBase')) return;
@@ -486,6 +509,14 @@
     });
     const savedCollapsed = localStorage.getItem('sakura.homeAssistantCollapsed');
     setHomeCollapsed(savedCollapsed === '1' || (savedCollapsed === null && window.innerWidth < 760));
+    if (window.ResizeObserver) {
+      const homeForResize = el('homeAssistant');
+      if (homeForResize) {
+        assistantResizeObserver = new ResizeObserver(scheduleAssistantReserve);
+        assistantResizeObserver.observe(homeForResize);
+      }
+    }
+    window.addEventListener('resize', scheduleAssistantReserve);
     el('aiChatInput')?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(el('aiChatInput').value); }
     });

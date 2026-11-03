@@ -1348,6 +1348,8 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 
 .home-assistant-more-menu {
   position: absolute;
+  max-width: calc(100% - 16px);
+  overflow-x: hidden;
   right: 8px;
   bottom: calc(100% + 6px);
   z-index: 22;
@@ -1362,6 +1364,14 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
   box-shadow: 0 10px 24px rgba(0,0,0,.28);
 }
 .home-assistant-more-menu[hidden] { display: none; }
+#panel-home.has-collapsed-assistant .home {
+  overflow-y: auto;
+  min-height: 0;
+  padding-bottom: calc(var(--assistant-bar-height, 42px) + 14px);
+}
+#panel-home.has-collapsed-assistant .content-panel {
+  padding-bottom: calc(var(--assistant-bar-height, 42px) + 14px);
+}
 .home-assistant-more-menu .btn { justify-content: flex-start; font-size: 10px; padding: 5px 7px; }
 .assistant-moved-note { margin-top: 4px; }
 .assistant-toast {
