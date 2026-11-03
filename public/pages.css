@@ -1337,3 +1337,21 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 
 .diag-box { width: min(760px, 88vw); max-height: 80vh; }
 .diag-text { max-height: 58vh; overflow: auto; white-space: pre-wrap; font-size: 11px; line-height: 1.55; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-2); color: var(--text); }
+
+.crash-notice {
+  position: fixed;
+  right: 24px;
+  bottom: 300px;
+  z-index: 145;
+  width: min(340px, calc(100vw - 32px));
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-2);
+  box-shadow: 0 14px 34px rgba(0,0,0,.32);
+}
+.crash-notice-head { color: var(--accent); font-size: 10px; margin-bottom: 5px; }
+.crash-notice-text { color: var(--text); font-size: 12px; line-height: 1.6; white-space: pre-wrap; max-height: 190px; overflow: auto; }
+.crash-notice-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+.crash-notice-actions .btn { font-size: 10px; padding: 4px 7px; }
+@media (max-width: 720px) { .crash-notice { left: 12px; right: 12px; width: auto; bottom: 250px; } }

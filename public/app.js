@@ -2196,6 +2196,9 @@ function connectEvents() {
         break;
 
       /* ---- 游戏 ---- */
+      case 'crash-detected':
+        if (typeof window.assistantCrash === 'function') window.assistantCrash(msg.incident);
+        break;
       case 'game-start':
         state.running = { versionId: msg.versionId, pid: msg.pid };
         refreshStatus();

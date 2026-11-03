@@ -71,7 +71,8 @@ import {
 import { installCurseForgePack, previewCurseForgePack } from './cfpack.js';
 import { createSession, getSession, chatSession } from './assistant-session.js';
 import { detectSymptom, guessSymptom, collectSymptomContext, SYMPTOMS, IMPLEMENTATION_NOTES } from './assistant-diagnostics.js';
-import { previewDiagnosticPackage, createDiagnosticPackage } from './diagnostic-package.js';
+import { previewDiagnosticPackage, createDiagnosticPackage, sanitizeDiagnostic } from './diagnostic-package.js';
+import { snapshotCrashArtifacts, newCrashArtifacts } from './crash-watch.js';
 import {
   addTracked,
   removeTracked,
@@ -600,6 +601,8 @@ export const state = {
   lanPort: null,      // 从游戏 stdout 抓到的「对局域网开放」端口
   lastFailure: null,  // 最近一次非 0 退出的摘要
   lastLaunch: null,   // 最近一次实际启动命令与进程信息
+  crashBaseline: null, // 本次启动前的 crash/hs_err 文件快照
+  crashIncident: null, // 最近一次自动崩溃提示
   logs: [],           // 最近日志行（环形，最多 500）
   installInterrupted: null, // 上次安装被中断的信息（启动时取一次）
   forceFirstRun: false, // --first-run：强制显示引导，不删数据
@@ -939,6 +942,7 @@ async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta 
   try { ensureChineseLanguage(versionId); } catch { /* 不阻断启动 */ }
 
   // 玩家名 / 内存 / Java / 隔离 全部来自设置，不再由前端硬编码传参
+  state.crashBaseline = snapshotCrashArtifacts(state.gameDir, versionId);
   const r = await launch({
     gameDir: state.gameDir,
     versionId,
@@ -1059,6 +1063,21 @@ async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta 
     if (uiCode !== 0 && uiCode !== null && uiCode !== undefined) {
       state.lastFailure = { versionId, code: uiCode, reason: reasonLine.slice(0, 500), at: Date.now() };
     }
+    const newArtifacts = forcedExit ? [] : newCrashArtifacts(state.gameDir, versionId, state.crashBaseline);
+    if (!forcedExit && ((uiCode === null || (uiCode !== 0 && uiCode !== undefined)) || newArtifacts.length)) {
+      const incident = {
+        id: `crash-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+        versionId,
+        code: uiCode,
+        reason: sanitizeDiagnostic(reasonLine).slice(0, 500),
+        artifacts: newArtifacts,
+        at: Date.now(),
+        prompted: false,
+      };
+      state.crashIncident = incident;
+      emit('crash-detected', { incident });
+    }
+    state.crashBaseline = null;
     emit('game-exit', { versionId, code: uiCode, forced: forcedExit, reason: reasonLine.slice(0, 500) });
     pushLog(forcedExit ? '游戏已强制结束，状态回到空闲' : `游戏退出，code=${code}`);
     const roomBefore = getRoomState();
@@ -3196,6 +3215,31 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    if (p === '/api/assistant/auto' && req.method === 'POST') {
+      const incident = state.crashIncident;
+      if (!incident) return json(res, 404, { error: '没有新的崩溃记录' });
+      if (incident.prompted) return json(res, 200, { already: true, incident });
+      incident.prompted = true;
+      try {
+        const session = createSession({
+          gameDir: state.gameDir,
+          versionId: incident.versionId,
+          lastFailure: { versionId: incident.versionId, code: incident.code, reason: incident.reason, at: incident.at },
+          logs: state.logs.map((x) => x.line ?? x),
+          launchCommand: state.lastLaunch?.command ?? null,
+        });
+        const result = await chatSession({
+          id: session.id,
+          message: `游戏异常退出，退出码 ${incident.code ?? '未知'}。请分析原因并给下一步建议。`,
+          mode: 'diagnostic',
+          diagnosticsState: state,
+        });
+        return json(res, 200, { ...result, incident });
+      } catch (e) {
+        incident.prompted = false;
+        return json(res, 400, { error: e.message });
+      }
+    }
     if (p === '/api/assistant/diagnose/package/preview' && req.method === 'POST') {
       const body = await readBody(req);
       const versionId = String(body.versionId || state.running?.versionId || state.lastFailure?.versionId || '').trim();
