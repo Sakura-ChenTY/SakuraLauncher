@@ -1599,3 +1599,73 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
     "title input send analyze diag more toggle";
   max-height: none;
 }
+
+/* 底行始终保持一行；标题/收起在展开态用 absolute 平移，不参与底行重排 */
+.home-assistant {
+  display: flex !important;
+  flex-direction: column;
+  gap: 0;
+}
+.home-assistant.is-collapsed {
+  display: flex !important;
+  padding: 6px 8px;
+}
+.home-assistant:not(.is-collapsed) {
+  padding: 30px 8px 6px;
+}
+.home-assistant-bar {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  height: 28px !important;
+  min-height: 28px !important;
+  max-height: 28px !important;
+  white-space: nowrap;
+}
+.home-assistant-bar .home-assistant-head,
+.home-assistant-bar .home-assistant-actions,
+.home-assistant .assistant-chat-line {
+  display: contents !important;
+}
+.home-assistant .home-assistant-title {
+  flex: 0 0 auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+.home-assistant #aiChatInput {
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+  width: auto;
+}
+.home-assistant #aiChatSend,
+.home-assistant #aiAnalyze,
+.home-assistant #homeDiagBtn,
+.home-assistant #homeAssistantMore,
+.home-assistant #homeAssistantToggle {
+  flex: 0 0 auto !important;
+  white-space: nowrap;
+}
+.home-assistant.is-collapsed .home-assistant-title { order: 1 !important; }
+.home-assistant.is-collapsed #aiChatInput { order: 2 !important; }
+.home-assistant.is-collapsed #aiChatSend { order: 3 !important; }
+.home-assistant.is-collapsed #aiAnalyze { order: 4 !important; }
+.home-assistant.is-collapsed #homeDiagBtn { order: 5 !important; }
+.home-assistant.is-collapsed #homeAssistantMore { order: 6 !important; }
+.home-assistant.is-collapsed #homeAssistantToggle { order: 7 !important; }
+.home-assistant:not(.is-collapsed) .home-assistant-title {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  right: auto;
+  z-index: 2;
+}
+.home-assistant:not(.is-collapsed) #homeAssistantToggle {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 2;
+}

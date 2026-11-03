@@ -479,7 +479,7 @@
     if (widthChanged) {
       input.style.transition = 'none';
       input.style.width = `${first.inputWidth}px`;
-      input.style.flex = '0 0 auto';
+      input.style.setProperty('flex', '0 0 auto', 'important');
     }
     // 强制一帧布局后把这些反向位移过渡回最终位置
     void home.offsetWidth;
@@ -503,7 +503,7 @@
       if (input) {
         input.style.transition = '';
         input.style.width = '';
-        input.style.flex = '';
+        input.style.removeProperty('flex');
       }
     }, 280);
   }
