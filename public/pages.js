@@ -1000,6 +1000,50 @@ function roomProviderLabel(provider) {
   return { sakura: 'SakuraFrp', openfrp: 'OpenFrp', custom: '自定义 frps' }[provider] || provider;
 }
 
+async function loadCfApiKey() {
+  try {
+    const d = await api('/api/cf/key');
+    const hint = document.getElementById('cfApiKeyHint');
+    if (!hint) return;
+    if (d.source === 'env') hint.textContent = `已由环境变量提供（${d.keyMask}）`;
+    else if (d.hasKey) hint.textContent = `已保存：${d.keyMask}`;
+    else hint.textContent = '未设置；开 CurseForge 整合包房间需要';
+    const link = document.getElementById('cfApiKeyLink');
+    if (link && d.applyUrl) link.href = d.applyUrl;
+  } catch { /* 旧服务没有这个接口时保持静默 */ }
+}
+
+async function saveCfApiKey() {
+  const input = document.getElementById('cfApiKey');
+  const hint = document.getElementById('cfApiKeyHint');
+  const key = String(input?.value || '').trim();
+  if (!key) { if (hint) hint.textContent = '先粘贴 API Key'; return; }
+  try {
+    const d = await api('/api/cf/key', { method: 'POST', body: JSON.stringify({ apiKey: key }) });
+    if (input) input.value = '';
+    if (hint) hint.textContent = d.source === 'env' ? '环境变量优先，已生效' : `已保存：${d.keyMask}`;
+    if (typeof toast === 'function') toast('CurseForge API Key 已保存');
+  } catch (e) {
+    if (hint) hint.textContent = '保存失败：' + e.message;
+  }
+}
+
+async function clearCfApiKey() {
+  try {
+    await api('/api/cf/key', { method: 'POST', body: JSON.stringify({ apiKey: '' }) });
+    const input = document.getElementById('cfApiKey');
+    if (input) input.value = '';
+    await loadCfApiKey();
+    if (typeof toast === 'function') toast('CurseForge API Key 已清除');
+  } catch (e) {
+    if (typeof toast === 'function') toast('清除失败：' + e.message, 'err');
+  }
+}
+
+function openCurseForgeKeySettings() {
+  if (typeof showPanel === 'function') showPanel('settings');
+  setTimeout(() => document.getElementById('cfApiKey')?.focus(), 80);
+}
 function renderRoom(room) {
   onlineRoom = room || { status: 'idle' };
   const card = document.getElementById('roomCard');
@@ -1044,6 +1088,11 @@ function renderRoom(room) {
   if (fallbackBtn) {
     const failedPack = Boolean(onlineRoom.pack) && status === 'error';
     fallbackBtn.hidden = !(status === 'error' || failedPack || roomFallbackError);
+  }
+  const cfKeyBtn = document.getElementById('roomCfKeyBtn');
+  if (cfKeyBtn) {
+    const errorText = String(onlineRoom.error || roomFallbackError || '');
+    cfKeyBtn.hidden = !(status === 'error' && /CurseForge API Key/i.test(errorText));
   }
   if (running) roomFallbackError = '';
   const shownVersion = onlineRoom.pack?.gameVersion || onlineRoom.gameVersion || onlineRoom.versionId;
@@ -1334,6 +1383,10 @@ function initOnline() {
   }
   document.getElementById('roomToggle')?.addEventListener('click', toggleRoom);
   document.getElementById('roomFallbackBtn')?.addEventListener('click', openRoomFallback);
+  document.getElementById('roomCfKeyBtn')?.addEventListener('click', openCurseForgeKeySettings);
+  document.getElementById('cfApiKeySave')?.addEventListener('click', saveCfApiKey);
+  document.getElementById('cfApiKeyClear')?.addEventListener('click', clearCfApiKey);
+  loadCfApiKey();
   document.getElementById('worldParamsBtn')?.addEventListener('click', openWorldParams);
   document.getElementById('roomAddressCopy')?.addEventListener('click', async () => {
     const text = document.getElementById('roomAddressValue')?.textContent || '';

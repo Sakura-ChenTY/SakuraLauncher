@@ -477,6 +477,7 @@
             <div class="room-hint-row">
               <div class="hint" id="roomHint">先在顶部配置 frp，再开房间。</div>
               <button class="btn ghost room-fallback-btn" id="roomFallbackBtn" type="button" hidden>改用局域网 / frp 联机</button>
+              <button class="btn ghost room-fallback-btn" id="roomCfKeyBtn" type="button" hidden>去填 CurseForge Key</button>
             </div>
 
             <div class="room-fields" id="roomFields" hidden>
@@ -703,6 +704,14 @@
               <div class="group-title">启动器设置</div>
 
               <div class="field">
+                <label class="check-line" for="setMascot">
+                  <input type="checkbox" id="setMascot">
+                  <span>显示绘梨衣形象</span>
+                </label>
+                <div class="field-note">右下角的小助手；窄窗口会自动隐藏</div>
+              </div>
+
+              <div class="field">
                 <label>壁纸</label>
                 <div class="field-line">
                   <select id="setWallpaper" class="select grow">
@@ -779,6 +788,23 @@
                   <button class="btn ghost" id="pluginDelete">删除</button>
                 </div>
                 <div class="hint" id="pluginStatus"></div>
+              </div>
+            </div>
+
+            <div class="settings-group">
+              <div class="group-title">CurseForge API</div>
+              <div class="field">
+                <label for="cfApiKey">CurseForge API Key</label>
+                <div class="field-line">
+                  <input id="cfApiKey" class="input grow mono" type="password" placeholder="粘贴 CurseForge API Key" autocomplete="off" spellcheck="false">
+                  <button class="btn" id="cfApiKeySave">保存</button>
+                  <button class="btn ghost" id="cfApiKeyClear">清除</button>
+                </div>
+                <div class="field-note" id="cfApiKeyHint">未设置；开 CurseForge 整合包房间需要</div>
+                <div class="field-note">
+                  <a id="cfApiKeyLink" href="https://forms.monday.com/forms/dce5ccb7afda9a1c21dab1a1aa1d84eb?r=use1" target="_blank" rel="noreferrer">获取 Key（CurseForge 官方申请表单）</a>
+                  · 只保存在本机安全存储
+                </div>
               </div>
             </div>
 
@@ -986,8 +1012,14 @@
                 <span class="hint" id="aiTarget"></span>
               </div>
               <div class="assistant-result" id="aiResult">
-                <div class="empty">启动失败后，或者点上面的按钮，我来看看。</div>
+                <div class="empty">问吧。我会带着这次启动的上下文回答。</div>
               </div>
+              <div class="field-line assistant-chat-line">
+                <input id="aiChatInput" class="input grow" type="text" placeholder="问：为什么进不去游戏？" autocomplete="off">
+                <button class="btn" id="aiChatSend">发送</button>
+                <button class="btn ghost" id="aiChatNew">新会话</button>
+              </div>
+              <div class="hint">同一会话保留上下文；不会每次重新读取全部日志。</div>
             </div>
           </div>
         </section>
@@ -1008,6 +1040,14 @@
         </div>
       </div>
     </footer>
+  </div>
+
+  <!-- Q 版绘梨衣形象；图片按需加载，点击进入小助手 -->
+  <div class="mascot-layer" id="mascotLayer" hidden>
+    <div class="mascot-bubble" id="mascotBubble" hidden></div>
+    <button class="mascot-button" id="mascotButton" type="button" aria-label="打开绘梨衣小助手">
+      <img id="mascotImage" alt="绘梨衣" decoding="async">
+    </button>
   </div>
 
   <!-- 版本选择弹窗 -->
@@ -1273,6 +1313,7 @@
   <script src="/app.js"></script>
   <script src="/pages.js"></script>
   <script src="/assistant.js"></script>
+  <script src="/mascot.js"></script>
   <script src="/update.js"></script>
   <script src="/onboarding.js"></script>
 </body>

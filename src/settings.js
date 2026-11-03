@@ -50,6 +50,7 @@ export const DEFAULTS = {
   // 界面不透明度（百分比）。数值越大越不透明；30 = 几乎全透，90 = 接近实心。
   // 前端把它当成 --glass-alpha 写进 CSS，亚克力与贴壁纸两种模式共用。
   glassOpacity: 42,
+  mascotEnabled: true,
   updateUrl: 'https://gh-proxy.com/https://github.com/Sakura-ChenTY/SakuraLauncher/releases/latest/download/latest.yml',
 };
 
@@ -158,7 +159,7 @@ export function normalize(raw = {}, base = DEFAULTS) {
     notes.push('初始内存大于最大内存，已拉平到最大内存');
   }
 
-  return { value: out, notes };
+  if (typeof raw.mascotEnabled === 'boolean') out.mascotEnabled = raw.mascotEnabled;  return { value: out, notes };
 }
 
 let cache = null;

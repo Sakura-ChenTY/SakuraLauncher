@@ -27,7 +27,7 @@ import { installVersion, getVersionManifest, latestReleases, findVersionInManife
 import { searchProjects, getProjectVersions, getProject, detectLoaderFromVersionJson, PROJECT_TYPES } from './modrinth.js';
 import { installFabric, listLoaders } from './fabric.js';
 import { installForge, installNeoForge } from './forge.js';
-import { initSecureStore } from './secure.js';
+import { initSecureStore, setToken, clearToken, hasToken } from './secure.js';
 import {
   loadAiConfig,
   saveAiConfig,
@@ -65,8 +65,11 @@ import {
   getProjectBySlug as cfGetProjectBySlug,
   getProject as cfGetProject,
   getProjectFiles as cfGetProjectFiles,
+  hasCfKey,
+  cfKeyMask,
 } from './curseforge.js';
 import { installCurseForgePack, previewCurseForgePack } from './cfpack.js';
+import { createSession, getSession, chatSession } from './assistant-session.js';
 import {
   addTracked,
   removeTracked,
@@ -594,6 +597,7 @@ export const state = {
   running: null,      // { versionId, pid, startedAt }
   lanPort: null,      // 从游戏 stdout 抓到的「对局域网开放」端口
   lastFailure: null,  // 最近一次非 0 退出的摘要
+  lastLaunch: null,   // 最近一次实际启动命令与进程信息
   logs: [],           // 最近日志行（环形，最多 500）
   installInterrupted: null, // 上次安装被中断的信息（启动时取一次）
   forceFirstRun: false, // --first-run：强制显示引导，不删数据
@@ -913,7 +917,13 @@ async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta 
     if (!m) throw new Error('加入地址格式应为 host:port');
     const port = Number(m[2]);
     if (!(port > 0 && port < 65536)) throw new Error('加入端口不合法');
-    extraGame = ['--server', m[1], '--port', String(port)];
+    // 1.20.1 起客户端不再识别旧的 --server/--port，Quick Play 才是可用入口。
+    const info = readInstanceInfo(versionId) || {};
+    const mcVersion = String(info.gameVersion || versionId).match(/(\d+\.\d+(?:\.\d+)?)/)?.[1] || '';
+    const [maj, min = 0, patch = 0] = mcVersion.split('.').map((x) => Number(x) || 0);
+    const quickPlay = maj > 1 || (maj === 1 && (min > 20 || (min === 20 && patch >= 1)));
+    if (quickPlay) extraGame = ['--quickPlayMultiplayer', `${m[1]}:${port}`];
+    else extraGame = ['--server', m[1], '--port', String(port)];
   } else if (quickPlaySave) {
     extraGame = ['--quickPlaySingleplayer', String(quickPlaySave)];
   }
@@ -935,6 +945,12 @@ async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta 
     memory: Object.keys(memory).length ? memory : undefined,
   });
 
+  state.lastLaunch = {
+    versionId,
+    command: r.command,
+    pid: r.child.pid,
+    at: Date.now(),
+  };
   state.running = {
     versionId,
     pid: r.child.pid,
@@ -960,7 +976,12 @@ async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta 
       serverWorldPath: recentMeta?.serverWorldPath || roomNow.worldDir || '',
       worldSettings: recentMeta?.worldSettings || roomNow.settings,
       hostJoined: isHostGame ? true : Boolean(recentMeta?.hostJoined),
-      room: recentMeta?.room || (isHostGame ? { provider: '', tunnelId: '', remotePort: 0, address: '' } : null),
+      room: recentMeta?.room || (isHostGame ? {
+        provider: roomNow.frp?.provider || '',
+        tunnelId: roomNow.frp?.tunnelId || '',
+        remotePort: Number(String(roomNow.frp?.address || '').split(':').pop()) || 0,
+        address: roomNow.frp?.address || '',
+      } : null),
     });
   } catch { /* 最近游玩失败不阻断启动 */ }
   state.lanPort = null;
@@ -1849,6 +1870,32 @@ const server = http.createServer(async (req, res) => {
 
     /* ---- CurseForge（经 MCIM 镜像）---- */
 
+    if (p === '/api/cf/key' && req.method === 'GET') {
+      const env = String(process.env.CURSEFORGE_API_KEY || process.env.CF_API_KEY || '').trim();
+      return json(res, 200, {
+        hasKey: hasCfKey(),
+        keyMask: cfKeyMask(),
+        source: env ? 'env' : (hasToken('curseforge') ? 'secure' : 'none'),
+        applyUrl: 'https://forms.monday.com/forms/dce5ccb7afda9a1c21dab1a1aa1d84eb?r=use1',
+      });
+    }
+
+    if (p === '/api/cf/key' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const env = String(process.env.CURSEFORGE_API_KEY || process.env.CF_API_KEY || '').trim();
+        if (env) throw new Error('环境变量已提供 CurseForge API Key，优先使用环境变量');
+        const key = String(body.apiKey ?? '').trim();
+        if (!key) {
+          await clearToken('curseforge');
+          return json(res, 200, { hasKey: false, keyMask: '', source: 'none' });
+        }
+        await setToken('curseforge', key, { requireEncryption: true });
+        return json(res, 200, { hasKey: true, keyMask: cfKeyMask(), source: 'secure' });
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
     if (p === '/api/cf/search') {
       const type = url.searchParams.get('type') || 'mod';
       const q = url.searchParams.get('q') || '';
@@ -3112,6 +3159,37 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    if (p === '/api/assistant/session' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const versionId = String(body.versionId || state.running?.versionId || state.lastFailure?.versionId || '').trim();
+        const session = createSession({
+          gameDir: state.gameDir,
+          versionId,
+          lastFailure: state.lastFailure,
+          logs: state.logs.map((x) => x.line ?? x),
+          launchCommand: state.lastLaunch?.command ?? null,
+        });
+        return json(res, 200, { session });
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
+    if (p === '/api/assistant/chat' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const result = await chatSession({ id: body.sessionId, message: body.message });
+        return json(res, 200, result);
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
+    if (p === '/api/assistant/session' && req.method === 'GET') {
+      const session = getSession(url.searchParams.get('id') || '');
+      return json(res, session ? 200 : 404, session ? { session } : { error: '会话不存在' });
+    }
     if (p === '/api/assistant/analyze' && req.method === 'POST') {
       const body = await readBody(req);
       try {
@@ -3129,16 +3207,60 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/assistant/action' && req.method === 'POST') {
       const body = await readBody(req);
+      if (!body.action && body.id) body.action = body.id;
       try {
+        const versionId = String(body.payload?.versionId ?? body.versionId ?? '').trim();
+        const needVersion = () => { if (!versionId) throw new Error('没有目标实例'); };
         if (body.action === 'memory.set') {
-          const versionId = String(body.payload?.versionId ?? '').trim();
           const memoryMax = String(body.payload?.memoryMax ?? '6144M').trim();
-          if (!versionId) throw new Error('没有目标实例');
+          const memoryMin = String(body.payload?.memoryMin ?? '').trim();
+          needVersion();
           if (memoryToMb(memoryMax) > memoryCapMb()) {
             throw new Error(`建议内存 ${memoryMax} 超过物理内存 80% 上限（${memoryCapMb()}M）`);
           }
-          writeInstanceOverride(versionId, { memoryMax });
-          return json(res, 200, { ok: true, message: `已把 ${versionId} 最大内存改为 ${memoryMax}` });
+          const patch = { memoryMax };
+          if (memoryMin) patch.memoryMin = memoryMin;
+          writeInstanceOverride(versionId, patch);
+          return json(res, 200, { ok: true, message: `已把 ${versionId} 内存改为 ${memoryMin || '原值'} / ${memoryMax}` });
+        }
+        if (body.action === 'java.set') {
+          needVersion();
+          const javaPath = String(body.payload?.javaPath ?? '').trim();
+          if (!javaPath) throw new Error('没有选择 Java 路径');
+          writeInstanceOverride(versionId, { javaPath });
+          return json(res, 200, { ok: true, message: `已为 ${versionId} 指定 Java：${javaPath}` });
+        }
+        if (body.action === 'open.instance') {
+          needVersion();
+          const dir = resolveInstanceDir(versionId);
+          if (!dir) throw new Error('实例不存在');
+          spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore' }).unref();
+          return json(res, 200, { ok: true, message: '已打开实例目录' });
+        }
+        if (body.action === 'redownload.version' || body.action === 'redownload.resources') {
+          needVersion();
+          const source = (await resolveSource(getSettings().downloadSource)).source;
+          await installVersion({ gameDir: state.gameDir, versionId, source, onStage: () => {}, onProgress: () => {} });
+          return json(res, 200, { ok: true, message: '版本/资源文件已重新检查并补齐' });
+        }
+        if (body.action === 'mod.disable') {
+          needVersion();
+          const file = String(body.payload?.file ?? '').trim();
+          if (!file || /[\\/]/.test(file) || !/\.jar$/i.test(file)) throw new Error('mod 文件名不合法');
+          const dir = path.join(state.gameDir, 'versions', versionId, 'mods');
+          const src = path.join(dir, file);
+          if (!fs.existsSync(src)) throw new Error('mod 文件不存在');
+          await fsp.rename(src, `${src}.disabled`);
+          return json(res, 200, { ok: true, message: `已停用 ${file}（没有删除）` });
+        }
+        if (body.action === 'serverpack.redownload') {
+          const room = getRoomState();
+          const cache = room?.serverDir ? path.join(room.serverDir, '.cache', 'cf-server.zip') : '';
+          if (cache && fs.existsSync(cache)) {
+            await fsp.rm(cache, { force: true });
+            return json(res, 200, { ok: true, message: '已清理 server pack 缓存，请重新开房' });
+          }
+          return json(res, 200, { ok: true, message: '没有缓存可清理，请重新开房' });
         }
         throw new Error('这个动作不在白名单里');
       } catch (e) {

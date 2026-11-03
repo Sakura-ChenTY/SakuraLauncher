@@ -1137,3 +1137,126 @@ body.has-custom-bg .wallpaper {
   border-radius: 999px;
 }
 #panel-online::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+.assistant-chat-line { margin-top: 10px; }
+.assistant-msg { padding: 9px 11px; margin: 8px 0; border: 1px solid var(--line); border-radius: 9px; background: var(--bg-2); }
+.assistant-msg.user { border-color: rgba(255,141,177,.28); }
+.assistant-msg-role { font-size: 10px; color: var(--accent); margin-bottom: 4px; }
+.assistant-msg-text { white-space: pre-wrap; line-height: 1.65; color: var(--text); }
+.assistant-msg .assistant-actions { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* Q 版小助手形象：固定在右下角，窄窗口隐藏 */
+.mascot-layer {
+  position: fixed;
+  right: 26px;
+  bottom: 62px;
+  z-index: 70;
+  width: 172px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+.mascot-button {
+  width: 172px;
+  height: 172px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+  filter: drop-shadow(0 10px 14px rgba(0,0,0,.28));
+  transition: transform .18s ease, filter .18s ease;
+}
+.mascot-button:hover { transform: translateY(-3px) scale(1.025); filter: drop-shadow(0 14px 18px rgba(0,0,0,.34)); }
+.mascot-button img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.mascot-bubble {
+  pointer-events: auto;
+  max-width: 240px;
+  min-height: 30px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--bg-2);
+  box-shadow: 0 10px 28px rgba(0,0,0,.28);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  cursor: pointer;
+}
+.mascot-bubble:empty { display: none; }
+body.mascot-on .assistant-bubble { bottom: 238px; }
+.check-line { display: flex; align-items: center; gap: 8px; }
+.check-line input { width: auto; }
+@media (max-width: 900px) {
+  .mascot-layer { width: 132px; right: 18px; bottom: 56px; }
+  .mascot-button { width: 132px; height: 132px; }
+  .mascot-bubble { max-width: 190px; font-size: 11px; }
+  body.mascot-on .assistant-bubble { bottom: 196px; }
+}
+@media (max-width: 720px) {
+  .mascot-layer { display: none !important; }
+  body.mascot-on .assistant-bubble { bottom: 24px; }
+}
+
+/* 小助手面板给固定形象留出空间，避免挡住输入框和按钮 */
+body.mascot-on #panel-assistant .assistant-main { padding-right: 196px; }
+@media (max-width: 900px) {
+  body.mascot-on #panel-assistant .assistant-main { padding-right: 152px; }
+}
+@media (max-width: 720px) {
+  body.mascot-on #panel-assistant .assistant-main { padding-right: 0; }
+}
+
+/* 小助手页：形象上移，避开底部输入框；只给它上面的结果区留空间 */
+body.mascot-on #panel-assistant .assistant-main { padding-right: 0; }
+body.mascot-assistant .mascot-layer { bottom: 112px; width: 150px; }
+body.mascot-assistant .mascot-button { width: 150px; height: 150px; }
+body.mascot-assistant .mascot-bubble { max-width: 210px; }
+body.mascot-assistant #panel-assistant .assistant-result { padding-bottom: 170px; }
+@media (max-width: 900px) {
+  body.mascot-on #panel-assistant .assistant-main { padding-right: 0; }
+  body.mascot-assistant .mascot-layer { bottom: 100px; width: 120px; }
+  body.mascot-assistant .mascot-button { width: 120px; height: 120px; }
+  body.mascot-assistant #panel-assistant .assistant-result { padding-bottom: 140px; }
+}
+@media (max-width: 720px) {
+  body.mascot-assistant .mascot-layer { display: none !important; }
+  body.mascot-assistant #panel-assistant .assistant-result { padding-bottom: 0; }
+}
+
+body.mascot-assistant #panel-assistant .assistant-result { padding-right: 196px; }
+body.mascot-assistant #panel-assistant .assistant-actions { max-width: 100%; }
+@media (max-width: 900px) {
+  body.mascot-assistant #panel-assistant .assistant-result { padding-right: 150px; }
+}
+@media (max-width: 720px) {
+  body.mascot-assistant #panel-assistant .assistant-result { padding-right: 0; padding-bottom: 0; }
+}
+
+/* 小助手页的固定形象再缩小一点，给对话留出可读宽度 */
+body.mascot-assistant .mascot-layer { bottom: 132px; width: 110px; }
+body.mascot-assistant .mascot-button { width: 110px; height: 110px; }
+body.mascot-assistant .mascot-bubble { max-width: 190px; }
+body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px; padding-bottom: 0; }
+@media (max-width: 900px) {
+  body.mascot-assistant .mascot-layer { bottom: 126px; width: 94px; }
+  body.mascot-assistant .mascot-button { width: 94px; height: 94px; }
+  body.mascot-assistant #panel-assistant .assistant-result { padding-right: 104px; }
+}
+@media (max-width: 720px) {
+  body.mascot-assistant .mascot-layer { display: none !important; }
+  body.mascot-assistant #panel-assistant .assistant-result { padding-right: 0; }
+}
+
+/* 助手回复较长时在结果区内滚动，底部输入框始终可见 */
+#panel-assistant .assistant-result { max-height: calc(100vh - 360px); overflow-y: auto; }
+#panel-assistant .assistant-result::-webkit-scrollbar { width: 6px; }
+#panel-assistant .assistant-result::-webkit-scrollbar-thumb { background: var(--line); border-radius: 999px; }
+@media (max-width: 720px) { #panel-assistant .assistant-result { max-height: calc(100vh - 320px); } }
+
+/* 小助手页把形象抬到输入行上方，避免压住「发送」 */
+body.mascot-assistant .mascot-layer { bottom: 210px; }
+@media (max-width: 900px) { body.mascot-assistant .mascot-layer { bottom: 190px; } }

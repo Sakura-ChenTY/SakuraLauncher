@@ -1,4 +1,4 @@
-/* 绘梨衣小助手：配置、分析、白名单动作、失败气泡 */
+/* 绘梨衣小助手：模型配置 + 会话聊天 + 白名单动作 */
 (function () {
   const PROVIDERS = {
     deepseek: { name: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
@@ -11,6 +11,9 @@
   };
 
   let lastConfig = { hasKey: false };
+  let currentSessionId = '';
+  let sending = false;
+  let chatActions = {};
 
   function el(id) { return document.getElementById(id); }
   function setStatus(text, bad) {
@@ -51,9 +54,7 @@
       if (el('aiBase')) el('aiBase').value = d.baseURL || '';
       if (el('aiModel')) el('aiModel').value = d.model || '';
       applyProvider(provider, { keepValues: true });
-      if (el('aiKeyHint')) {
-        el('aiKeyHint').textContent = d.hasKey ? `已保存：${d.keyMask}` : '未保存密钥';
-      }
+      if (el('aiKeyHint')) el('aiKeyHint').textContent = d.hasKey ? `已保存：${d.keyMask}` : '未保存密钥（仍可本地分析日志）';
     } catch (e) {
       setStatus('读取配置失败：' + e.message, true);
     }
@@ -64,11 +65,10 @@
   async function saveAiConfig() {
     setStatus('保存中…');
     try {
-      const provider = el('aiProvider').value;
       const d = await api('/api/assistant/config', {
         method: 'POST',
         body: JSON.stringify({
-          provider,
+          provider: el('aiProvider').value,
           baseURL: el('aiBase').value.trim(),
           model: el('aiModel').value.trim(),
           apiKey: el('aiKey').value,
@@ -76,7 +76,7 @@
       });
       lastConfig = d;
       el('aiKey').value = '';
-      el('aiKeyHint').textContent = d.hasKey ? `已保存：${d.keyMask}` : '未保存密钥';
+      el('aiKeyHint').textContent = d.hasKey ? `已保存：${d.keyMask}` : '未保存密钥（仍可本地分析日志）';
       setStatus('已保存');
     } catch (e) {
       setStatus('保存失败：' + e.message, true);
@@ -100,80 +100,164 @@
     }
   }
 
-  function renderAnalysis(data) {
+  function targetVersion() {
+    return state.selectedVersion || state.lastFailure?.versionId || '';
+  }
+
+  function renderChat(messages, actionsByMessage = {}) {
     const box = el('aiResult');
     if (!box) return;
-    const chips = (data.classified ?? [])
-      .map((c) => `<span class="issue-chip">${escapeHtml(c.label)}</span>`).join('');
-    const actions = (data.actions ?? []).map((a, i) =>
-      `<button class="btn ghost" data-ai-action="${i}">${escapeHtml(a.label)}</button>`).join('');
-    box.innerHTML = `${chips ? `<div>${chips}</div>` : ''}<div>${escapeHtml(data.analysis || '没有分析结果')}</div>` +
-      (actions ? `<div class="assistant-actions">${actions}</div>` : '');
-    box.querySelectorAll('[data-ai-action]').forEach((b) => {
-      b.addEventListener('click', () => runAction(data.actions[Number(b.dataset.aiAction)]));
+    box.innerHTML = (messages || []).map((m, i) => {
+      const isUser = m.role === 'user';
+      const actions = actionsByMessage[i] || [];
+      const actionHtml = actions.length
+        ? `<div class="assistant-actions">${actions.map((a, j) =>
+            `<button class="btn ghost" data-chat-action="${i}:${j}">${escapeHtml(a.label)}</button>`).join('')}</div>`
+        : '';
+      return `<div class="assistant-msg ${isUser ? 'user' : 'bot'}">` +
+        `<div class="assistant-msg-role">${isUser ? 'Sakura' : '绘梨衣'}</div>` +
+        `<div class="assistant-msg-text">${escapeHtml(m.content || '')}</div>${actionHtml}</div>`;
+    }).join('') || '<div class="empty">问吧。我会带着这次启动的上下文回答。</div>';
+    box.scrollTop = box.scrollHeight;
+    box.querySelectorAll('[data-chat-action]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const [mi, ai] = b.dataset.chatAction.split(':').map(Number);
+        runAction(actionsByMessage[mi]?.[ai]);
+      });
     });
   }
 
-  async function runAnalyze() {
+  function appendUser(text) {
     const box = el('aiResult');
     if (!box) return;
-    const target = state.selectedVersion || state.lastFailure?.versionId || '';
-    if (el('aiTarget')) el('aiTarget').textContent = target ? `实例：${target}` : '没有选中实例，只能看最近失败';
-    box.innerHTML = '<div class="pcl-loading"><img class="pcl-gif" src="loading.gif" alt=""><div class="pcl-text">正在看日志…</div></div>';
+    const old = box.querySelector('.empty');
+    if (old) old.remove();
+    const div = document.createElement('div');
+    div.className = 'assistant-msg user';
+    div.innerHTML = `<div class="assistant-msg-role">Sakura</div><div class="assistant-msg-text">${escapeHtml(text)}</div>`;
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  async function ensureSession(forceNew = false) {
+    if (!forceNew && currentSessionId) return currentSessionId;
+    const d = await api('/api/assistant/session', {
+      method: 'POST',
+      body: JSON.stringify({ versionId: targetVersion() }),
+    });
+    currentSessionId = d.session.id;
+    localStorage.setItem('sakura.assistantSession', currentSessionId);
+    chatActions = {};
+    const box = el('aiResult');
+    if (box) box.innerHTML = '<div class="empty">新会话。上下文已经收集好了。</div>';
+    return currentSessionId;
+  }
+
+  async function sendChat(text) {
+    const message = String(text ?? '').trim();
+    if (!message || sending) return;
+    sending = true;
+    const input = el('aiChatInput');
+    if (input) input.value = '';
+    appendUser(message);
+    const box = el('aiResult');
+    const pending = document.createElement('div');
+    pending.className = 'assistant-msg bot';
+    pending.innerHTML = '<div class="assistant-msg-role">绘梨衣</div><div class="assistant-msg-text">……</div>';
+    box?.appendChild(pending);
     try {
-      const data = await api('/api/assistant/analyze', {
+      const sessionId = await ensureSession(false);
+      const d = await api('/api/assistant/chat', {
         method: 'POST',
-        body: JSON.stringify({ versionId: target }),
+        body: JSON.stringify({ sessionId, message }),
       });
-      renderAnalysis(data);
+      const msgs = d.messages || [];
+      chatActions = {};
+      chatActions[msgs.length - 1] = d.actions || [];
+      renderChat(msgs, chatActions);
+      if (el('aiTarget')) el('aiTarget').textContent = `会话 ${sessionId.slice(0, 8)} · ${targetVersion() || '最近失败'}`;
+      window.dispatchEvent(new CustomEvent('assistant:reply', { detail: { text: d.reply || '' } }));
     } catch (e) {
-      box.innerHTML = `<div class="empty">分析失败：${escapeHtml(e.message)}</div>`;
+      if (pending) pending.querySelector('.assistant-msg-text').textContent = '出了点问题：' + e.message;
+    } finally {
+      sending = false;
+    }
+  }
+
+  async function newSession() {
+    currentSessionId = '';
+    try {
+      await ensureSession(true);
+      if (el('aiChatInput')) el('aiChatInput').focus();
+    } catch (e) {
+      setStatus('新会话失败：' + e.message, true);
     }
   }
 
   async function runAction(action) {
     if (!action) return;
     if (action.id === 'memory.set') {
+      const p = action.payload || {};
       const r = await askForm({
         title: '改内存',
-        hint: `把 ${action.payload.versionId} 的最大内存改为 ${action.payload.memoryMax}？`,
+        hint: `把 ${p.versionId || targetVersion()} 的最大内存改为 ${p.memoryMax || '1024M'}？`,
         fields: [],
         okText: '执行',
       });
       if (!r) return;
       try {
-        const d = await api('/api/assistant/action', {
-          method: 'POST',
-          body: JSON.stringify(action),
-        });
+        const d = await api('/api/assistant/action', { method: 'POST', body: JSON.stringify(action) });
         toast(d.message || '已执行');
         await loadInstalled?.();
-      } catch (e) {
-        toast('执行失败：' + e.message, 'err');
-      }
+      } catch (e) { toast('执行失败：' + e.message, 'err'); }
       return;
     }
-    if (action.id === 'open.java') {
+    if (action.id === 'java.open') {
       showPanel('settings');
       el('setJavaPath')?.focus();
       return;
     }
-    if (action.id === 'open.login') {
-      el('accountModal').hidden = false;
+    if (action.id === 'open.instance') {
+      try {
+        const d = await api('/api/assistant/action', { method: 'POST', body: JSON.stringify(action) });
+        toast(d.message || '已打开');
+      } catch (e) { toast('执行失败：' + e.message, 'err'); }
       return;
     }
-    if (action.id === 'open.log') {
-      showPanel('home');
-      el('openLogBtn')?.click();
+    if (action.id === 'mod.disable') {
+      const file = await askForm({
+        title: '停用 mod',
+        hint: '只把 jar 改名为 .disabled，不删除文件。',
+        fields: [{ id: 'file', label: 'mod 文件名', placeholder: '例如 example.jar' }],
+        okText: '确认停用',
+      });
+      if (!file?.file) return;
+      try {
+        const d = await api('/api/assistant/action', {
+          method: 'POST',
+          body: JSON.stringify({ action: 'mod.disable', payload: { versionId: action.payload?.versionId || targetVersion(), file: file.file } }),
+        });
+        toast(d.message || '已停用');
+      } catch (e) { toast('执行失败：' + e.message, 'err'); }
       return;
     }
+    if (action.id === 'redownload.version' || action.id === 'redownload.resources' || action.id === 'serverpack.redownload') {
+      try {
+        const d = await api('/api/assistant/action', { method: 'POST', body: JSON.stringify(action) });
+        toast(d.message || '已开始');
+      } catch (e) { toast('执行失败：' + e.message, 'err'); }
+    }
+  }
+
+  async function runAnalyze() {
+    if (el('aiChatInput')) el('aiChatInput').value = '分析最近一次启动失败，为什么进不去游戏？';
+    await sendChat('分析最近一次启动失败，为什么进不去游戏？');
   }
 
   function showBubble() {
     const b = el('assistantBubble');
     if (b) b.hidden = false;
   }
-
   window.assistantOnFailure = showBubble;
 
   function init() {
@@ -183,6 +267,11 @@
     el('aiSave')?.addEventListener('click', saveAiConfig);
     el('aiTest')?.addEventListener('click', testAi);
     el('aiAnalyze')?.addEventListener('click', runAnalyze);
+    el('aiChatSend')?.addEventListener('click', () => sendChat(el('aiChatInput')?.value));
+    el('aiChatNew')?.addEventListener('click', newSession);
+    el('aiChatInput')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(el('aiChatInput').value); }
+    });
     el('assistantBubbleAnalyze')?.addEventListener('click', () => {
       el('assistantBubble').hidden = true;
       showPanel('assistant');

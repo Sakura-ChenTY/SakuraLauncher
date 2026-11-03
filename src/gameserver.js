@@ -21,7 +21,7 @@ import { loadVersion } from './launch.js';
 import { findJava } from './launch.js';
 import { getSettings } from './settings.js';
 import { JAVA_SCAN_CACHE } from './paths.js';
-import { prepareModrinthServer } from './packserver.js';
+import { prepareModrinthServer, prepareCurseForgeServer } from './packserver.js';
 
 export const ROOM_PORT = 25565;
 const ROOM_MEMORY_MB = 2048;
@@ -309,12 +309,22 @@ export async function startRoom({ versionId, gameDir, eulaAccepted = false, memo
     const serverPaths = resolveServerPaths(gameDir, versionId);
     let prepared;
     if (pack) {
-      if (String(pack.kind || '') !== 'modrinth') throw new Error('当前只支持 Modrinth 整合包服务端');
-      prepared = await prepareModrinthServer({
-        serverDir: serverPaths.serverDir,
-        pack,
-        onStage: (message) => onStage?.(message),
-      });
+      const kind = String(pack.kind || '');
+      if (kind === 'modrinth') {
+        prepared = await prepareModrinthServer({
+          serverDir: serverPaths.serverDir,
+          pack,
+          onStage: (message) => onStage?.(message),
+        });
+      } else if (kind === 'curseforge') {
+        prepared = await prepareCurseForgeServer({
+          serverDir: serverPaths.serverDir,
+          pack,
+          onStage: (message) => onStage?.(message),
+        });
+      } else {
+        throw new Error(`不支持的整合包类型：${kind || '未知'}`);
+      }
       await fsp.writeFile(path.join(prepared.serverDir, 'eula.txt'), 'eula=true\n', 'utf8');
       writeServerProperties(path.join(prepared.serverDir, 'server.properties'), room.settings);
     } else {
@@ -331,7 +341,7 @@ export async function startRoom({ versionId, gameDir, eulaAccepted = false, memo
 
     child = spawn(prepared.javaBin, [
       `-Xms512M`,
-      `-Xmx${Math.max(512, Number(memoryMb) || ROOM_MEMORY_MB)}M`,
+      `-Xmx${Math.max(512, Number(memoryMb) || (pack?.kind === 'curseforge' ? 3072 : ROOM_MEMORY_MB))}M`,
       ...(prepared.args || ['-jar', prepared.jarPath, 'nogui']),
     ], {
       cwd: prepared.serverDir,

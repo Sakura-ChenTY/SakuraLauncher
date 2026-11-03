@@ -19,6 +19,8 @@ import { listEntries, readEntry } from './zip.js';
 import { findJava } from './launch.js';
 import { getSettings } from './settings.js';
 import { JAVA_SCAN_CACHE } from './paths.js';
+import { getCurseForgeFile, getCurseForgeServerFile, parseLoader } from './cfpack.js';
+import { hasCfKey } from './curseforge.js';
 
 const FABRIC_INSTALLER_URL = 'https://maven.fabricmc.net/net/fabricmc/fabric-installer/1.0.1/fabric-installer-1.0.1.jar';
 const MOJANG_MANIFEST = 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json';
@@ -282,6 +284,185 @@ async function applyOverrides({ buf, entries, serverDir, onStage }) {
  * 准备一个 Modrinth 服务端目录。
  * 返回 { serverDir, jarPath, args, javaBin, javaMajor, gameVersion, loader, loaderVersion, pack }
  */
+export async function prepareCurseForgeServer({ serverDir, pack, onStage }) {
+  const modId = Number(pack?.modId);
+  const fileId = Number(pack?.fileId);
+  if (!modId || !fileId) throw new Error('CurseForge 整合包缺少 modId/fileId');
+  await fsp.mkdir(serverDir, { recursive: true });
+  const metaFile = path.join(serverDir, 'server-pack.json');
+  if (!fs.existsSync(metaFile) && (fs.existsSync(path.join(serverDir, 'server.jar')) || fs.existsSync(path.join(serverDir, 'world')))) {
+    throw new Error('这个服务端目录已经被原版房间使用，整合包必须换一个独立实例');
+  }
+
+  const manualPack = ['server-pack.zip', 'cf-server-pack.zip', 'ServerFiles.zip']
+    .map((name) => path.join(serverDir, name))
+    .find((file) => fs.existsSync(file));
+  if (!hasCfKey() && !manualPack) {
+    throw new Error('需要先填 CurseForge API Key：去设置 → CurseForge API 保存 Key 后重新开房');
+  }  stageText(onStage, '读取 CurseForge 文件元数据');
+  const clientFile = await getCurseForgeFile(modId, fileId);
+  if (!clientFile?.downloadUrl) throw new Error('CurseForge 整合包文件没有下载地址');
+  const serverPackFileId = Number(pack.serverPackFileId || clientFile.serverPackFileId || 0);
+  if (!serverPackFileId && !pack.serverPackUrl) {
+    throw new Error('这个包没有服务端文件，只能原版/兼容模式');
+  }
+
+  const cacheDir = path.join(serverDir, '.cache');
+  await fsp.mkdir(cacheDir, { recursive: true });
+  const clientZip = path.join(cacheDir, 'cf-client.zip');
+  stageText(onStage, '下载 CurseForge 客户端清单');
+  await downloadFile(clientFile.downloadUrl, clientZip, { retries: 3, timeout: 180000 });
+  const clientBuf = fs.readFileSync(clientZip);
+  const clientEntries = listEntries(clientBuf);
+  const mf = clientEntries.find((e) => e.name === 'manifest.json');
+  if (!mf) throw new Error('CurseForge 客户端包缺少 manifest.json');
+  const manifest = JSON.parse(readEntry(clientBuf, mf).toString('utf8'));
+  const gameVersion = String(manifest.minecraft?.version || '').trim();
+  if (!gameVersion) throw new Error('CurseForge 清单没有声明 Minecraft 版本');
+  const loader = parseLoader(manifest.minecraft?.modLoaders) || { kind: 'vanilla', version: '' };
+
+  // 已准备好的同一版本服务端直接复用，避免每次开房都重下 server pack/跑安装器。
+  try {
+    const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
+    if (String(meta.gameVersion) === gameVersion && String(meta.loader) === loader.kind && String(meta.loaderVersion || '') === String(loader.version || '')) {
+      let jarPath = '';
+      if (loader.kind === 'forge' || loader.kind === 'neoforge') {
+        const root = fs.readdirSync(serverDir).find((name) => new RegExp(`^${loader.kind}-.*\\.jar$`, 'i').test(name) && !/installer/i.test(name));
+        if (root) jarPath = path.join(serverDir, root);
+      } else if (loader.kind === 'fabric') {
+        if (fs.existsSync(path.join(serverDir, 'fabric-server-launch.jar'))) jarPath = path.join(serverDir, 'fabric-server-launch.jar');
+      } else if (fs.existsSync(path.join(serverDir, 'server.jar'))) {
+        jarPath = path.join(serverDir, 'server.jar');
+      }
+      if (jarPath) {
+        const jr = requiredJavaForMc(gameVersion);
+        const j = await findJava(getSettings().javaPath, jr, JAVA_SCAN_CACHE);
+        if (!j?.path) throw new Error(`找不到可用的 Java ${jr}+`);
+        stageText(onStage, '复用已安装的 CurseForge 服务端');
+        return {
+          serverDir,
+          jarPath,
+          args: ['-jar', jarPath, 'nogui'],
+          javaBin: j.path,
+          javaMajor: j.major ?? null,
+          gameVersion,
+          loader: loader.kind,
+          loaderVersion: loader.version,
+          pack: meta,
+        };
+      }
+    }
+  } catch { /* 元数据损坏则重新安装 */ }
+
+  let serverPackUrl = String(pack.serverPackUrl || '').trim();
+  if (!serverPackUrl) {
+    stageText(onStage, `读取 serverPackFileId=${serverPackFileId}`);
+    const sp = await getCurseForgeServerFile(modId, serverPackFileId);
+    serverPackUrl = String(sp?.downloadUrl || '').trim();
+  }
+  let localServerPack = String(pack.serverPackPath || '').trim();
+  if (!localServerPack || !fs.existsSync(localServerPack)) {
+    for (const name of ['server-pack.zip', 'cf-server-pack.zip', 'ServerFiles.zip']) {
+      const candidate = path.join(serverDir, name);
+      if (fs.existsSync(candidate)) { localServerPack = candidate; break; }
+    }
+  }
+  if (!serverPackUrl && !localServerPack) {
+    throw new Error(`这个包需要手动放服务端包：下载 Server Pack 后放到 ${path.join(serverDir, 'server-pack.zip')}，再重新开房（serverPackFileId=${serverPackFileId}）`);
+  }
+
+  const serverZip = path.join(cacheDir, 'cf-server.zip');
+  if (localServerPack && fs.existsSync(localServerPack)) {
+    stageText(onStage, '使用本地 CurseForge 服务端文件');
+    await fsp.copyFile(localServerPack, serverZip);
+  } else {
+    stageText(onStage, '下载 CurseForge 服务端文件');
+    await downloadFile(serverPackUrl, serverZip, { retries: 3, timeout: 900000 });
+  }
+  const serverBuf = fs.readFileSync(serverZip);
+  const serverEntries = listEntries(serverBuf);
+
+  let written = 0;
+  for (const e of serverEntries) {
+    if (e.name.endsWith('/')) continue;
+    let rel = e.name.replace(/\\/g, '/');
+    if (rel.startsWith('overrides/')) rel = rel.slice('overrides/'.length);
+    if (!rel || isManagedPath(rel)) continue;
+    const dest = safeJoin(serverDir, rel);
+    if (!dest) continue;
+    await fsp.mkdir(path.dirname(dest), { recursive: true });
+    await fsp.writeFile(dest, readEntry(serverBuf, e));
+    written += 1;
+  }
+  stageText(onStage, `铺 CurseForge 服务端文件：${written} 个`);
+
+  const javaRequired = requiredJavaForMc(gameVersion);
+  const java = await findJava(getSettings().javaPath, javaRequired, JAVA_SCAN_CACHE);
+  if (!java?.path) throw new Error(`找不到可用的 Java ${javaRequired}+`);
+
+  let jarPath = '';
+  let args = [];
+  if (loader.kind === 'fabric') {
+    const launcher = path.join(serverDir, 'fabric-server-launch.jar');
+    if (!fs.existsSync(launcher) || !fs.existsSync(path.join(serverDir, 'server.jar'))) {
+      await installFabricServer({ serverDir, gameVersion, loaderVersion: loader.version, onStage });
+    }
+    jarPath = path.join(serverDir, 'fabric-server-launch.jar');
+    args = ['-jar', jarPath, 'nogui'];
+  } else if (loader.kind === 'forge' || loader.kind === 'neoforge') {
+    const installer = fs.readdirSync(serverDir).find((name) => new RegExp(`^${loader.kind}-.*installer\\.jar$`, 'i').test(name));
+    if (!installer) throw new Error(`server pack 里找不到 ${loader.kind} installer`);
+    stageText(onStage, `运行 ${loader.kind} 服务端安装器`);
+    await runProcess(java.path, ['-jar', path.join(serverDir, installer), '--installServer', serverDir], {
+      cwd: serverDir,
+      onLine: (line) => stageText(onStage, line),
+    });
+    const rootJar = fs.readdirSync(serverDir).find((name) => (
+      new RegExp(`^${loader.kind}-.*\\.jar$`, 'i').test(name) &&
+      !/installer/i.test(name)
+    ));
+    if (rootJar) {
+      jarPath = path.join(serverDir, rootJar);
+      args = ['-jar', jarPath, 'nogui'];
+    } else {
+      throw new Error(`${loader.kind} 安装完成，但找不到可启动的 server jar/run 脚本`);
+    }
+  } else {
+    const vanilla = path.join(serverDir, 'server.jar');
+    if (!fs.existsSync(vanilla)) throw new Error('server pack 里没有 server.jar，也没有可识别的 loader');
+    jarPath = vanilla;
+    args = ['-jar', vanilla, 'nogui'];
+  }
+
+  const info = {
+    kind: 'curseforge',
+    name: String(manifest.name || pack?.name || 'CurseForge Pack'),
+    versionId: String(manifest.version || pack?.version || ''),
+    gameVersion,
+    loader: loader.kind,
+    loaderVersion: loader.version,
+    serverPackFileId: serverPackFileId || null,
+    serverPackUrl,
+    files: { extracted: written },
+    serverDir,
+    installedAt: Date.now(),
+  };
+  await fsp.writeFile(path.join(serverDir, 'server-pack.json'), JSON.stringify(info, null, 2), 'utf8');
+  await fsp.rm(clientZip, { force: true }).catch(() => {});
+  await fsp.rm(serverZip, { force: true }).catch(() => {});
+  stageText(onStage, `CurseForge 服务端准备完成：${info.name}（${loader.kind} ${loader.version}）`);
+  return {
+    serverDir,
+    jarPath,
+    args,
+    javaBin: java.path,
+    javaMajor: java.major ?? null,
+    gameVersion,
+    loader: loader.kind,
+    loaderVersion: loader.version,
+    pack: info,
+  };
+}
 export async function prepareModrinthServer({ serverDir, pack, onStage }) {
   if (!serverDir) throw new Error('缺少 serverDir');
   await fsp.mkdir(serverDir, { recursive: true });

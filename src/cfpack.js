@@ -30,7 +30,7 @@ import { installVersion } from './installer.js';
 import { installFabric } from './fabric.js';
 import { installForge, installNeoForge } from './forge.js';
 import { savePackIcon } from './modpack.js';
-import { CF_MIRROR_BASE, CF_GAME_ID } from './curseforge.js';
+import { cfGet, cfPost, CF_GAME_ID } from './curseforge.js';
 
 const UA = 'mclauncher/0.1 (local)';
 
@@ -48,24 +48,32 @@ const CLASS_FOLDER = {
   6552: 'shaderpacks',
 };
 
+/** 文件元数据（客户端文件；serverPackFileId 也从这里读） */
+export async function getCurseForgeFile(modId, fileId) {
+  const data = await getJson(`/mods/${modId}/files/${fileId}`);
+  return data?.data ?? null;
+}
+
+/** 服务端包文件元数据；镜像不一定提供，失败返回 null 由上层明确报错 */
+export async function getCurseForgeServerFile(modId, fileId) {
+  try {
+    const data = await getJson(`/mods/${modId}/files/${fileId}`);
+    return data?.data ?? null;
+  } catch {
+    try {
+      const r = await postJson('/mods/files', { fileIds: [Number(fileId)] });
+      return (r?.data ?? []).find((x) => Number(x.id) === Number(fileId)) ?? null;
+    } catch {
+      return null;
+    }
+  }
+}
 async function postJson(p, body, timeout = 30000) {
-  const res = await fetch(`${CF_MIRROR_BASE}${p}`, {
-    method: 'POST',
-    headers: { 'User-Agent': UA, 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeout),
-  });
-  if (!res.ok) throw new Error(`镜像返回 ${res.status}`);
-  return res.json();
+  return cfPost(p, body, timeout);
 }
 
 async function getJson(p, timeout = 30000) {
-  const res = await fetch(`${CF_MIRROR_BASE}${p}`, {
-    headers: { 'User-Agent': UA, Accept: 'application/json' },
-    signal: AbortSignal.timeout(timeout),
-  });
-  if (!res.ok) throw new Error(`镜像返回 ${res.status}`);
-  return res.json();
+  return cfGet(p, timeout);
 }
 
 /** 数组切块 */
