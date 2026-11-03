@@ -15,6 +15,19 @@
   let sending = false;
   let chatActions = {};
 
+  let assistantToastTimer = null;
+
+  function showAssistantToast(text, { sticky = false, timeout = 4800 } = {}) {
+    const box = el('assistantToast');
+    if (!box) return;
+    if (assistantToastTimer) clearTimeout(assistantToastTimer);
+    const clean = String(text || '').trim();
+    if (!clean) { box.hidden = true; return; }
+    box.textContent = clean.length > 260 ? clean.slice(0, 260) + '…' : clean;
+    box.classList.toggle('above-home', Boolean(document.getElementById('panel-home')?.classList.contains('active')));
+    box.hidden = false;
+    if (!sticky) assistantToastTimer = setTimeout(() => { box.hidden = true; }, timeout);
+  }
   function el(id) { return document.getElementById(id); }
   function setStatus(text, bad) {
     const n = el('aiStatus');
@@ -159,6 +172,7 @@
     sending = true;
     const input = el('aiChatInput');
     if (input) input.value = '';
+    showAssistantToast('正在看日志…', { sticky: true });
     appendUser(message);
     const box = el('aiResult');
     const pending = document.createElement('div');
@@ -176,9 +190,10 @@
       chatActions[msgs.length - 1] = d.actions || [];
       renderChat(msgs, chatActions);
       if (el('aiTarget')) el('aiTarget').textContent = `会话 ${sessionId.slice(0, 8)} · ${targetVersion() || '最近失败'}`;
-      window.dispatchEvent(new CustomEvent('assistant:reply', { detail: { text: d.reply || '' } }));
+      showAssistantToast(d.reply || '没有新的分析结果。');
     } catch (e) {
       if (pending) pending.querySelector('.assistant-msg-text').textContent = '出了点问题：' + e.message;
+      showAssistantToast('出错了：' + e.message, { sticky: false, timeout: 6000 });
     } finally {
       sending = false;
     }
@@ -256,10 +271,22 @@
 
   function showBubble() {
     const b = el('assistantBubble');
-    if (b) b.hidden = false;
+    if (b) b.hidden = true;
+    showAssistantToast('启动失败了。主页的小助手可以看日志。', { timeout: 6000 });
   }
   window.assistantOnFailure = showBubble;
 
+  function setHomeCollapsed(collapsed, { persist = false } = {}) {
+    const home = el('homeAssistant');
+    const btn = el('homeAssistantToggle');
+    if (!home) return;
+    home.classList.toggle('is-collapsed', Boolean(collapsed));
+    if (btn) {
+      btn.textContent = collapsed ? '展开' : '收起';
+      btn.setAttribute('aria-expanded', String(!collapsed));
+    }
+    if (persist) localStorage.setItem('sakura.homeAssistantCollapsed', collapsed ? '1' : '0');
+  }
   function init() {
     if (!el('aiBase')) return;
     loadAiConfig();
@@ -269,6 +296,12 @@
     el('aiAnalyze')?.addEventListener('click', runAnalyze);
     el('aiChatSend')?.addEventListener('click', () => sendChat(el('aiChatInput')?.value));
     el('aiChatNew')?.addEventListener('click', newSession);
+    el('homeAssistantToggle')?.addEventListener('click', () => {
+      const home = el('homeAssistant');
+      setHomeCollapsed(!home?.classList.contains('is-collapsed'), { persist: true });
+    });
+    const savedCollapsed = localStorage.getItem('sakura.homeAssistantCollapsed');
+    setHomeCollapsed(savedCollapsed === '1' || (savedCollapsed === null && window.innerWidth < 760));
     el('aiChatInput')?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(el('aiChatInput').value); }
     });
