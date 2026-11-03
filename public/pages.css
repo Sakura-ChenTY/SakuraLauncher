@@ -1906,3 +1906,8 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .room-memory-row .input { width: 110px; }
 
 .export-saves-note { margin-top: 6px; }
+
+.import-confirm-box { max-width: 560px; }
+.import-confirm-text { font-size: 13px; color: var(--text); margin-bottom: 8px; }
+.import-conflict-list { max-height: 180px; overflow: auto; margin: 8px 0; padding: 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg-2); font-family: var(--mono); font-size: 11px; line-height: 1.7; color: var(--text-dim); }
+.import-confirm-actions { margin-top: 12px; justify-content: flex-end; flex-wrap: wrap; }

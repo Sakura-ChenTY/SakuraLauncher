@@ -5015,6 +5015,54 @@ $('yggPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') doYggLo
 
 /* 拖入 URL：和手填/剪贴板共用 handleYggAddress */
 /* 文件拖入：整合包 zip / mrpack / mod jar */
+let pendingImport = null;
+
+async function performImport(path, versionId, backupSaves = false) {
+  try {
+    const data = await api('/api/import/file', {
+      method: 'POST',
+      body: JSON.stringify({ path, versionId, backupSaves }),
+    });
+    if (data.started) {
+      showProgress(true);
+      updateProgress({ stage: 'modpack', message: '正在导入本地整合包…' });
+      resetCancelButton();
+      toast('开始导入整合包');
+      refreshStatus();
+      return;
+    }
+    if (data.kind === 'mod') {
+      toast('已加入 mods');
+      return;
+    }
+    const mods = data.mods || [];
+    const skipped = (data.skipped || []).map((x) => typeof x === 'string' ? x : `${x.name}（${x.reason}）`);
+    const modLine = mods.length
+      ? `${mods.slice(0, 5).join('、')}${mods.length > 5 ? `等 ${mods.length} 个` : ''}`
+      : '无';
+    toast(`导入完成：Mod ${modLine}；覆盖 ${data.overwrites ?? 0} 个文件；跳过 ${skipped.length ? skipped.join('、') : '无'}`);
+    await loadInstalled();
+    state.selectedVersion = data.versionId;
+    renderInstalled();
+    updateHome();
+  } catch (e) {
+    toast('导入失败：' + e.message, 'err');
+  }
+}
+
+function showImportPreview(preview, path, versionId) {
+  pendingImport = { path, versionId };
+  const text = $('importConfirmText');
+  if (text) text.textContent = `这个包会覆盖 ${preview.overwrites || 0} 个已有文件，新增 ${preview.additions || 0} 个`;
+  const list = $('importConflictList');
+  if (list) {
+    const paths = preview.overwritePaths || [];
+    const more = (preview.overwrites || 0) > paths.length ? `\n等 ${preview.overwrites} 个` : '';
+    list.textContent = paths.length ? `${paths.join('\n')}${more}` : '没有同名文件';
+  }
+  if ($('importConfirmModal')) $('importConfirmModal').hidden = false;
+}
+
 async function importDroppedFile(file) {
   let p = '';
   try { p = globalThis.mcWin?.getPathForFile?.(file) || file?.path || ''; } catch { /* ignore */ }
@@ -5027,30 +5075,44 @@ async function importDroppedFile(file) {
     toast('只支持整合包 zip / mrpack 或单个 jar', 'err');
     return;
   }
+  if (ext === 'jar') {
+    await performImport(p, state.selectedVersion, false);
+    return;
+  }
   try {
-    const data = await api('/api/import/file', {
+    const preview = await api('/api/import/preview', {
       method: 'POST',
       body: JSON.stringify({ path: p, versionId: state.selectedVersion }),
     });
-    if (data.started) {
-      showProgress(true);
-      updateProgress({ stage: 'modpack', message: '正在导入本地整合包…' });
-      resetCancelButton();
-      toast('开始导入整合包');
-      refreshStatus();
+    if (preview.kind === 'modpack') {
+      await performImport(p, state.selectedVersion, false);
       return;
     }
-    toast(data.kind === 'mod' ? '已加入 mods' : `已导入到 ${data.versionId}`);
-    if (data.kind === 'zip') {
-      await loadInstalled();
-      state.selectedVersion = data.versionId;
-      renderInstalled();
-      updateHome();
-    }
+    showImportPreview(preview, p, state.selectedVersion);
   } catch (e) {
-    toast('导入失败：' + e.message, 'err');
+    toast('读取整合包失败：' + e.message, 'err');
   }
 }
+
+function closeImportConfirm() {
+  pendingImport = null;
+  if ($('importConfirmModal')) $('importConfirmModal').hidden = true;
+}
+
+$('importCancel')?.addEventListener('click', closeImportConfirm);
+$('importCancelX')?.addEventListener('click', closeImportConfirm);
+$('importBackup')?.addEventListener('click', async () => {
+  if (!pendingImport) return;
+  const job = pendingImport;
+  closeImportConfirm();
+  await performImport(job.path, job.versionId, true);
+});
+$('importDirect')?.addEventListener('click', async () => {
+  if (!pendingImport) return;
+  const job = pendingImport;
+  closeImportConfirm();
+  await performImport(job.path, job.versionId, false);
+});
 
 window.addEventListener('dragover', (e) => {
   const types = e.dataTransfer?.types ?? [];

@@ -1162,6 +1162,24 @@
       </div>
     </div>
   </div>
+  <!-- 导入确认 -->
+  <div class="modal" id="importConfirmModal" hidden>
+    <div class="modal-box import-confirm-box">
+      <div class="modal-head">
+        <h3>导入确认</h3>
+        <button class="btn ghost" id="importCancelX" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="importConfirmText" class="import-confirm-text"></div>
+        <div id="importConflictList" class="import-conflict-list"></div>
+        <div class="field-line import-confirm-actions">
+          <button class="btn ghost" id="importCancel" type="button">取消</button>
+          <button class="btn" id="importDirect" type="button">直接导入</button>
+          <button class="btn ghost" id="importBackup" type="button">先备份存档再导入</button>
+        </div>
+      </div>
+    </div>
+  </div>
   <!-- 存档管理 -->
   <div class="modal" id="savesModal" hidden>
     <div class="modal-box saves-box">

@@ -93,6 +93,7 @@ import { resolveSource, measureSources, clearSourceCache } from './speedtest.js'
 import { appendLogLine } from './logfile.js';
 import { listTrash, restoreTrash, purgeTrash } from './trash.js';
 import { resolveRequiredDependencies } from './dependencies.js';
+import { installCfManifestMods } from './cfimport.js';
 import { ensureVersionFiles } from './preflight.js';
 import { SOURCES, SOURCE_IDS } from './sources.js';
 import {
@@ -480,13 +481,15 @@ function safeInstanceName(name, fallback = 'imported-pack') {
   return s || fallback;
 }
 
-function extractZipTo(buf, entries, targetDir) {
+function extractZipTo(buf, entries, targetDir, mapRel = (name) => name) {
   const root = path.resolve(targetDir);
   fs.mkdirSync(root, { recursive: true });
   let count = 0;
   for (const e of entries) {
     if (!e.name || e.name.endsWith('/')) continue;
-    const dest = path.resolve(root, e.name);
+    const rel = mapRel(e.name.replace(/\\/g, '/'));
+    if (!rel) continue;
+    const dest = path.resolve(root, rel);
     if (dest !== root && !dest.startsWith(root + path.sep)) continue;
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.writeFileSync(dest, readEntry(buf, e));
@@ -495,7 +498,37 @@ function extractZipTo(buf, entries, targetDir) {
   return count;
 }
 
-async function handleDroppedFile(filePath, versionId) {
+function importEntryRel(name, manifest) {
+  let rel = String(name || '').replace(/\\/g, '/');
+  if (!manifest) return rel;
+  const prefix = String(manifest.overrides || 'overrides').replace(/\\/g, '/').replace(/\/+$/, '');
+  if (rel === 'manifest.json' || rel === `${prefix}/`) return '';
+  if (rel.startsWith(`${prefix}/`)) rel = rel.slice(prefix.length + 1);
+  return rel;
+}
+
+function buildImportPlan(entries, targetDir, mapRel) {
+  const root = path.resolve(targetDir);
+  const overwritePaths = [];
+  let overwrites = 0;
+  let additions = 0;
+  for (const e of entries) {
+    if (!e.name || e.name.endsWith('/')) continue;
+    const rel = mapRel(e.name.replace(/\\/g, '/'));
+    if (!rel) continue;
+    const dest = path.resolve(root, rel);
+    if (dest !== root && !dest.startsWith(root + path.sep)) continue;
+    if (fs.existsSync(dest)) {
+      overwrites += 1;
+      if (overwritePaths.length < 10) overwritePaths.push(rel);
+    } else {
+      additions += 1;
+    }
+  }
+  return { overwrites, additions, overwritePaths };
+}
+
+async function handleDroppedFile(filePath, versionId, opts = {}) {
   const src = path.resolve(String(filePath ?? ''));
   if (!fs.existsSync(src) || !fs.statSync(src).isFile()) {
     throw new Error('拖入的文件不存在');
@@ -525,6 +558,7 @@ async function handleDroppedFile(filePath, versionId) {
   const isMrpack = /\.mrpack$/i.test(ext) || names.some((n) => n === 'modrinth.index.json' || n.endsWith('/modrinth.index.json'));
 
   if (isMrpack) {
+    if (opts.preview) return { kind: 'modpack', preview: true, versionId: path.parse(src).name };
     if (state.installing) throw new Error('已有安装任务在进行');
     if (state.running) throw new Error('游戏正在运行，先退出再导入');
     state.installing = { versionId: path.parse(src).name, stage: 'modpack', done: 0, total: 0 };
@@ -572,6 +606,7 @@ async function handleDroppedFile(filePath, versionId) {
   }
   const mcVersion = manifest?.minecraft?.version ?? '';
   const sakuraExport = manifest?.format === 'sakura-instance';
+  const cfManifest = !sakuraExport && Array.isArray(manifest?.files) && Boolean(manifest?.minecraft);
   let instanceId = targetVersion || safeInstanceName(manifest?.name || path.parse(src).name);
   if (sakuraExport) {
     // 自己导出的包：默认建一个新实例，避免同名覆盖原实例。
@@ -584,7 +619,43 @@ async function handleDroppedFile(filePath, versionId) {
     }
   }
   const instanceDir = path.join(state.gameDir, 'versions', instanceId);
-  const count = extractZipTo(buf, entries, instanceDir);
+  const mapRel = cfManifest
+    ? (name) => importEntryRel(name, manifest)
+    : (name) => name;
+  const plan = buildImportPlan(entries, instanceDir, mapRel);
+  if (opts.preview) {
+    return {
+      kind: 'zip',
+      preview: true,
+      versionId: instanceId,
+      gameVersion: mcVersion || null,
+      loader: manifest?.loader || (cfManifest ? 'curseforge' : null),
+      ...plan,
+      cf: cfManifest ? { files: manifest.files.length } : null,
+    };
+  }
+
+  if (opts.backupSaves && fs.existsSync(instanceDir)) {
+    await backupAll({
+      gameDir: state.gameDir,
+      versionId: instanceId,
+      whileRunning: Boolean(state.running),
+      source: 'manual',
+    });
+  }
+  const count = extractZipTo(buf, entries, instanceDir, mapRel);
+  let cfResult = null;
+  if (cfManifest) {
+    try {
+      cfResult = await installCfManifestMods({
+        gameDir: state.gameDir,
+        versionId: instanceId,
+        manifest,
+      });
+    } catch (e) {
+      cfResult = { installed: [], skipped: [], failed: [{ name: 'CurseForge 清单', reason: e.message }] };
+    }
+  }
   if (sakuraExport) {
     const sourceName = String(manifest?.versionJson || `${manifest?.name || ''}.json`).replace(/\\/g, '/');
     const sourceJson = path.join(instanceDir, sourceName);
@@ -597,13 +668,26 @@ async function handleDroppedFile(filePath, versionId) {
     if (sourceJson !== targetJson) fs.rmSync(sourceJson, { force: true });
     fs.writeFileSync(targetJson, JSON.stringify(versionData, null, 2), 'utf8');
   }
-  pushLog(`拖入 zip：解压 ${count} 个文件 → ${instanceId}${mcVersion ? `（MC ${mcVersion}）` : ''}`);
+  const installedMods = cfResult
+    ? cfResult.installed
+    : entries
+      .map((e) => importEntryRel(e.name, null))
+      .filter((name) => /^mods\/[^/]+\.jar$/i.test(name))
+      .map((name) => name.slice(5));
+  const skipped = cfResult ? [...(cfResult.skipped || []), ...(cfResult.failed || [])] : [];
+  const summary = `导入完成：Mod ${installedMods.length} 个，覆盖 ${plan.overwrites} 个文件，跳过 ${skipped.length} 个`;
+  pushLog(`拖入 zip：解压 ${count} 个文件 → ${instanceId}${mcVersion ? `（MC ${mcVersion}）` : ''}；${summary}`);
   return {
     kind: 'zip',
     versionId: instanceId,
     gameVersion: mcVersion || null,
-    loader: manifest?.loader || null,
+    loader: cfResult?.loader || manifest?.loader || null,
     files: count,
+    overwrites: plan.overwrites,
+    additions: plan.additions,
+    mods: installedMods,
+    skipped,
+    summary,
   };
 }
 
@@ -2319,10 +2403,21 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, await handleModpackInstall(body));
     }
 
+    if (p === '/api/import/preview' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        return json(res, 200, await handleDroppedFile(body.path, body.versionId, { preview: true }));
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
     if (p === '/api/import/file' && req.method === 'POST') {
       const body = await readBody(req);
       try {
-        return json(res, 200, await handleDroppedFile(body.path, body.versionId));
+        return json(res, 200, await handleDroppedFile(body.path, body.versionId, {
+          backupSaves: body.backupSaves === true || body.options?.backupSaves === true,
+        }));
       } catch (e) {
         return json(res, 400, { error: e.message });
       }
