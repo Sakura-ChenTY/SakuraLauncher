@@ -1727,3 +1727,29 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .home-assistant.is-collapsed .home-assistant-title,
 .home-assistant:not(.is-collapsed) #homeAssistantToggle,
 .home-assistant.is-collapsed #homeAssistantToggle { top: -0.6px; }
+
+/* 防越界：底行裁剪，最后一个按钮留出右边距 */
+.home-assistant {
+  max-width: calc(100% - 24px);
+}
+.home-assistant-bar {
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow: hidden;
+}
+.home-assistant #homeAssistantMore {
+  margin-right: 12px;
+}
+.home-assistant #homeAssistantToggle {
+  right: 12px;
+}
+@media (max-width: 760px) {
+  .home-assistant-bar { gap: 0; }
+}
+
+.home-assistant #homeAssistantToggle {
+  right: 15px;
+}
+
+.home-assistant:not(.is-collapsed) #homeAssistantToggle,
+.home-assistant.is-collapsed #homeAssistantToggle { right: 15px; }
