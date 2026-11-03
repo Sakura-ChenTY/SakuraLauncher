@@ -731,8 +731,79 @@ async function openExportFolder() {
   }
 }
 
-/* ---- 存档管理 ---- */
-const savesState = { versionId: '', data: null };
+/* ---- 整包更新 ---- */
+const packUpdateState = { versionId: '', path: '', preview: null };
+
+function pickPackUpdateFile() {
+  if (globalThis.mcWin?.pickFile) {
+    return globalThis.mcWin.pickFile([{ name: '整合包', extensions: ['zip', 'mrpack'] }]);
+  }
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.zip,.mrpack';
+    input.addEventListener('change', () => resolve(input.files?.[0]?.path || ''));
+    input.click();
+  });
+}
+
+async function openPackUpdate() {
+  const versionId = state.selectedVersion;
+  if (!versionId) {
+    toast('先在版本页选一个实例', 'err');
+    return;
+  }
+  let path = '';
+  try { path = await pickPackUpdateFile(); } catch { /* ignore */ }
+  if (!path) return;
+  try {
+    const preview = await api('/api/pack/update/preview', {
+      method: 'POST',
+      body: JSON.stringify({ versionId, path, overwriteConfig: false }),
+    });
+    packUpdateState.versionId = versionId;
+    packUpdateState.path = path;
+    packUpdateState.preview = preview;
+    if ($('packUpdateGroups')) $('packUpdateGroups').textContent = preview.text || '没有内容差异';
+    if ($('packUpdateText')) $('packUpdateText').textContent = `类型：${preview.kind} · 新增 ${preview.counts.added} · 变化 ${preview.counts.changed} · 移除 ${preview.counts.removed} · 跳过 ${preview.counts.skipped}`;
+    if ($('packUpdateConfig')) $('packUpdateConfig').checked = false;
+    if ($('packUpdateNotice')) $('packUpdateNotice').textContent = '存档和配置没动';
+    if ($('packUpdateResult')) $('packUpdateResult').textContent = '';
+    if ($('packUpdateModal')) $('packUpdateModal').hidden = false;
+  } catch (e) {
+    toast('读取整合包失败：' + e.message, 'err');
+  }
+}
+
+async function applyPackUpdate() {
+  if (!packUpdateState.versionId || !packUpdateState.path) return;
+  const overwriteConfig = Boolean($('packUpdateConfig')?.checked);
+  const btn = $('packUpdateStart');
+  if (btn) { btn.disabled = true; btn.textContent = '正在更新…'; }
+  try {
+    const r = await api('/api/pack/update/apply', {
+      method: 'POST',
+      body: JSON.stringify({
+        versionId: packUpdateState.versionId,
+        path: packUpdateState.path,
+        overwriteConfig,
+      }),
+    });
+    if ($('packUpdateResult')) {
+      const removed = r.removedDir
+        ? `\n移除文件在 ${r.removedDir}；30 天后不会被清理，建议手动删`
+        : '';
+      $('packUpdateResult').textContent = `${r.summary}\n${r.protectedNote}${removed}`;
+    }
+    toast(`整合包更新完成：${r.summary}`, 'ok');
+    await loadInstalled();
+  } catch (e) {
+    toast('更新整合包失败：' + e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '开始更新'; }
+  }
+}
+
 
 function renderSaves(data) {
   savesState.data = data;
@@ -4704,6 +4775,17 @@ $('manageContent').addEventListener('click', () => {
 });
 
 $('refreshInstalled').addEventListener('click', loadInstalled);
+$('updatePackBtn')?.addEventListener('click', openPackUpdate);
+$('packUpdateStart')?.addEventListener('click', applyPackUpdate);
+$('packUpdateClose')?.addEventListener('click', () => { $('packUpdateModal').hidden = true; });
+$('packUpdateCancel')?.addEventListener('click', () => { $('packUpdateModal').hidden = true; });
+$('packUpdateConfig')?.addEventListener('change', () => {
+  if ($('packUpdateNotice')) {
+    $('packUpdateNotice').textContent = $('packUpdateConfig').checked
+      ? '存档没动；配置已按勾选覆盖'
+      : '存档和配置没动';
+  }
+});
 $('trashBtn')?.addEventListener('click', openTrashModal);
 $('trashClose')?.addEventListener('click', () => { $('trashModal').hidden = true; });
 $('refreshRemote').addEventListener('click', loadRemote);

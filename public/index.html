@@ -406,6 +406,7 @@
             <div class="row-actions">
               <span class="count" id="installedCount">0</span>
               <button class="btn ghost" id="trashBtn" hidden>最近删除 <span id="trashCount"></span></button>
+              <button class="btn ghost" id="updatePackBtn" type="button">更新整合包</button>
               <button class="btn ghost" id="refreshInstalled">刷新列表</button>
             </div>
           </div>
@@ -1175,6 +1176,27 @@
         <div class="field-line" style="margin-top:14px;justify-content:flex-end;flex-wrap:wrap">
           <button class="btn ghost" id="saveImportFolder" type="button">选择世界文件夹</button>
           <button class="btn" id="saveImportZip" type="button">选择 .zip</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+  <!-- 更新整合包 -->
+  <div class="modal" id="packUpdateModal" hidden>
+    <div class="modal-box pack-update-box">
+      <div class="modal-head">
+        <h3>更新整合包</h3>
+        <button class="btn ghost" id="packUpdateClose" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="packUpdateGroups" class="pack-update-groups"></div>
+        <div id="packUpdateText" class="hint"></div>
+        <label class="pack-update-config"><input id="packUpdateConfig" type="checkbox"> 覆盖配置</label>
+        <div id="packUpdateNotice" class="hint">存档和配置没动</div>
+        <div id="packUpdateResult" class="pack-update-result"></div>
+        <div class="field-line" style="margin-top:12px;justify-content:flex-end">
+          <button class="btn ghost" id="packUpdateCancel" type="button">取消</button>
+          <button class="btn" id="packUpdateStart" type="button">开始更新</button>
         </div>
       </div>
     </div>

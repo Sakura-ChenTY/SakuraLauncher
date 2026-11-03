@@ -1913,3 +1913,8 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .import-confirm-actions { margin-top: 12px; justify-content: flex-end; flex-wrap: wrap; }
 
 .saves-page-row.selected { border-color: var(--accent); background: rgba(255, 209, 220, .08); }
+
+.pack-update-box { max-width: 620px; }
+.pack-update-groups { font-size: 13px; color: var(--text); line-height: 1.7; margin-bottom: 6px; }
+.pack-update-config { display: block; margin: 10px 0 4px; font-size: 12px; color: var(--text-dim); }
+.pack-update-result { margin-top: 10px; white-space: pre-wrap; font-size: 11px; color: var(--text-dim); line-height: 1.7; }

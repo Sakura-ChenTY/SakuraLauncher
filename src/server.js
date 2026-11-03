@@ -74,6 +74,7 @@ import { detectSymptom, guessSymptom, collectSymptomContext, SYMPTOMS, IMPLEMENT
 import { previewDiagnosticPackage, createDiagnosticPackage, sanitizeDiagnostic } from './diagnostic-package.js';
 import { snapshotCrashArtifacts, newCrashArtifacts } from './crash-watch.js';
 import { previewExport, exportInstance } from './modpack-export.js';
+import { previewPackUpdate, applyPackUpdate } from './packupdate.js';
 import { listSaves, backupWorld, backupAll, restoreBackup, autoBackupAll } from './saves.js';
 import { previewSaveImport, importSave } from './saveimport.js';
 import {
@@ -3554,6 +3555,43 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ok: true, path: target });
       } catch (e) { return json(res, 400, { error: e.message }); }
     }
+    if (p === '/api/pack/update/preview' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const versionId = String(body.versionId || '').trim();
+        if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
+        return json(res, 200, previewPackUpdate({
+          gameDir: state.gameDir,
+          versionId,
+          archivePath: String(body.path || ''),
+          overwriteConfig: body.overwriteConfig === true,
+        }));
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
+    if (p === '/api/pack/update/apply' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (state.running) return json(res, 409, { error: '游戏正在运行，先退出再更新' });
+      if (state.saving) return json(res, 409, { error: '正在处理存档，请稍候' });
+      try {
+        const versionId = String(body.versionId || '').trim();
+        if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
+        state.saving = true;
+        const result = await applyPackUpdate({
+          gameDir: state.gameDir,
+          versionId,
+          archivePath: String(body.path || ''),
+          overwriteConfig: body.overwriteConfig === true,
+        });
+        pushLog(`整合包更新：${result.summary}；${result.protectedNote}${result.removedDir ? `；移除文件在 ${result.removedDir}` : ''}`);
+        return json(res, 200, result);
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      } finally { state.saving = false; }
+    }
+
     if (p === '/api/export/preview' && req.method === 'POST') {
       const body = await readBody(req);
       try {
