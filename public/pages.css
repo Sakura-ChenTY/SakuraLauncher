@@ -1871,3 +1871,8 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .home-assistant:not(.is-collapsed) #homeAssistantToggle {
   top: 0 !important;
 }
+
+.preflight-box { max-width: 720px; }
+.preflight-message { margin: 0 0 10px; white-space: pre-wrap; line-height: 1.6; }
+.preflight-list { max-height: 260px; overflow: auto; margin: 0; padding-left: 20px; font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; line-height: 1.55; }
+.preflight-list li { margin: 4px 0; word-break: break-all; }

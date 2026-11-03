@@ -44,7 +44,12 @@ function api(path, opts) {
     ...opts,
   }).then(async (r) => {
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    if (!r.ok) {
+      const err = new Error(data.error || `HTTP ${r.status}`);
+      err.code = data.code || '';
+      err.missing = data.missing || [];
+      throw err;
+    }
     return data;
   });
 }
@@ -1520,6 +1525,17 @@ async function doInstall(versionId) {
   }
 }
 
+function showPreflightError(missing, message) {
+  const list = $('preflightList');
+  if (list) {
+    list.innerHTML = (missing || []).map((x) => `<li><b>${escapeHtml(x.label || x.kind || '文件')}</b><br>${escapeHtml(x.path || '')}</li>`).join('');
+  }
+  const text = $('preflightMessage');
+  if (text) text.textContent = message || '这个版本缺少启动文件，补不上。';
+  const modal = $('preflightModal');
+  if (modal) modal.hidden = false;
+}
+
 async function doLaunch(versionId, joinAddress, opts = {}) {
   if (state.running) {
     alert(`游戏正在运行：${state.running.versionId}\n先关掉正在跑的游戏，再${joinAddress ? '点「加入并启动」' : '重新启动'}。`);
@@ -1558,6 +1574,10 @@ async function doLaunch(versionId, joinAddress, opts = {}) {
     state.launchRetryVersion = versionId;
     const retry = $('launchRetryBtn');
     if (retry) retry.hidden = false;
+    if (e.code === 'PREFLIGHT_MISSING') {
+      showPreflightError(e.missing, e.message);
+      return;
+    }
     alert('启动失败：' + e.message);
   }
 }
@@ -2278,6 +2298,12 @@ function connectEvents() {
         setTimeout(() => showProgress(false), 1800);
         break;
 
+      case 'launch-preflight':
+        setStatus('busy', msg.message || '启动前检查…');
+        appendLog(`[preflight] ${msg.message || ''}`);
+        showProgress(true);
+        updateProgress({ stage: 'preflight', message: msg.message || '启动前检查…' });
+        break;
       case 'launch-java-stage':
         setStatus('busy', msg.message || '准备 Java 运行时…');
         appendLog(`[java] ${msg.message || ''}`);
@@ -4236,6 +4262,17 @@ $('launchRetryBtn')?.addEventListener('click', () => {
   if (!v) return;
   $('launchRetryBtn').hidden = true;
   doLaunch(v);
+});
+
+$('preflightClose')?.addEventListener('click', () => { $('preflightModal').hidden = true; });
+$('preflightRetry')?.addEventListener('click', () => {
+  const v = state.launchRetryVersion || state.selectedVersion;
+  $('preflightModal').hidden = true;
+  if (v) doLaunch(v);
+});
+$('preflightOpenLog')?.addEventListener('click', () => {
+  $('preflightModal').hidden = true;
+  $('openLogBtn')?.click();
 });
 
 $('manageContent').addEventListener('click', () => {

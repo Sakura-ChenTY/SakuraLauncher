@@ -1139,6 +1139,23 @@
       </div>
     </div>
   </div>
+  <!-- 启动前文件检查失败 -->
+  <div class="modal" id="preflightModal" hidden>
+    <div class="modal-box preflight-box">
+      <div class="modal-head">
+        <h3>启动前检查</h3>
+        <button class="btn ghost" id="preflightClose" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <p id="preflightMessage" class="preflight-message"></p>
+        <ul id="preflightList" class="preflight-list"></ul>
+        <div class="field-line" style="margin-top:12px;justify-content:flex-end">
+          <button class="btn ghost" id="preflightOpenLog" type="button">打开日志</button>
+          <button class="btn" id="preflightRetry" type="button">重试</button>
+        </div>
+      </div>
+    </div>
+  </div>
   <!-- 版本选择弹窗 -->
   <div class="modal" id="versionModal" hidden>
     <div class="modal-box">

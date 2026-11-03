@@ -91,6 +91,7 @@ import { HOME_DIR } from './paths.js';
 import { getSettings, saveSettings, DEFAULTS, SETTINGS_FILE } from './settings.js';
 import { resolveSource, measureSources, clearSourceCache } from './speedtest.js';
 import { appendLogLine } from './logfile.js';
+import { ensureVersionFiles } from './preflight.js';
 import { SOURCES, SOURCE_IDS } from './sources.js';
 import {
   msStartDeviceCode,
@@ -969,6 +970,12 @@ async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta 
   try { ensureChineseLanguage(versionId); } catch { /* 不阻断启动 */ }
 
   // 玩家名 / 内存 / Java / 隔离 全部来自设置，不再由前端硬编码传参
+  // 启动前校验：缺文件先补齐，补不上返回可读清单，不把 JVM 栈直接甩给用户。
+  await ensureVersionFiles({
+    gameDir: state.gameDir,
+    versionId,
+    onStage: (event) => emit('launch-preflight', event),
+  });
   state.crashBaseline = snapshotCrashArtifacts(state.gameDir, versionId);
   const r = await launch({
     gameDir: state.gameDir,
@@ -1463,7 +1470,15 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/launch' && req.method === 'POST') {
       const body = await readBody(req);
       if (!body.versionId) return json(res, 400, { error: '缺少 versionId' });
-      return json(res, 200, await handleLaunch(body));
+      try {
+        return json(res, 200, await handleLaunch(body));
+      } catch (e) {
+        return json(res, e.code === 'PREFLIGHT_MISSING' ? 409 : 400, {
+          error: e.message,
+          code: e.code || undefined,
+          missing: e.missing || undefined,
+        });
+      }
     }
 
     if (p === '/api/logs') {
