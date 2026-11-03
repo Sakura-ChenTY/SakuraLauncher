@@ -443,7 +443,8 @@
   function barReflowItems(home) {
     return [
       home.querySelector('.home-assistant-title'),
-      home.querySelector('.assistant-chat-line'),
+      el('aiChatInput'),
+      el('aiChatSend'),
       el('aiAnalyze'),
       el('homeDiagBtn'),
       el('homeAssistantMore'),
@@ -507,23 +508,6 @@
     }, 280);
   }
 
-  function moveHomeNodes(home, collapsed) {
-    const header = el('homeAssistantHeader');
-    const title = home.querySelector('.home-assistant-title');
-    const toggle = el('homeAssistantToggle');
-    const head = home.querySelector('.home-assistant-head');
-    const actions = home.querySelector('.home-assistant-actions');
-    if (!header || !title || !toggle || !head || !actions) return;
-    if (!collapsed) {
-      header.hidden = false;
-      header.appendChild(title);
-      header.appendChild(toggle);
-    } else {
-      header.hidden = true;
-      head.prepend(title);
-      actions.appendChild(toggle);
-    }
-  }
   function setHomeCollapsed(collapsed, { persist = false } = {}) {
     const home = el('homeAssistant');
     const btn = el('homeAssistantToggle');
@@ -545,7 +529,6 @@
         }
       }, collapsed ? 360 : 260);
     }
-    moveHomeNodes(home, collapsed);
     home.classList.toggle('is-collapsed', Boolean(collapsed));
     if (btn) {
       btn.textContent = collapsed ? '展开' : '收起';

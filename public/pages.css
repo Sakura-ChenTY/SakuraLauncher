@@ -1548,3 +1548,54 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .save-row button { flex: 0 0 auto; }
 .saves-empty { font-size: 11px; color: var(--muted); padding: 8px 0; }
 .saves-box { max-width: 640px; }
+
+/* 同一个 DOM 用 Grid 在两个状态间换位置，不搬节点 */
+.home-assistant {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto auto auto;
+  grid-template-rows: 0 auto;
+  grid-template-areas:
+    "log log log log log log log"
+    "title input send analyze diag more toggle";
+  column-gap: 7px;
+  row-gap: 7px;
+  align-items: center;
+  max-height: none;
+}
+.home-assistant-bar,
+.home-assistant-bar .home-assistant-head,
+.home-assistant-bar .home-assistant-actions,
+.home-assistant .assistant-chat-line {
+  display: contents !important;
+}
+.home-assistant > .assistant-expand {
+  grid-area: log;
+  width: 100%;
+  margin: 0;
+}
+.home-assistant .home-assistant-title { grid-area: title; }
+.home-assistant #aiChatInput { grid-area: input; width: 100%; min-width: 0; }
+.home-assistant #aiChatSend { grid-area: send; }
+.home-assistant #aiAnalyze { grid-area: analyze; }
+.home-assistant #homeDiagBtn { grid-area: diag; }
+.home-assistant #homeAssistantMore { grid-area: more; }
+.home-assistant #homeAssistantToggle { grid-area: toggle; }
+.home-assistant .assistant-chat-line #aiChatNew { display: none; }
+
+.home-assistant:not(.is-collapsed) {
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto auto;
+  grid-template-rows: auto auto auto;
+  grid-template-areas:
+    "title title title title title toggle"
+    "log log log log log log"
+    "input input send analyze diag more";
+}
+.home-assistant.is-collapsed {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto auto auto;
+  grid-template-rows: 0 auto;
+  grid-template-areas:
+    "log log log log log log log"
+    "title input send analyze diag more toggle";
+  max-height: none;
+}
