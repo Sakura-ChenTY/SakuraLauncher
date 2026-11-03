@@ -1796,3 +1796,10 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
   .home-assistant.is-collapsed .home-assistant-bar { padding-left: 0; }
   .home-assistant #homeAssistantMore { margin-right: 6px; }
 }
+
+/* 极窄窗口：优先保证一行不溢出，输入框在 100px 基础上继续让位 */
+@media (max-width: 419px) {
+  .home-assistant.is-collapsed #aiChatInput {
+    min-width: min(100px, calc(100% - 73px)) !important;
+  }
+}
