@@ -405,6 +405,7 @@
             <h2>已安装版本</h2>
             <div class="row-actions">
               <span class="count" id="installedCount">0</span>
+              <button class="btn ghost" id="trashBtn" hidden>最近删除 <span id="trashCount"></span></button>
               <button class="btn ghost" id="refreshInstalled">刷新列表</button>
             </div>
           </div>
@@ -1178,6 +1179,21 @@
           <button class="btn ghost" id="preflightAssistant" type="button">交给小助手</button>
           <button class="btn ghost" id="preflightOpenLog" type="button">打开日志</button>
           <button class="btn" id="preflightRetry" type="button">重试</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- 最近删除 -->
+  <div class="modal" id="trashModal" hidden>
+    <div class="modal-box trash-box">
+      <div class="modal-head">
+        <h3>最近删除</h3>
+        <button class="btn ghost" id="trashClose" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="trashList" class="trash-list"></div>
+        <div class="trash-foot">
+          <span class="hint">删除的实例会留在 .trash，不会自动清理。</span>
         </div>
       </div>
     </div>

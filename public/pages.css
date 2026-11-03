@@ -1891,3 +1891,13 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .saves-page-actions .select { min-width: 150px; max-width: 240px; }
 
 .saves-page .saves-list { max-height: none; }
+
+.trash-box { max-width: 720px; }
+.trash-list { display: flex; flex-direction: column; gap: 6px; max-height: 420px; overflow: auto; }
+.trash-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-2); }
+.trash-main { min-width: 0; }
+.trash-name { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trash-meta { margin-top: 3px; font-size: 10px; color: var(--muted); }
+.trash-old { margin-top: 3px; font-size: 10px; color: #d8a14a; }
+.trash-actions { display: flex; gap: 5px; flex: 0 0 auto; }
+.trash-foot { margin-top: 10px; font-size: 10px; color: var(--muted); }

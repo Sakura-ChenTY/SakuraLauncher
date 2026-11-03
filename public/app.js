@@ -1521,6 +1521,7 @@ async function loadInstalled() {
     $('gameDir').textContent = shownDir;
     if ($('tbDirPath')) $('tbDirPath').textContent = shownDir;
     renderInstalled();
+    loadTrashBadge();
     // 装过的版本也能作为 Fabric 的基底
     if (typeof renderFabricGameOptions === 'function') renderFabricGameOptions();
   } catch (e) {
@@ -1530,6 +1531,103 @@ async function loadInstalled() {
 }
 
 let installedReloadTimer = null;
+const trashState = { entries: [] };
+
+async function loadTrashBadge() {
+  const btn = $('trashBtn');
+  if (!btn) return;
+  try {
+    const data = await api('/api/trash');
+    trashState.entries = data.entries || [];
+    const n = trashState.entries.length;
+    btn.hidden = n === 0;
+    if ($('trashCount')) $('trashCount').textContent = n ? `(${n})` : '';
+  } catch {
+    btn.hidden = true;
+  }
+}
+
+function renderTrash(entries) {
+  const list = $('trashList');
+  if (!list) return;
+  if (!entries?.length) {
+    list.innerHTML = '<div class="empty">最近删除是空的。</div>';
+    return;
+  }
+  const now = Date.now();
+  list.innerHTML = entries.map((x) => {
+    const old = now - Number(x.deletedAt || 0) > 30 * 24 * 60 * 60 * 1000;
+    return `<div class="trash-row">
+      <div class="trash-main">
+        <div class="trash-name">${escapeHtml(x.versionId || x.name)}</div>
+        <div class="trash-meta">删除时间：${new Date(x.deletedAt).toLocaleString()} · ${fmtSize(x.size)}</div>
+        ${old ? '<div class="trash-old">30 天后不会被清理，建议手动删</div>' : ''}
+      </div>
+      <div class="trash-actions">
+        <button class="btn ghost" type="button" data-trash-restore="${escapeHtml(x.name)}">恢复到原位</button>
+        <button class="btn ghost" type="button" data-trash-purge="${escapeHtml(x.name)}">彻底删除</button>
+      </div>
+    </div>`;
+  }).join('');
+  list.querySelectorAll('[data-trash-restore]').forEach((btn) => {
+    btn.addEventListener('click', () => restoreTrashItem(btn.dataset.trashRestore));
+  });
+  list.querySelectorAll('[data-trash-purge]').forEach((btn) => {
+    btn.addEventListener('click', () => purgeTrashItem(btn.dataset.trashPurge));
+  });
+}
+
+async function openTrashModal() {
+  try {
+    const data = await api('/api/trash');
+    trashState.entries = data.entries || [];
+    if (!trashState.entries.length) {
+      $('trashModal').hidden = true;
+      await loadTrashBadge();
+      toast('最近删除是空的。', 'ok');
+      return;
+    }
+    renderTrash(trashState.entries);
+    $('trashModal').hidden = false;
+  } catch (e) {
+    toast('读取最近删除失败：' + e.message, 'err');
+  }
+}
+
+async function restoreTrashItem(name) {
+  const item = trashState.entries.find((x) => x.name === name);
+  if (!item) return;
+  if (!confirm(`恢复实例「${item.versionId || item.name}」到原位？`)) return;
+  try {
+    const r = await api('/api/trash/restore', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    });
+    toast(r.renamed ? `已恢复为 ${r.versionId}（原名称被占用）` : `已恢复到 ${r.versionId}`, 'ok');
+    $('trashModal').hidden = true;
+    await loadInstalled();
+  } catch (e) {
+    toast('恢复失败：' + e.message, 'err');
+  }
+}
+
+async function purgeTrashItem(name) {
+  const item = trashState.entries.find((x) => x.name === name);
+  if (!item) return;
+  if (!confirm(`彻底删除实例「${item.versionId || item.name}」？\n删了就找不回来了。`)) return;
+  if (!confirm('再次确认：删了就找不回来了，真的彻底删除？')) return;
+  try {
+    await api('/api/trash/purge', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    });
+    toast('已彻底删除', 'ok');
+    await openTrashModal();
+    await loadTrashBadge();
+  } catch (e) {
+    toast('彻底删除失败：' + e.message, 'err');
+  }
+}
 function reloadInstalledSoon() {
   clearTimeout(installedReloadTimer);
   installedReloadTimer = setTimeout(() => { loadInstalled(); }, 450);
@@ -4479,6 +4577,8 @@ $('manageContent').addEventListener('click', () => {
 });
 
 $('refreshInstalled').addEventListener('click', loadInstalled);
+$('trashBtn')?.addEventListener('click', openTrashModal);
+$('trashClose')?.addEventListener('click', () => { $('trashModal').hidden = true; });
 $('refreshRemote').addEventListener('click', loadRemote);
 $('clearLogs').addEventListener('click', () => {
   $('logBox').textContent = '';

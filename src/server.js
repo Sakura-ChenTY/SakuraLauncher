@@ -91,6 +91,7 @@ import { HOME_DIR } from './paths.js';
 import { getSettings, saveSettings, DEFAULTS, SETTINGS_FILE } from './settings.js';
 import { resolveSource, measureSources, clearSourceCache } from './speedtest.js';
 import { appendLogLine } from './logfile.js';
+import { listTrash, restoreTrash, purgeTrash } from './trash.js';
 import { ensureVersionFiles } from './preflight.js';
 import { SOURCES, SOURCE_IDS } from './sources.js';
 import {
@@ -2407,6 +2408,32 @@ const server = http.createServer(async (req, res) => {
       }
       pushLog(`删除实例 ${versionId}，已移到 ${dest}`);
       return json(res, 200, { ok: true, versionId, trashedTo: dest });
+    }
+
+    if (p === '/api/trash' && req.method === 'GET') {
+      return json(res, 200, { ...listTrash(state.gameDir), retentionDays: 30 });
+    }
+
+    if (p === '/api/trash/restore' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const r = await restoreTrash(state.gameDir, String(body.name || ''));
+        pushLog(`恢复最近删除实例：${body.name} → ${r.versionId}`);
+        return json(res, 200, r);
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
+    if (p === '/api/trash/purge' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const r = await purgeTrash(state.gameDir, String(body.name || ''));
+        pushLog(`彻底删除最近删除实例：${body.name}`);
+        return json(res, 200, r);
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
     }
 
     if (p === '/api/instance/info') {
