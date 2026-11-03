@@ -1589,14 +1589,21 @@ function applyCustomTheme(accent, bg, text) {
   document.documentElement.dataset.theme = 'custom';
   document.body.dataset.theme = 'custom';
   const root = document.documentElement.style;
-  root.setProperty('--accent', accentHex);
-  root.setProperty('--accent-2', shade(accentHex, -0.18));
-  root.setProperty('--bg', bgHex);
-  root.setProperty('--bg-2', bg2);
-  root.setProperty('--bg-3', bg3);
-  root.setProperty('--bg-2-rgb', `${c.r}, ${c.g}, ${c.b}`);
-  root.setProperty('--text', textHex);
-  root.setProperty('--text-dim', dim);
+  const bodyStyle = document.body.style;
+  const vars = {
+    '--accent': accentHex,
+    '--accent-2': shade(accentHex, -0.18),
+    '--bg': bgHex,
+    '--bg-2': bg2,
+    '--bg-3': bg3,
+    '--bg-2-rgb': `${c.r}, ${c.g}, ${c.b}`,
+    '--text': textHex,
+    '--text-dim': dim,
+  };
+  for (const [name, value] of Object.entries(vars)) {
+    root.setProperty(name, value);
+    bodyStyle.setProperty(name, value);
+  }
   const luminance = (c.r * 0.299 + c.g * 0.587 + c.b * 0.114) / 255;
   const light = luminance > 0.55;
   document.documentElement.style.colorScheme = light ? 'light' : 'dark';
@@ -1616,6 +1623,7 @@ function applyTheme(id) {
   // 预设主题优先于之前自定义留下的 inline 变量
   for (const v of ['--accent', '--accent-2', '--bg', '--bg-2', '--bg-3', '--bg-2-rgb', '--text', '--text-dim']) {
     document.documentElement.style.removeProperty(v);
+    document.body.style.removeProperty(v);
   }
   document.documentElement.style.colorScheme = id === 'light' ? 'light' : 'dark';
   document.body.classList.toggle('theme-light', id === 'light');
@@ -1670,6 +1678,7 @@ function renderThemeGrid() {
       localStorage.removeItem(TEXT_COLOR_KEY);
       for (const v of ['--accent', '--accent-2', '--bg', '--bg-2', '--bg-3', '--bg-2-rgb', '--text', '--text-dim']) {
         document.documentElement.style.removeProperty(v);
+        document.body.style.removeProperty(v);
       }
       syncColorPickers();
     });
@@ -1753,19 +1762,30 @@ function createColorPicker(slot, key) {
   const swatch = wrap.querySelector('.cp-swatch');
   const label = wrap.querySelector('.cp-hex-label');
   const ctx = canvas.getContext('2d');
+  const gradientCanvas = document.createElement('canvas');
+  gradientCanvas.width = canvas.width;
+  gradientCanvas.height = canvas.height;
+  const gradientCtx = gradientCanvas.getContext('2d');
 
   const currentHex = () => hslHex(h, s, l);
+  const hslAt = (x, y) => ({
+    h,
+    s: (x / Math.max(1, canvas.width - 1)) * 100,
+    l: (1 - y / Math.max(1, canvas.height - 1)) * 100,
+  });
   const paintCanvas = () => {
-    if (!ctx) return;
-    const image = ctx.createImageData(canvas.width, canvas.height);
+    if (!ctx || !gradientCtx) return;
+    const image = gradientCtx.createImageData(canvas.width, canvas.height);
     for (let y = 0; y < canvas.height; y += 1) {
       for (let x = 0; x < canvas.width; x += 1) {
-        const rgb = hslToRgb(h, (x / (canvas.width - 1)) * 100, (1 - y / (canvas.height - 1)) * 100);
+        const rgb = hslToRgb(h, hslAt(x, y).s, hslAt(x, y).l);
         const i = (y * canvas.width + x) * 4;
         image.data[i] = rgb.r; image.data[i + 1] = rgb.g; image.data[i + 2] = rgb.b; image.data[i + 3] = 255;
       }
     }
-    ctx.putImageData(image, 0, 0);
+    gradientCtx.putImageData(image, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(gradientCanvas, 0, 0);
     const cx = (s / 100) * (canvas.width - 1);
     const cy = (1 - l / 100) * (canvas.height - 1);
     ctx.beginPath();
@@ -1779,8 +1799,8 @@ function createColorPicker(slot, key) {
     ctx.strokeStyle = 'rgba(0,0,0,.65)';
     ctx.stroke();
   };
-  const update = (emit = true) => {
-    const value = currentHex();
+  const update = (emit = true, exactHex = '') => {
+    const value = exactHex || currentHex();
     swatch.style.background = value;
     label.textContent = value;
     hue.value = h;
@@ -1797,13 +1817,23 @@ function createColorPicker(slot, key) {
   const setHex = (value) => {
     if (!/^#[0-9a-f]{6}$/i.test(value)) return;
     ({ h, s, l } = rgbToHsl(value));
-    update(false);
+    update(false, value.toLowerCase());
   };
   const setHsl = (nextH = h, nextS = s, nextL = l) => {
     h = Math.max(0, Math.min(360, Number(nextH) || 0));
     s = Math.max(0, Math.min(100, Number(nextS) || 0));
     l = Math.max(0, Math.min(100, Number(nextL) || 0));
     update(true);
+  };
+  const pickAt = (clientX, clientY) => {
+    if (!gradientCtx) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = Math.max(0, Math.min(canvas.width - 1, Math.round(((clientX - rect.left) / Math.max(1, rect.width)) * (canvas.width - 1))));
+    const y = Math.max(0, Math.min(canvas.height - 1, Math.round(((clientY - rect.top) / Math.max(1, rect.height)) * (canvas.height - 1))));
+    const data = gradientCtx.getImageData(x, y, 1, 1).data;
+    const value = hexOf({ r: data[0], g: data[1], b: data[2] });
+    ({ h, s, l } = rgbToHsl(value));
+    update(true, value);
   };
   const position = () => {
     const r = trigger.getBoundingClientRect();
@@ -1822,10 +1852,8 @@ function createColorPicker(slot, key) {
   pop.addEventListener('click', (ev) => ev.stopPropagation());
   document.addEventListener('click', close);
   canvas.addEventListener('pointerdown', (ev) => {
-    const rect = canvas.getBoundingClientRect();
-    const pick = (e) => setHsl(h, ((e.clientX - rect.left) / rect.width) * 100, (1 - (e.clientY - rect.top) / rect.height) * 100);
-    pick(ev);
-    const move = (e) => pick(e);
+    pickAt(ev.clientX, ev.clientY);
+    const move = (e) => pickAt(e.clientX, e.clientY);
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up, { once: true });
