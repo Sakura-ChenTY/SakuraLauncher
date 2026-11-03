@@ -387,18 +387,18 @@
       return x.path ? `- ${label}：${x.path}` : `- ${label}`;
     }).join('\n');
     const problem = p.problem || `启动前检查缺 ${missing.length} 个文件：${missing.map((x) => x.label || x.kind || '文件').join('、')}`;
-    const reason = p.reason || '没查明原因';
-    const advice = p.advice || '先点「重试」；仍然失败就删除这个实例后重装。';
+    const reason = p.reasonText || p.reason || '没查明原因';
+    const advice = p.suggestion || p.advice || '点打开日志，把最后几行发给开发者';
     const text = [
       '【问题】',
       `版本：${versionId || '当前实例'}`,
       problem,
       files,
-      '【为什么补不上】',
+      '【原因】',
       reason,
       '【建议】',
       advice,
-      '请严格按【问题】【为什么补不上】【建议】三段回答，每段不超过两句话，不要写空话或额外段落。',
+      '请严格按【问题】【原因】【建议】三段回答，每段不超过两句话，不要写空话或额外段落。',
     ].filter(Boolean).join('\n');
     setHomeCollapsed(false, { persist: true });
     return sendChat(text, { diagnostic: true });

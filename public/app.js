@@ -1526,17 +1526,34 @@ async function doInstall(versionId) {
   }
 }
 
-function showPreflightError(missing, message) {
+function showPreflightError(missing, message, preflight = null) {
+  const p = preflight || {};
+  const reasonNames = {
+    network: '网络连接失败（连不上/超时/DNS）',
+    auth: '下载源拒绝访问（401/403，可能需要正版登录或令牌）',
+    locked: '文件被占用或没有写入权限',
+    disk: '磁盘空间不足',
+    unknown: '没查明原因',
+  };
+  const problem = p.problem || message || '这个版本缺少启动文件，补不上。';
+  const reason = p.reasonText || reasonNames[p.reason] || p.reason || '没查明原因';
+  const suggestion = p.suggestion || p.advice || '点打开日志，把最后几行发给开发者';
+  const structured = $('preflightStructured');
+  if (structured) {
+    structured.innerHTML = `
+      <section class="preflight-section"><h4>问题</h4><p>${escapeHtml(problem)}</p></section>
+      <section class="preflight-section"><h4>原因</h4><p>${escapeHtml(reason)}</p></section>
+      <section class="preflight-section"><h4>建议</h4><p>${escapeHtml(suggestion)}</p></section>`;
+  }
   const list = $('preflightList');
   if (list) {
     list.innerHTML = (missing || []).map((x) => `<li><b>${escapeHtml(x.label || x.kind || '文件')}</b><br>${escapeHtml(x.path || '')}</li>`).join('');
   }
   const text = $('preflightMessage');
-  if (text) text.textContent = message || '这个版本缺少启动文件，补不上。';
+  if (text) { text.textContent = ''; text.hidden = true; }
   const modal = $('preflightModal');
   if (modal) modal.hidden = false;
 }
-
 async function doLaunch(versionId, joinAddress, opts = {}) {
   if (state.running) {
     alert(`游戏正在运行：${state.running.versionId}\n先关掉正在跑的游戏，再${joinAddress ? '点「加入并启动」' : '重新启动'}。`);
@@ -1579,7 +1596,7 @@ async function doLaunch(versionId, joinAddress, opts = {}) {
       state.preflightMissing = e.missing || [];
       state.preflightMessage = e.message || '';
       state.preflightStructured = e.preflight || null;
-      showPreflightError(e.missing, e.message);
+      showPreflightError(e.missing, e.message, e.preflight);
       return;
     }
     alert('启动失败：' + e.message);
