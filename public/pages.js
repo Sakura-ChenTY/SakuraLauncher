@@ -1669,30 +1669,203 @@ function renderThemeGrid() {
       for (const v of ['--accent', '--accent-2', '--bg', '--bg-2', '--bg-3', '--bg-2-rgb', '--text', '--text-dim']) {
         document.documentElement.style.removeProperty(v);
       }
+      syncColorPickers();
     });
   });
 }
 
 /* 自定义色 / 背景图 */
-document.getElementById('customAccent').addEventListener('input', (e) => {
-  applyCustomAccent(e.target.value);
-});
+let customColorValues = { accent: '#d4af37', bg: '#0b0b0d', text: '#f0e9d8' };
 
-document.getElementById('customBg')?.addEventListener('input', (e) => {
-  applyCustomTheme(
-    localStorage.getItem(ACCENT_KEY) || currentVar('--accent', '#d4af37'),
-    e.target.value,
-    localStorage.getItem(TEXT_COLOR_KEY) || currentVar('--text', '#f0e9d8')
-  );
-});
+function rgbToHsl(hex) {
+  const { r, g, b } = rgbOf(hex);
+  const rn = r / 255, gn = g / 255, bn = b / 255;
+  const max = Math.max(rn, gn, bn), min = Math.min(rn, gn, bn);
+  let h = 0, s = 0;
+  const l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === rn) h = (gn - bn) / d + (gn < bn ? 6 : 0);
+    else if (max === gn) h = (bn - rn) / d + 2;
+    else h = (rn - gn) / d + 4;
+    h /= 6;
+  }
+  return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
+}
 
-document.getElementById('customText')?.addEventListener('input', (e) => {
-  applyCustomTheme(
-    localStorage.getItem(ACCENT_KEY) || currentVar('--accent', '#d4af37'),
-    localStorage.getItem(BG_COLOR_KEY) || currentVar('--bg', '#0b0b0d'),
-    e.target.value
-  );
-});
+function hslToRgb(h, s, l) {
+  const hn = ((h % 360) + 360) % 360 / 360;
+  const sn = Math.max(0, Math.min(100, s)) / 100;
+  const ln = Math.max(0, Math.min(100, l)) / 100;
+  if (sn === 0) { const v = Math.round(ln * 255); return { r: v, g: v, b: v }; }
+  const q = ln < 0.5 ? ln * (1 + sn) : ln + sn - ln * sn;
+  const p = 2 * ln - q;
+  const hue = (t) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  return {
+    r: Math.round(hue(hn + 1 / 3) * 255),
+    g: Math.round(hue(hn) * 255),
+    b: Math.round(hue(hn - 1 / 3) * 255),
+  };
+}
+
+function hslHex(h, s, l) {
+  return hexOf(hslToRgb(h, s, l));
+}
+
+function createColorPicker(slot, key) {
+  if (!slot) return null;
+  let { h, s, l } = rgbToHsl(customColorValues[key] || '#000000');
+  const wrap = document.createElement('div');
+  wrap.className = 'cp';
+  wrap.innerHTML = `
+    <button class="cp-trigger" type="button">
+      <span class="cp-swatch"></span><span class="cp-hex-label"></span>
+    </button>
+    <div class="cp-popover" hidden>
+      <canvas class="cp-canvas" width="220" height="132"></canvas>
+      <input class="cp-hue" type="range" min="0" max="360" step="1" aria-label="色相">
+      <div class="cp-fields">
+        <label class="cp-field">H<input class="cp-h" type="number" min="0" max="360" step="1"></label>
+        <label class="cp-field">S<input class="cp-s" type="number" min="0" max="100" step="1"></label>
+        <label class="cp-field">L<input class="cp-l" type="number" min="0" max="100" step="1"></label>
+      </div>
+      <div class="cp-hex-row"><input class="cp-hex" type="text" maxlength="7" spellcheck="false" aria-label="十六进制颜色"></div>
+    </div>`;
+  slot.replaceChildren(wrap);
+  const trigger = wrap.querySelector('.cp-trigger');
+  const pop = wrap.querySelector('.cp-popover');
+  const canvas = wrap.querySelector('.cp-canvas');
+  const hue = wrap.querySelector('.cp-hue');
+  const hInput = wrap.querySelector('.cp-h');
+  const sInput = wrap.querySelector('.cp-s');
+  const lInput = wrap.querySelector('.cp-l');
+  const hexInput = wrap.querySelector('.cp-hex');
+  const swatch = wrap.querySelector('.cp-swatch');
+  const label = wrap.querySelector('.cp-hex-label');
+  const ctx = canvas.getContext('2d');
+
+  const currentHex = () => hslHex(h, s, l);
+  const paintCanvas = () => {
+    if (!ctx) return;
+    const image = ctx.createImageData(canvas.width, canvas.height);
+    for (let y = 0; y < canvas.height; y += 1) {
+      for (let x = 0; x < canvas.width; x += 1) {
+        const rgb = hslToRgb(h, (x / (canvas.width - 1)) * 100, (1 - y / (canvas.height - 1)) * 100);
+        const i = (y * canvas.width + x) * 4;
+        image.data[i] = rgb.r; image.data[i + 1] = rgb.g; image.data[i + 2] = rgb.b; image.data[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(image, 0, 0);
+    const cx = (s / 100) * (canvas.width - 1);
+    const cy = (1 - l / 100) * (canvas.height - 1);
+    ctx.beginPath();
+    ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#fff';
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, 6.5, 0, Math.PI * 2);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(0,0,0,.65)';
+    ctx.stroke();
+  };
+  const update = (emit = true) => {
+    const value = currentHex();
+    swatch.style.background = value;
+    label.textContent = value;
+    hue.value = h;
+    hInput.value = h;
+    sInput.value = s;
+    lInput.value = l;
+    hexInput.value = value;
+    paintCanvas();
+    if (emit) {
+      customColorValues[key] = value;
+      applyCustomTheme(customColorValues.accent, customColorValues.bg, customColorValues.text);
+    }
+  };
+  const setHex = (value) => {
+    if (!/^#[0-9a-f]{6}$/i.test(value)) return;
+    ({ h, s, l } = rgbToHsl(value));
+    update(false);
+  };
+  const setHsl = (nextH = h, nextS = s, nextL = l) => {
+    h = Math.max(0, Math.min(360, Number(nextH) || 0));
+    s = Math.max(0, Math.min(100, Number(nextS) || 0));
+    l = Math.max(0, Math.min(100, Number(nextL) || 0));
+    update(true);
+  };
+  const position = () => {
+    const r = trigger.getBoundingClientRect();
+    const width = 236;
+    const left = Math.max(8, Math.min(window.innerWidth - width - 8, r.left));
+    pop.style.left = `${left}px`;
+    pop.style.top = `${Math.min(window.innerHeight - 260, r.bottom + 6)}px`;
+  };
+  const close = () => { pop.hidden = true; };
+  trigger.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    document.querySelectorAll('.cp-popover').forEach((p) => { if (p !== pop) p.hidden = true; });
+    pop.hidden = !pop.hidden;
+    if (!pop.hidden) { position(); paintCanvas(); }
+  });
+  pop.addEventListener('click', (ev) => ev.stopPropagation());
+  document.addEventListener('click', close);
+  canvas.addEventListener('pointerdown', (ev) => {
+    const rect = canvas.getBoundingClientRect();
+    const pick = (e) => setHsl(h, ((e.clientX - rect.left) / rect.width) * 100, (1 - (e.clientY - rect.top) / rect.height) * 100);
+    pick(ev);
+    const move = (e) => pick(e);
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up, { once: true });
+  });
+  hue.addEventListener('input', () => setHsl(Number(hue.value), s, l));
+  hInput.addEventListener('change', () => setHsl(hInput.value, s, l));
+  sInput.addEventListener('change', () => setHsl(h, sInput.value, l));
+  lInput.addEventListener('change', () => setHsl(h, s, lInput.value));
+  hexInput.addEventListener('input', () => {
+    const v = hexInput.value.trim();
+    if (/^#[0-9a-f]{6}$/i.test(v)) {
+      ({ h, s, l } = rgbToHsl(v));
+      update(true);
+    }
+  });
+  update(false);
+  return { setHex, close };
+}
+
+let colorPickers = {};
+function syncColorPickers() {
+  const values = {
+    accent: localStorage.getItem(ACCENT_KEY) || currentVar('--accent', '#d4af37'),
+    bg: localStorage.getItem(BG_COLOR_KEY) || currentVar('--bg', '#0b0b0d'),
+    text: localStorage.getItem(TEXT_COLOR_KEY) || currentVar('--text', '#f0e9d8'),
+  };
+  customColorValues = values;
+  for (const [key, picker] of Object.entries(colorPickers)) picker?.setHex(values[key]);
+}
+
+function initColorPickers() {
+  customColorValues = {
+    accent: localStorage.getItem(ACCENT_KEY) || currentVar('--accent', '#d4af37'),
+    bg: localStorage.getItem(BG_COLOR_KEY) || currentVar('--bg', '#0b0b0d'),
+    text: localStorage.getItem(TEXT_COLOR_KEY) || currentVar('--text', '#f0e9d8'),
+  };
+  colorPickers = {
+    accent: createColorPicker(document.getElementById('colorPickerAccent'), 'accent'),
+    bg: createColorPicker(document.getElementById('colorPickerBg'), 'bg'),
+    text: createColorPicker(document.getElementById('colorPickerText'), 'text'),
+  };
+}
 
 document.getElementById('bgPick').addEventListener('click', () => {
   document.getElementById('bgFile').click();
@@ -1753,10 +1926,8 @@ function applyBg() {
   } else if (id === 'light') {
     document.documentElement.style.colorScheme = 'light';
   }
-  if (document.getElementById('customAccent')) document.getElementById('customAccent').value = accent || '#d4af37';
-  if (document.getElementById('customBg')) document.getElementById('customBg').value = bg || '#0b0b0d';
-  if (document.getElementById('customText')) document.getElementById('customText').value = text || '#f0e9d8';
   applyBg();
+  initColorPickers();
 })();
 
 /* ---------------- 插件（高级配置） ---------------- */
