@@ -484,11 +484,11 @@
     void home.offsetWidth;
     requestAnimationFrame(() => {
       for (const node of transforms) {
-        node.style.transition = 'transform 240ms cubic-bezier(.4,0,.2,1)';
+        node.style.transition = 'transform 220ms cubic-bezier(0,0,.2,1)';
         node.style.transform = 'translate(0, 0)';
       }
       if (widthChanged) {
-        input.style.transition = 'width 240ms cubic-bezier(.4,0,.2,1)';
+        input.style.transition = 'width 220ms cubic-bezier(0,0,.2,1)';
         input.style.width = `${finalInputWidth}px`;
       }
     });
@@ -533,29 +533,22 @@
       if (assistantExpandTimer) clearTimeout(assistantExpandTimer);
       home.classList.add('is-animating');
       home.classList.remove('is-collapse-done');
-      void home.offsetWidth;
-      updateChrome();
-      // 让浏览器先记录 1fr/1 的起始状态，下一帧再切 0fr，避免过渡被同帧合并。
-      void home.offsetWidth;
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          home.classList.toggle('is-collapsed', Boolean(collapsed));
-          home.classList.remove('is-collapsing');
-          if (firstLayout) animateBarReflow(home, firstLayout);
-          scheduleAssistantBarHeight();
-          assistantExpandTimer = setTimeout(() => {
-            assistantExpandTimer = 0;
-            home.classList.remove('is-animating');
-            if (collapsed) {
-              home.classList.add('is-collapse-done');
-            } else {
-              home.classList.remove('is-collapse-done');
-              const box = el('aiResult');
-              if (box) box.scrollTop = box.scrollHeight;
-            }
-          }, collapsed ? 360 : 260);
-        });
-      });
+      void home.offsetHeight;
+      home.classList.toggle('is-collapsed', Boolean(collapsed));
+      home.classList.remove('is-collapsing');
+      if (firstLayout) animateBarReflow(home, firstLayout);
+      scheduleAssistantBarHeight();
+      assistantExpandTimer = setTimeout(() => {
+        assistantExpandTimer = 0;
+        home.classList.remove('is-animating');
+        if (collapsed) {
+          home.classList.add('is-collapse-done');
+        } else {
+          home.classList.remove('is-collapse-done');
+          const box = el('aiResult');
+          if (box) box.scrollTop = box.scrollHeight;
+        }
+      }, collapsed ? 240 : 220);
     } else {
       updateChrome();
       if (collapsed) home.classList.add('is-collapse-done');
