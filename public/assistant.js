@@ -131,7 +131,18 @@
         `<div class="assistant-msg-role">${isUser ? 'Sakura' : '绘梨衣'}</div>` +
         `<div class="assistant-msg-text">${escapeHtml(m.content || '')}</div>${actionHtml}</div>`;
     }).join('') || '<div class="empty">问吧。我会带着这次启动的上下文回答。</div>';
-    box.scrollTop = box.scrollHeight;
+    requestAnimationFrame(() => {
+      const last = box.querySelector('.assistant-msg:last-of-type');
+      if (!last) { box.scrollTop = box.scrollHeight; return; }
+      const long = last.offsetHeight > box.clientHeight * 0.72;
+      if (long) {
+        const boxRect = box.getBoundingClientRect();
+        const lastRect = last.getBoundingClientRect();
+        box.scrollTop = Math.max(0, box.scrollTop + lastRect.top - boxRect.top - 4);
+      } else {
+        box.scrollTop = box.scrollHeight;
+      }
+    });
     box.querySelectorAll('[data-chat-action]').forEach((b) => {
       b.addEventListener('click', () => {
         const [mi, ai] = b.dataset.chatAction.split(':').map(Number);
@@ -172,7 +183,8 @@
     sending = true;
     const input = el('aiChatInput');
     if (input) input.value = '';
-    showAssistantToast('正在看日志…', { sticky: true });
+    if (diagnostic) showAssistantToast('正在看日志…', { sticky: true });
+    else { const t = el('assistantToast'); if (t) t.hidden = true; }
     appendUser(message);
     const box = el('aiResult');
     const pending = document.createElement('div');

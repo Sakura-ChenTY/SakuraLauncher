@@ -54,6 +54,18 @@ function safeBasicContext(args) {
   catch (e) { return `基础上下文收集失败：${e.message}`; }
 }
 
+function hasFailureFiles(gameDir, versionId) {
+  if (!gameDir || !versionId) return false;
+  const root = path.join(gameDir, 'versions', versionId);
+  try {
+    if (fs.readdirSync(root).some((n) => /^hs_err_pid\d+\.log$/i.test(n))) return true;
+  } catch { /* ignore */ }
+  try {
+    if (fs.readdirSync(path.join(root, 'crash-reports')).some((n) => n.endsWith('.txt'))) return true;
+  } catch { /* ignore */ }
+  return false;
+}
+
 export function createSession({ gameDir, versionId, lastFailure, logs, launchCommand }) {
   const basicContext = safeBasicContext({ gameDir, versionId, lastFailure, launchCommand });
   const session = {
@@ -63,7 +75,7 @@ export function createSession({ gameDir, versionId, lastFailure, logs, launchCom
     basicContext,
     diagnosticContext: null,
     classified: [],
-    hasFailure: Boolean(lastFailure) || /失败上下文：有/.test(basicContext),
+    hasFailure: Boolean(lastFailure) || hasFailureFiles(gameDir, versionId),
     messages: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -187,6 +199,34 @@ function buildActions(session) {
   return actions;
 }
 
+function actionsFromReply(reply, session) {
+  const text = String(reply || '');
+  const context = String(session.diagnosticContext || '');
+  if (!hasInstanceContext(context)) return [];
+  const current = maxMemoryIn(context);
+  const actions = [];
+  const memory = /(?:降到|降至|改成|改为|调到|设置为)\s*(\d{3,4})\s*M/i.exec(text);
+  if (memory) {
+    const target = Number(memory[1]);
+    if (target >= 512 && target !== current) {
+      actions.push({
+        id: 'memory.set',
+        label: `把实例内存${target < current ? '降到' : '改为'} ${target}M`,
+        payload: { versionId: session.versionId, memoryMin: '512M', memoryMax: `${target}M` },
+      });
+    }
+  }
+  if (/Java|java|JVM|运行时/.test(text) && /换|改|设置|版本|对不上|不匹配/.test(text)) {
+    actions.push({ id: 'java.open', label: '换 Java 运行时' });
+  }
+  if (/打开.*目录|实例目录/.test(text)) actions.push({ id: 'open.instance', label: '打开实例目录' });
+  if (/重新下载.*版本|版本文件/.test(text)) actions.push({ id: 'redownload.version', label: '重新下载版本文件' });
+  if (/重新下载.*资源|资源文件/.test(text)) actions.push({ id: 'redownload.resources', label: '重新下载资源文件' });
+  if (/server\s*pack|服务端包/i.test(text)) actions.push({ id: 'serverpack.redownload', label: '重新下载 server pack' });
+  if (/停用.*mod|禁用.*mod|停用可疑/.test(text)) actions.push({ id: 'mod.disable', label: '停用可疑 mod（需确认）' });
+  return actions;
+}
+
 function isDiagnosticIntent(session, message, mode) {
   if (mode === 'diagnostic' || mode === 'analyze') return true;
   const text = String(message || '');
@@ -213,10 +253,10 @@ export async function chatSession({ id, message, mode }) {
 
   const diagnostic = isDiagnosticIntent(session, text, mode);
   let context = String(session.basicContext || session.context || '');
-  let actions = [];
+  let candidates = [];
   if (diagnostic) {
     context = collectDiagnostic(session);
-    actions = buildActions(session);
+    candidates = buildActions(session);
   }
 
   const cfg = loadAiConfig();
@@ -228,9 +268,10 @@ export async function chatSession({ id, message, mode }) {
 当前实例最大内存：${maxMemoryIn(context) || '未知'}M；系统可用：${availableMemoryIn(context) || '未知'}M。
 不要建议把内存改成和当前相同的值。若当前已经 ≤1024M 且日志仍报内存不足，优先建议关掉别的程序、检查 Windows 页面文件，再考虑降到 768M。
 只输出人话，不输出 JSON 和堆栈。不要编造日志里没有的证据。`
-      : `你是《龙族》里的上杉绘梨衣，正在和 Sakura 普通聊天。说话短、轻、安静，不卖萌。
-不要主动分析日志，不要使用「原因 / 依据 / 建议」这类排查标题，不要列一堆步骤。
-当前实例：${session.versionId || '未选择'}。只在用户明确问启动问题时才认真展开。`;
+      : `你是《龙族》里的上杉绘梨衣，正在和 Sakura 普通聊天。说话短、轻、安静、有一点自己的态度，不卖萌，不装客服。
+可以正常说两三句话；觉得需要时可以反问一句。不要主动分析日志，不要使用「原因 / 依据 / 建议」这类排查标题，不要列步骤。
+不要主动提内存、报错、日志或启动问题；只有用户明确问这些时才展开。
+当前实例：${session.versionId || '未选择'}。`;
     const ctx = diagnostic
       ? `启动上下文快照（已脱敏）：\n${context}`
       : `会话基本信息：\n${context}`;
@@ -243,16 +284,17 @@ export async function chatSession({ id, message, mode }) {
       { role: 'user', content: text },
     ];
     try {
-      reply = await callAi({ ...cfg, messages, maxTokens: diagnostic ? 1000 : 220 });
+      reply = await callAi({ ...cfg, messages, maxTokens: diagnostic ? 1000 : 500 });
       if (diagnostic && !/原因[:：]/.test(reply)) {
-        reply = localDiagnosticReply(session, text, actions);
+        reply = localDiagnosticReply(session, text, candidates);
       }
     } catch {
-      reply = diagnostic ? localDiagnosticReply(session, text, actions) : localChatReply(text);
+      reply = diagnostic ? localDiagnosticReply(session, text, candidates) : localChatReply(text);
     }
   } else {
-    reply = diagnostic ? localDiagnosticReply(session, text, actions) : localChatReply(text);
+    reply = diagnostic ? localDiagnosticReply(session, text, candidates) : localChatReply(text);
   }
+  const actions = diagnostic ? actionsFromReply(reply, session) : [];
 
   session.messages.push({ role: 'user', content: text, at: Date.now() });
   session.messages.push({ role: 'assistant', content: reply, at: Date.now() });
