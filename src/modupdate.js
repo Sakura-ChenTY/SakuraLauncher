@@ -48,28 +48,49 @@ async function postJson(url, body) {
   return res.json();
 }
 
-/** mods 目录里所有 jar（含 .disabled） */
+/** 可更新的包：Mod 用 jar，资源包/光影用 zip */
+const PACK_DIRS = [
+  { folder: 'mods', type: 'mod', extensions: ['.jar', '.jar.disabled'] },
+  { folder: 'resourcepacks', type: 'resourcepack', extensions: ['.zip', '.zip.disabled'] },
+  { folder: 'shaderpacks', type: 'shader', extensions: ['.zip', '.zip.disabled'] },
+];
+
+/** 扫描 mods / resourcepacks / shaderpacks；保留 jars 字段兼容旧调用 */
 export async function listModJars(gameDir, versionId) {
-  const dir = path.join(instanceDir(gameDir, versionId), 'mods');
-  let names;
-  try {
-    names = await fsp.readdir(dir);
-  } catch {
-    return { dir, jars: [] };
-  }
-  const jars = [];
-  for (const n of names) {
-    const lower = n.toLowerCase();
-    if (!lower.endsWith('.jar') && !lower.endsWith('.jar.disabled')) continue;
-    const p = path.join(dir, n);
-    try {
-      const st = await fsp.stat(p);
-      if (st.isFile()) jars.push({ name: n, path: p, size: st.size, disabled: lower.endsWith('.disabled') });
-    } catch {
-      /* 读不到就跳过 */
+  const base = instanceDir(gameDir, versionId);
+  const dirs = {};
+  const packages = [];
+  for (const spec of PACK_DIRS) {
+    const dir = path.join(base, spec.folder);
+    dirs[spec.type] = dir;
+    let names;
+    try { names = await fsp.readdir(dir); } catch { continue; }
+    for (const n of names) {
+      const lower = n.toLowerCase();
+      if (!spec.extensions.some((ext) => lower.endsWith(ext))) continue;
+      const p = path.join(dir, n);
+      try {
+        const st = await fsp.stat(p);
+        if (!st.isFile()) continue;
+        packages.push({
+          name: n,
+          path: p,
+          size: st.size,
+          disabled: lower.endsWith('.disabled'),
+          type: spec.type,
+          dir,
+          folder: spec.folder,
+        });
+      } catch { /* 读不到就跳过 */ }
     }
   }
-  return { dir, jars: jars.sort((a, b) => a.name.localeCompare(b.name)) };
+  packages.sort((a, b) => a.name.localeCompare(b.name));
+  return {
+    dir: dirs.mod,
+    dirs,
+    jars: packages.filter((p) => p.type === 'mod'),
+    packages,
+  };
 }
 
 /**
@@ -80,29 +101,30 @@ export async function listModJars(gameDir, versionId) {
  * 不写盘、不改文件 —— 纯只读，先让人看清再决定。
  */
 export async function checkModUpdates({ gameDir, versionId, gameVersion, loader, onProgress = () => {} }) {
-  const { dir, jars } = await listModJars(gameDir, versionId);
-  if (!jars.length) {
-    return { dir, total: 0, identified: 0, updates: [], unknown: [], current: [] };
+  const { dir, dirs, packages } = await listModJars(gameDir, versionId);
+  if (!packages.length) {
+    return { dir, dirs, total: 0, identified: 0, updates: [], unknown: [], current: [], counts: {} };
   }
 
-  onProgress({ phase: 'hash', done: 0, total: jars.length, message: '正在算文件指纹…' });
+  onProgress({ phase: 'hash', done: 0, total: packages.length, message: '正在算文件指纹…' });
 
-  // 1) 本地算哈希
-  const hashOf = new Map(); // name -> sha1
+  // 1) 本地算哈希；键带类型，避免 mods 和资源包同名冲突
+  const hashOf = new Map(); // type/name -> sha1
+  const keyOf = (p) => `${p.type}/${p.name}`;
   let i = 0;
-  for (const j of jars) {
+  for (const p of packages) {
     ensureNotCancelled();
-    hashOf.set(j.name, await sha1File(j.path));
+    hashOf.set(keyOf(p), await sha1File(p.path));
     i++;
-    if (i % 10 === 0 || i === jars.length) {
-      onProgress({ phase: 'hash', done: i, total: jars.length, message: `算指纹 ${i}/${jars.length}` });
+    if (i % 10 === 0 || i === packages.length) {
+      onProgress({ phase: 'hash', done: i, total: packages.length, message: `算指纹 ${i}/${packages.length}` });
     }
   }
 
   const hashes = [...hashOf.values()];
 
   // 2) 批量认领：这个文件是哪个项目的哪个版本
-  onProgress({ phase: 'identify', done: 0, total: jars.length, message: '正在识别模组…' });
+  onProgress({ phase: 'identify', done: 0, total: packages.length, message: '正在识别内容…' });
   const known = {};
   for (let off = 0; off < hashes.length; off += CHUNK) {
     ensureNotCancelled();
@@ -118,18 +140,23 @@ export async function checkModUpdates({ gameDir, versionId, gameVersion, loader,
     await new Promise((r) => setTimeout(r, 250)); // 礼貌间隔
   }
 
-  const identifiedNames = jars.filter((j) => known[hashOf.get(j.name)]).map((j) => j.name);
+  const identified = packages.filter((p) => known[hashOf.get(keyOf(p))]);
 
-  // 3) 批量查「在目标游戏版本 + 加载器下」的最新版
-  onProgress({ phase: 'update', done: 0, total: identifiedNames.length, message: '正在比对版本…' });
-  const identHashes = identifiedNames.map((n) => hashOf.get(n));
+  // 3) 批量查新版；mods 才带 loader 过滤，资源包/光影只按游戏版本过滤
+  onProgress({ phase: 'update', done: 0, total: identified.length, message: '正在比对版本…' });
   let latest = {};
-  if (identHashes.length) {
-    const body = { hashes: identHashes, algorithm: 'sha1' };
-    // 只有知道实例环境时才能正确过滤；缺了就退化成「不过滤」
-    if (loader) body.loaders = [loader];
+  for (const type of ['mod', 'resourcepack', 'shader']) {
+    const group = identified.filter((p) => p.type === type);
+    if (!group.length) continue;
+    const body = {
+      hashes: group.map((p) => hashOf.get(keyOf(p))),
+      algorithm: 'sha1',
+    };
+    if (type === 'mod' && loader) body.loaders = [loader];
     if (gameVersion) body.game_versions = [gameVersion];
-    latest = await postJson(`${BASE}/version_files/update`, body);
+    const data = await postJson(`${BASE}/version_files/update`, body);
+    Object.assign(latest, data);
+    await new Promise((r) => setTimeout(r, 250));
   }
 
   // 4) 取项目标题（一次批量，别逐个查）
@@ -159,11 +186,11 @@ export async function checkModUpdates({ gameDir, versionId, gameVersion, loader,
   const current = [];
   const unknown = [];
 
-  for (const j of jars) {
-    const h = hashOf.get(j.name);
+  for (const j of packages) {
+    const h = hashOf.get(keyOf(j));
     const cur = known[h];
     if (!cur) {
-      unknown.push({ name: j.name, size: j.size, reason: 'Modrinth 上没有这个文件（可能是 CurseForge 独占或自制）' });
+      unknown.push({ name: j.name, size: j.size, type: j.type, reason: 'Modrinth 上没有这个文件（可能是 CurseForge 独占或自制）' });
       continue;
     }
 
@@ -174,6 +201,8 @@ export async function checkModUpdates({ gameDir, versionId, gameVersion, loader,
     if (!next) {
       current.push({
         name: j.name,
+        type: j.type,
+        dir: j.dir,
         title,
         versionNumber: cur.version_number,
         note: '当前游戏版本/加载器下没有可用更新',
@@ -182,18 +211,20 @@ export async function checkModUpdates({ gameDir, versionId, gameVersion, loader,
     }
 
     if (next.id === cur.id) {
-      current.push({ name: j.name, title, versionNumber: cur.version_number, note: '已是最新' });
+      current.push({ name: j.name, type: j.type, dir: j.dir, title, versionNumber: cur.version_number, note: '已是最新' });
       continue;
     }
 
     const file = (next.files ?? []).find((f) => f.primary) ?? (next.files ?? [])[0];
     if (!file?.url) {
-      current.push({ name: j.name, title, versionNumber: cur.version_number, note: '新版本没有可下载文件' });
+      current.push({ name: j.name, type: j.type, dir: j.dir, title, versionNumber: cur.version_number, note: '新版本没有可下载文件' });
       continue;
     }
 
     updates.push({
       oldName: j.name,
+      type: j.type,
+      dir: j.dir,
       disabled: j.disabled,
       title,
       iconUrl: icons.get(cur.project_id) ?? null,
@@ -212,10 +243,14 @@ export async function checkModUpdates({ gameDir, versionId, gameVersion, loader,
     });
   }
 
+  const counts = {};
+  for (const p of packages) counts[p.type] = (counts[p.type] || 0) + 1;
   return {
     dir,
-    total: jars.length,
-    identified: identifiedNames.length,
+    dirs,
+    total: packages.length,
+    identified: identified.length,
+    counts,
     gameVersion: gameVersion ?? null,
     loader: loader ?? null,
     updates: updates.sort((a, b) => a.title.localeCompare(b.title)),
@@ -231,8 +266,8 @@ export async function checkModUpdates({ gameDir, versionId, gameVersion, loader,
  *      出问题能手动捞回来，也不会被 Minecraft 当模组加载（子目录不扫描）。
  */
 export async function applyModUpdates({ gameDir, versionId, items, onProgress = () => {} }) {
-  const { dir } = await listModJars(gameDir, versionId);
-  const backupDir = path.join(dir, '.backup', new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19));
+  const { dir, dirs } = await listModJars(gameDir, versionId);
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const result = { updated: [], failed: [], skipped: [], backupDir: null };
   let done = 0;
 
@@ -240,10 +275,13 @@ export async function applyModUpdates({ gameDir, versionId, items, onProgress = 
     ensureNotCancelled();
     done++;
 
-    const oldPath = path.join(dir, it.oldName);
-    // 新文件名过一遍安全过滤，挡掉路径穿越
+    const targetDir = it.dir || (it.type === 'resourcepack' ? dirs.resourcepack : it.type === 'shader' ? dirs.shader : dir);
+    const backupDir = path.join(targetDir, '.backup', stamp);
+    const oldPath = path.join(targetDir, it.oldName);
+    // 新文件名过一遍安全过滤，挡掉路径穿越；资源包/光影是 zip
     const safeNew = String(it.newName ?? '').split(/[\\/]/).pop();
-    if (!safeNew || !/\.jar$/i.test(safeNew)) {
+    const ext = it.type === 'resourcepack' || it.type === 'shader' ? '.zip' : '.jar';
+    if (!safeNew || !safeNew.toLowerCase().endsWith(ext)) {
       result.failed.push({ name: it.title ?? it.oldName, error: '新文件名不合法' });
       onProgress({ done, total: items.length, message: `跳过 ${it.title}：文件名不合法` });
       continue;
@@ -251,8 +289,8 @@ export async function applyModUpdates({ gameDir, versionId, items, onProgress = 
 
     // 保持原来的停用状态：.disabled 的更新完还是 .disabled
     const finalName = it.disabled ? `${safeNew}.disabled` : safeNew;
-    const finalPath = path.join(dir, finalName);
-    const tmpPath = path.join(dir, `.${safeNew}.downloading`);
+    const finalPath = path.join(targetDir, finalName);
+    const tmpPath = path.join(targetDir, `.${safeNew}.downloading`);
 
     try {
       if (!fs.existsSync(oldPath)) {
@@ -280,6 +318,7 @@ export async function applyModUpdates({ gameDir, versionId, items, onProgress = 
 
       result.updated.push({
         title: it.title ?? it.oldName,
+        type: it.type || 'mod',
         from: it.from,
         to: it.to,
         from_file: it.oldName,
