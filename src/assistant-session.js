@@ -19,6 +19,7 @@ import {
   aiHasKey,
 } from './ai.js';
 import { detectSymptom, isTechnicalQuestion, guessSymptom, evidenceSummary, collectSymptomContext, SYMPTOMS, IMPLEMENTATION_NOTES } from './assistant-diagnostics.js';
+import { createDiagnosticPackage } from './diagnostic-package.js';
 
 const FILE = path.join(HOME_DIR, 'assistant-sessions.json');
 const MAX_SESSIONS = 20;
@@ -274,6 +275,19 @@ export async function chatSession({ id, message, mode, diagnosticsState }) {
   if (!Array.isArray(session.messages)) session.messages = [];
   if (!Array.isArray(session.classified)) session.classified = [];
 
+  if (/收集诊断|打包诊断|诊断包/i.test(text)) {
+    const pkg = await createDiagnosticPackage({
+      gameDir: session.gameDir || diagnosticsState?.gameDir,
+      versionId: session.versionId,
+    });
+    const reply = `诊断包打好了。\n${pkg.zipPath}`;
+    session.messages.push({ role: 'user', content: text, at: Date.now() });
+    session.messages.push({ role: 'assistant', content: reply, at: Date.now() });
+    session.messages = session.messages.slice(-MAX_MESSAGES);
+    session.updatedAt = Date.now();
+    writeAll(data);
+    return { sessionId: id, mode: 'package', category: 'package', reply, package: pkg, actions: [], messages: session.messages };
+  }
   let category = intentCategory(session, text, mode);
   let guessed = false;
   if (category === 'unknown') {
