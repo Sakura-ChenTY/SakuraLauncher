@@ -3908,6 +3908,26 @@ const server = http.createServer(async (req, res) => {
     // ---- 桌面壁纸（磨砂背景用）----
     // 页面想要「桌面壁纸 + 毛玻璃」的观感，但浏览器拿不到系统壁纸。
     // 这里把当前用户主题里的壁纸读出来喂给前端，读不到就让前端退回渐变。
+    if (p === '/api/custom-bg') {
+      const file = String(url.searchParams.get('path') || '').trim();
+      const ext = path.extname(file).toLowerCase();
+      const mime = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp' }[ext];
+      if (!file || !path.isAbsolute(file) || !mime) return json(res, 400, { error: '背景图路径不合法' });
+      try {
+        const st = await fsp.stat(file);
+        if (!st.isFile()) return json(res, 404, { error: '背景图不存在' });
+        res.writeHead(200, {
+          'Content-Type': mime,
+          'Content-Length': st.size,
+          'Cache-Control': 'no-store',
+        });
+        fs.createReadStream(file).pipe(res);
+      } catch {
+        return json(res, 404, { error: '背景图不存在' });
+      }
+      return;
+    }
+
     if (p === '/api/wallpaper') {
       const file = findWallpaper();
       if (!file) {

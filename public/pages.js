@@ -1869,14 +1869,32 @@ function initColorPickers() {
   };
 }
 
-document.getElementById('bgPick').addEventListener('click', () => {
+document.getElementById('bgPick').addEventListener('click', async () => {
+  if (globalThis.mcWin?.pickFile) {
+    const picked = await globalThis.mcWin.pickFile([
+      { name: '背景图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] },
+    ]);
+    if (picked) {
+      localStorage.setItem(BG_PATH_KEY, picked);
+      localStorage.removeItem(BG_KEY);
+      applyBg();
+    }
+    return;
+  }
   document.getElementById('bgFile').click();
 });
 
 document.getElementById('bgFile').addEventListener('change', (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
-  // 图太大塞进 localStorage 会超配额，超过 1.5MB 就不收
+  // Electron 的 File 带完整路径：直接记路径，由本地服务读取大图。
+  if (file.path) {
+    localStorage.setItem(BG_PATH_KEY, file.path);
+    localStorage.removeItem(BG_KEY);
+    applyBg();
+    return;
+  }
+  // 浏览器没有路径时退回 data URL；图太大塞进 localStorage 会超配额。
   if (file.size > 1.5 * 1024 * 1024) {
     alert('图片太大了（超过 1.5MB），换一张小一点的');
     return;
@@ -1885,8 +1903,7 @@ document.getElementById('bgFile').addEventListener('change', (e) => {
   reader.onload = () => {
     try {
       localStorage.setItem(BG_KEY, reader.result);
-      if (file.path) localStorage.setItem(BG_PATH_KEY, file.path);
-      else localStorage.removeItem(BG_PATH_KEY);
+      localStorage.removeItem(BG_PATH_KEY);
       applyBg();
     } catch {
       alert('保存失败，可能浏览器存储空间不够');
@@ -1909,13 +1926,15 @@ document.getElementById('bgClear').addEventListener('click', () => {
 
 function applyBg() {
   const bg = localStorage.getItem(BG_KEY);
+  const path = localStorage.getItem(BG_PATH_KEY) || '';
   const fit = localStorage.getItem(BG_FIT_KEY) || 'cover';
   const preview = document.getElementById('bgPreview');
   const fitSelect = document.getElementById('bgFit');
+  const source = path ? `/api/custom-bg?path=${encodeURIComponent(path)}` : bg;
   if (fitSelect) fitSelect.value = fit;
-  if (bg) {
+  if (source) {
     document.body.classList.add('has-custom-bg');
-    document.documentElement.style.setProperty('--custom-bg', `url("${bg}")`);
+    document.documentElement.style.setProperty('--custom-bg', `url("${source}")`);
     const fitMap = {
       cover: ['cover', 'no-repeat', 'center'],
       contain: ['contain', 'no-repeat', 'center'],
