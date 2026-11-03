@@ -1901,3 +1901,6 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .trash-old { margin-top: 3px; font-size: 10px; color: #d8a14a; }
 .trash-actions { display: flex; gap: 5px; flex: 0 0 auto; }
 .trash-foot { margin-top: 10px; font-size: 10px; color: var(--muted); }
+
+.room-memory-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; font-size: 12px; color: var(--text-dim); }
+.room-memory-row .input { width: 110px; }

@@ -3331,6 +3331,7 @@ function applySettingsToForm(s) {
   if ($('setAutoBackupBefore')) $('setAutoBackupBefore').checked = s.autoBackupBeforeLaunch !== false;
   if ($('setAutoBackupAfter')) $('setAutoBackupAfter').checked = s.autoBackupAfterExit !== false;
   if ($('setAutoBackupKeep')) $('setAutoBackupKeep').value = String(s.autoBackupKeep ?? 5);
+  if ($('roomMemory')) $('roomMemory').value = String(Number(s.roomMemoryMb) > 0 ? s.roomMemoryMb : 2048);
   syncMemoryMode(false);
   $('setConcurrency').value = s.concurrency ?? 16;
   $('setDownloadSource').value = s.downloadSource ?? (s.preferMirror ? 'bmclapi' : 'auto');

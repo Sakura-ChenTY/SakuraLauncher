@@ -996,6 +996,41 @@ function renderRoomVersions() {
   if (candidates.includes(previous)) sel.value = previous;
 }
 
+function roomMemoryDefault() {
+  const id = document.getElementById('roomVersion')?.value || '';
+  const detail = (state.versionDetails || []).find((x) => x.id === id) || {};
+  return detail.kind === 'curseforge' ? 3072 : 2048;
+}
+
+async function loadRoomMemory() {
+  const input = document.getElementById('roomMemory');
+  if (!input) return;
+  try {
+    const d = await api('/api/settings');
+    const n = Number(d.settings?.roomMemoryMb);
+    input.value = String(n > 0 ? n : roomMemoryDefault());
+  } catch {
+    input.value = String(roomMemoryDefault());
+  }
+}
+
+async function saveRoomMemory() {
+  const input = document.getElementById('roomMemory');
+  if (!input) return;
+  const n = Number(input.value);
+  if (!Number.isInteger(n) || n < 256 || n > 16384) {
+    input.value = String(roomMemoryDefault());
+    if (typeof toast === 'function') toast('开房内存需在 256-16384 MB', 'err');
+    return;
+  }
+  try {
+    await api('/api/settings', { method: 'POST', body: JSON.stringify({ roomMemoryMb: n }) });
+    if (typeof toast === 'function') toast(`开房内存已保存：${n} MB`);
+  } catch (e) {
+    if (typeof toast === 'function') toast('保存开房内存失败：' + e.message, 'err');
+  }
+}
+
 function roomProviderLabel(provider) {
   return { sakura: 'SakuraFrp', openfrp: 'OpenFrp', custom: '自定义 frps' }[provider] || provider;
 }
@@ -1279,6 +1314,7 @@ async function toggleRoom() {
       method: 'POST',
       body: JSON.stringify({
         versionId,
+        memoryMb: Number(document.getElementById('roomMemory')?.value) || undefined,
         eulaAccepted: true,
         autoStopOnExit: Boolean(document.getElementById('roomAutoStop')?.checked),
         joinGame: Boolean(document.getElementById('roomJoinGame')?.checked),
@@ -1398,8 +1434,10 @@ function initOnline() {
   document.getElementById('worldParamsSave')?.addEventListener('click', saveWorldParams);
   document.getElementById('recentPlayBtn')?.addEventListener('click', runRecentPlay);
   document.getElementById('roomEula')?.addEventListener('change', () => renderRoom(onlineRoom));
-  document.getElementById('roomVersion')?.addEventListener('change', () => { roomWorldSettings = null; renderRoom(onlineRoom); loadWorldSettings(true); });
+  document.getElementById('roomVersion')?.addEventListener('change', () => { roomWorldSettings = null; renderRoom(onlineRoom); loadWorldSettings(true); loadRoomMemory(); });
+  document.getElementById('roomMemory')?.addEventListener('change', saveRoomMemory);
   renderRoomVersions();
+  loadRoomMemory();
   loadRoomState();
   loadRecentPlay();
   setTimeout(() => { renderRoomVersions(); loadWorldSettings(true); }, 1200);

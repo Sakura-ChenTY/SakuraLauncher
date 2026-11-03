@@ -2862,6 +2862,7 @@ const server = http.createServer(async (req, res) => {
             versionId: recent.versionId,
             gameDir: state.gameDir,
             eulaAccepted: true,
+            memoryMb: getSettings().roomMemoryMb || undefined,
             autoStopOnExit: recent.autoStopOnExit !== false,
             settings: recent.worldSettings,
             onStage: (message) => {

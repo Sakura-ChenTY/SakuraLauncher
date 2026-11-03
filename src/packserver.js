@@ -16,9 +16,8 @@ import { spawn } from 'node:child_process';
 
 import { fetchJson, downloadFile, downloadMany } from './download.js';
 import { listEntries, readEntry } from './zip.js';
-import { findJava } from './launch.js';
+import { resolveJavaBin } from './launch.js';
 import { getSettings } from './settings.js';
-import { JAVA_SCAN_CACHE } from './paths.js';
 import { getCurseForgeFile, getCurseForgeServerFile, parseLoader } from './cfpack.js';
 import { hasCfKey } from './curseforge.js';
 
@@ -67,6 +66,15 @@ function isManagedPath(rel) {
 
 function stageText(onStage, message) {
   try { onStage?.(message); } catch { /* ignore */ }
+}
+
+async function resolveServerJava(requiredMajor, onStage) {
+  const r = await resolveJavaBin({
+    java: getSettings().javaPath || undefined,
+    onJavaStage: ({ message }) => stageText(onStage, message),
+    onJavaProgress: ({ message }) => stageText(onStage, message),
+  }, { javaVersion: { majorVersion: requiredMajor } });
+  return { path: r.bin, major: r.major };
 }
 
 function runProcess(exe, args, { cwd, onLine, timeout = 20 * 60 * 1000 } = {}) {
@@ -159,7 +167,7 @@ async function installFabricServer({ serverDir, gameVersion, loaderVersion, onSt
     return launcher;
   }
 
-  const java = await findJava(getSettings().javaPath, 21, JAVA_SCAN_CACHE);
+  const java = await resolveServerJava(21, onStage);
   if (!java?.path) throw new Error('找不到可用的 Java 21+，无法安装 Fabric 服务端');
   const cacheDir = path.join(serverDir, '.cache');
   await fsp.mkdir(cacheDir, { recursive: true });
@@ -336,7 +344,7 @@ export async function prepareCurseForgeServer({ serverDir, pack, onStage }) {
       }
       if (jarPath) {
         const jr = requiredJavaForMc(gameVersion);
-        const j = await findJava(getSettings().javaPath, jr, JAVA_SCAN_CACHE);
+        const j = await resolveServerJava(jr, onStage);
         if (!j?.path) throw new Error(`找不到可用的 Java ${jr}+`);
         stageText(onStage, '复用已安装的 CurseForge 服务端');
         return {
@@ -397,7 +405,7 @@ export async function prepareCurseForgeServer({ serverDir, pack, onStage }) {
   stageText(onStage, `铺 CurseForge 服务端文件：${written} 个`);
 
   const javaRequired = requiredJavaForMc(gameVersion);
-  const java = await findJava(getSettings().javaPath, javaRequired, JAVA_SCAN_CACHE);
+  const java = await resolveServerJava(javaRequired, onStage);
   if (!java?.path) throw new Error(`找不到可用的 Java ${javaRequired}+`);
 
   let jarPath = '';
@@ -482,7 +490,7 @@ export async function prepareModrinthServer({ serverDir, pack, onStage }) {
   let args = [];
 
   const requiredJava = requiredJavaForMc(gameVersion);
-  const java = await findJava(getSettings().javaPath, requiredJava, JAVA_SCAN_CACHE);
+  const java = await resolveServerJava(requiredJava, onStage);
   if (!java?.path) throw new Error(`找不到可用的 Java ${requiredJava}+`);
 
   if (/fabric/i.test(loaderKey || '')) {

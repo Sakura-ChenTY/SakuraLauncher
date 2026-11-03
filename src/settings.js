@@ -51,6 +51,8 @@ export const DEFAULTS = {
   autoBackupBeforeLaunch: true,
   autoBackupAfterExit: true,
   autoBackupKeep: 5,
+  // 开房间内存；0 表示按原版 2048 / CurseForge 3072 自动取默认
+  roomMemoryMb: 0,
   // 界面不透明度（百分比）。数值越大越不透明；30 = 几乎全透，90 = 接近实心。
   // 前端把它当成 --glass-alpha 写进 CSS，亚克力与贴壁纸两种模式共用。
   glassOpacity: 42,
@@ -143,6 +145,11 @@ export function normalize(raw = {}, base = DEFAULTS) {
   const autoKeep = Number(raw.autoBackupKeep);
   if (Number.isFinite(autoKeep) && autoKeep >= 1 && autoKeep <= 50) out.autoBackupKeep = Math.floor(autoKeep);
   else if (raw.autoBackupKeep !== undefined) notes.push('自动备份保留份数需在 1-50，已保留原值');
+  if (raw.roomMemoryMb !== undefined) {
+    const n = Number(raw.roomMemoryMb);
+    if (n === 0 || (Number.isFinite(n) && n >= 256 && n <= 16384)) out.roomMemoryMb = Math.round(n);
+    else notes.push('开房内存需在 256-16384 MB，已保留原值');
+  }
   if (Object.prototype.hasOwnProperty.call(JVM_PRESETS, raw.jvmPreset)) {
     out.jvmPreset = raw.jvmPreset;
   } else if (raw.jvmPreset !== undefined) {

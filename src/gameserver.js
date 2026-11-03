@@ -17,14 +17,21 @@ import net from 'node:net';
 import { spawn, execFileSync } from 'node:child_process';
 
 import { downloadFile } from './download.js';
-import { loadVersion } from './launch.js';
-import { findJava } from './launch.js';
+import { loadVersion, resolveJavaBin } from './launch.js';
 import { getSettings } from './settings.js';
-import { JAVA_SCAN_CACHE } from './paths.js';
 import { prepareModrinthServer, prepareCurseForgeServer } from './packserver.js';
 
 export const ROOM_PORT = 25565;
 const ROOM_MEMORY_MB = 2048;
+const ROOM_MEMORY_MIN_MB = 256;
+const ROOM_MEMORY_MAX_MB = 16384;
+
+function roomMemoryMb(value, pack) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return pack?.kind === 'curseforge' ? 3072 : ROOM_MEMORY_MB;
+  return Math.max(ROOM_MEMORY_MIN_MB, Math.min(ROOM_MEMORY_MAX_MB, Math.round(n)));
+}
+
 const WORLD_DEFAULTS = Object.freeze({
   keepInventory: false,
   difficulty: 'normal',
@@ -121,6 +128,7 @@ function emptyRoom() {
     status: 'idle', // idle | starting | running | stopping | error
     versionId: '',
     gameVersion: '',
+    memoryMb: ROOM_MEMORY_MB,
     pack: null,
     pid: null,
     port: ROOM_PORT,
@@ -246,10 +254,12 @@ async function prepareJar({ gameDir, versionId, settings, onStage, onLog }) {
   await fsp.writeFile(eulaPath, 'eula=true\n', 'utf8');
   const propertiesPath = path.join(serverDir, 'server.properties');
   writeServerProperties(propertiesPath, settings);
-  const requiredJava = versionJson.javaVersion?.majorVersion ?? null;
-  const java = await findJava(getSettings().javaPath, requiredJava, JAVA_SCAN_CACHE);
-  if (!java?.path) throw new Error(`找不到可用的 Java${requiredJava ? ` ${requiredJava}` : ''}`);
-  return { serverDir, jarPath, javaBin: java.path, javaMajor: java.major ?? null };
+  const java = await resolveJavaBin({
+    java: getSettings().javaPath || undefined,
+    onJavaStage: ({ message }) => onStage?.(message),
+    onJavaProgress: ({ message }) => onLog?.(`[java] ${message}`),
+  }, versionJson);
+  return { serverDir, jarPath, javaBin: java.bin, javaMajor: java.major ?? null };
 }
 
 function waitForReady(onLog) {
@@ -301,12 +311,18 @@ export async function startRoom({ versionId, gameDir, eulaAccepted = false, memo
   room.status = 'starting';
   room.versionId = versionId;
   room.gameVersion = pack?.gameVersion || versionId;
+  room.memoryMb = roomMemoryMb(memoryMb, pack);
   room.pack = pack && typeof pack === 'object' ? { ...pack } : null;
   room.autoStopOnExit = autoStopOnExit !== false;
   room.settings = normalizeWorldSettings(settings);
   room.error = '';
   room.requestedFrp = requestedFrp;
   try {
+    const freeMb = Math.floor(os.freemem() / 1024 / 1024);
+    if (room.memoryMb > freeMb) {
+      const suggested = Math.max(ROOM_MEMORY_MIN_MB, Math.floor((freeMb * 0.8) / 512) * 512);
+      throw new Error(`内存不足：房间需要 ${room.memoryMb} MB，系统当前可用约 ${freeMb} MB；请把内存调到约 ${suggested} MB，或先关闭其他程序。`);
+    }
     await assertPortFree(ROOM_PORT);
     const serverPaths = resolveServerPaths(gameDir, versionId);
     let prepared;
@@ -340,10 +356,11 @@ export async function startRoom({ versionId, gameDir, eulaAccepted = false, memo
     }
     append(`启动 Java ${prepared.javaMajor ?? '?'}：${prepared.javaBin}`, onLog);
     append(`固定端口 ${ROOM_PORT}`, onLog);
+    append(`服务端内存 ${room.memoryMb} MB`, onLog);
 
     child = spawn(prepared.javaBin, [
-      `-Xms512M`,
-      `-Xmx${Math.max(512, Number(memoryMb) || (pack?.kind === 'curseforge' ? 3072 : ROOM_MEMORY_MB))}M`,
+      `-Xms${Math.min(512, room.memoryMb)}M`,
+      `-Xmx${room.memoryMb}M`,
       ...(prepared.args || ['-jar', prepared.jarPath, 'nogui']),
     ], {
       cwd: prepared.serverDir,

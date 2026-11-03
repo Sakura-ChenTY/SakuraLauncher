@@ -535,6 +535,12 @@
               <label class="room-eula"><input id="roomJoinGame" type="checkbox" checked> 开房后同时进入游戏</label>
               <label class="room-eula"><input id="roomAutoStop" type="checkbox" checked> 退出游戏后自动关服</label>
             </div>
+            <div class="room-memory-row">
+              <label for="roomMemory">服务端内存</label>
+              <input id="roomMemory" class="input narrow mono" type="number" min="256" max="16384" step="512" value="2048">
+              <span class="hint">MB</span>
+              <span class="hint">太大可能开不起来，先按推荐值</span>
+            </div>
 
             <button class="room-open-btn" id="roomToggle" type="button" disabled>先配置 frp</button>
             <div class="room-hint-row">

@@ -52,7 +52,7 @@ export async function findJava(preferred, requiredMajor, cachePath) {
  * 找不到满足要求的运行时，要给出能指导行动的报错，而不是让它去撞
  * UnsupportedClassVersionError。
  */
-async function resolveJavaBin(opts, versionJson) {
+export async function resolveJavaBin(opts = {}, versionJson) {
   const requiredMajor = versionJson.javaVersion?.majorVersion ?? null;
   const cachePath = path.join(os.homedir(), '.mclauncher', 'java-scan.json');
 
@@ -87,7 +87,8 @@ async function resolveJavaBin(opts, versionJson) {
       }
       return { bin: installed.path, major, required: requiredMajor };
     } catch (e) {
-      throw new Error(`缺少 Java ${requiredMajor}，自动下载失败：${e.message}\n\n可以点「重试启动」，或检查网络/磁盘空间后再试。`);
+      const reason = /ENOSPC|No space|Space|磁盘|空间/i.test(e.message) ? '磁盘空间不足' : (/ENOTFOUND|ECONN|ETIMEDOUT|timeout|HTTP|network|下载失败/i.test(e.message) ? '网络不可达/下载失败' : (/EBUSY|EPERM|EACCES|占用|denied/i.test(e.message) ? '文件被占用/没有权限' : (/zip|EOCD|损坏/i.test(e.message) ? '下载包损坏/网络不完整' : '未知原因')));
+      throw new Error(`缺少 Java ${requiredMajor}，自动下载失败：${e.message}\n\n可能原因：${reason}。\n建议：检查网络连接、清理磁盘空间，或关掉可能占用 Java 文件的程序后重试。`);
     }
   }
 
