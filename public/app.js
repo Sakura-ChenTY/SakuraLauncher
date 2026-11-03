@@ -1043,14 +1043,33 @@ function fillSavesPageInstances() {
   return sel.value || '';
 }
 
+function renderContentBackups(items) {
+  const box = $('savesContentBackups');
+  if (!box) return;
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) {
+    box.hidden = true;
+    box.innerHTML = '';
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = `<div class="content-backups-head">内容备份</div>` + list.map((b) => `
+    <div class="content-backup-row">
+      <span>${escapeHtml(b.file || '')} <span class="kind">${escapeHtml(b.source || 'modupdate')}</span></span>
+      <span>${fmtSize(b.size || 0)} · ${new Date(b.createdAt).toLocaleString()}</span>
+    </div>`).join('');
+}
+
 function renderSavesPage(data) {
   savesPageState.data = data;
   const list = $('savesPageList');
   if (!list) return;
   const saves = data?.saves || [];
   const backups = data?.backups || [];
+  const contentBackups = data?.contentBackups || [];
   if (!saves.length) {
     list.innerHTML = '<div class="empty">这个实例还没有存档。进入游戏创建世界后会出现在这里。</div>';
+    renderContentBackups(contentBackups);
     return;
   }
   list.innerHTML = saves.map((s) => {
@@ -1096,6 +1115,7 @@ function renderSavesPage(data) {
       list.querySelectorAll('.saves-page-row').forEach((x) => x.classList.toggle('selected', x === row));
     });
   });
+  renderContentBackups(contentBackups);
 }
 
 async function loadSavesPage() {
@@ -2907,15 +2927,18 @@ function connectEvents() {
       case 'mods-update-done': {
         const r = msg.result || {};
         const failed = r.failed?.length ?? 0;
+        const failText = (r.failed || []).map((x) => `${x.name}${x.error ? `（${x.error}）` : ''}`).join('、');
+        const backupText = r.backup?.file ? `；备份 ${r.backup.file}（modupdate）` : '';
         updateProgress({
           stage: failed ? 'error' : 'done',
-          message: `更新完成：成功 ${r.updated?.length ?? 0}，失败 ${failed}`,
+          message: r.rolledBack
+            ? `已回滚，失败的是 ${failText || '未知文件'}`
+            : `更新完成：成功 ${r.updated?.length ?? 0}，失败 ${failed}${backupText}`,
         });
         state.installing = null;
         disableCancelButton();
         refreshStatus();
         setTimeout(() => showProgress(false), failed ? 5000 : 2500);
-        // 更新完重新扫一遍：从列表里去掉已更新的，显示真实结果
         if (state.contentVersion) {
           openContent(state.contentVersion);
           setTimeout(() => { if (state.contentVersion) checkModUpdates(); }, 600);

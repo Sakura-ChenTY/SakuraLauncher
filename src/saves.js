@@ -56,6 +56,14 @@ function backupDir(versionId) {
   return path.join(BACKUP_ROOT, safePart(versionId));
 }
 
+export function backupDirFor(versionId) {
+  return backupDir(versionId);
+}
+
+export function backupStamp(date = new Date()) {
+  return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}-${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}${String(date.getSeconds()).padStart(2, '0')}`;
+}
+
 function safeBackupPath(versionId, file) {
   const root = path.resolve(backupDir(versionId));
   const target = path.resolve(root, String(file || ''));
@@ -97,25 +105,33 @@ export function listSaves({ gameDir, versionId }) {
   } catch { /* no saves */ }
   saves.sort((a, b) => b.modifiedAt - a.modifiedAt);
   const backups = [];
+  const contentBackups = [];
   try {
     for (const name of fs.readdirSync(backupDir(versionId))) {
       if (!/\.zip$/i.test(name)) continue;
       const file = path.join(backupDir(versionId), name);
       const meta = readBackupMeta(file);
-      backups.push({
+      const item = {
         file: name,
         path: file,
         size: fs.statSync(file).size,
         createdAt: fs.statSync(file).mtimeMs,
         world: meta?.world || name.replace(/-\d{8}-\d{6}\.zip$/i, ''),
-        whileRunning: Boolean(meta?.whileRunning),        source: meta?.source || 'manual',
-
+        whileRunning: Boolean(meta?.whileRunning),
+        source: meta?.source || 'manual',
+        kind: meta?.kind || 'world',
         versionId,
-      });
+      };
+      if (item.kind === 'content' || item.source === 'modupdate') {
+        contentBackups.push(item);
+        continue;
+      }
+      backups.push(item);
     }
   } catch { /* no backups */ }
   backups.sort((a, b) => b.createdAt - a.createdAt);
-  return { versionId, savesDir: root, backupDir: backupDir(versionId), saves, backups };
+  contentBackups.sort((a, b) => b.createdAt - a.createdAt);
+  return { versionId, savesDir: root, backupDir: backupDir(versionId), saves, backups, contentBackups };
 }
 
 export async function backupWorld({ gameDir, versionId, world, whileRunning = false, source = 'manual', onProgress = () => {} }) {

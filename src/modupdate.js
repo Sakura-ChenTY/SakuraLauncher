@@ -24,6 +24,9 @@ import path from 'node:path';
 
 import { sha1File, downloadFile, ensureNotCancelled, isCancelled } from './download.js';
 import { instanceDir } from './content.js';
+import { writeZipStream, verifyZipStream } from './zipstream.js';
+import { listEntries, readEntry } from './zip.js';
+import { backupDirFor, backupStamp } from './saves.js';
 
 const BASE = 'https://api.modrinth.com/v2';
 // Modrinth 要求带可识别的 UA，否则可能被限流
@@ -260,92 +263,136 @@ export async function checkModUpdates({ gameDir, versionId, gameVersion, loader,
 }
 
 /**
- * 执行更新。先下到临时文件，校验通过才动老文件 —— 中途失败不能把能用的模组弄没。
- *
- * 备份：老文件移到 mods/.backup/<时间戳>/ 而不是直接删。
- *      出问题能手动捞回来，也不会被 Minecraft 当模组加载（子目录不扫描）。
+ * 执行更新：先把本次要替换的旧文件流式打成 content 备份 zip，
+ * 再逐个下载替换；任何一个失败都从备份回滚已经替换的文件。
  */
+function contentBackupPath(versionId, stamp) {
+  const dir = backupDirFor(versionId);
+  return {
+    dir,
+    zipPath: path.join(dir, `modupdate-${stamp}.zip`),
+    metaPath: path.join(dir, `modupdate-${stamp}.json`),
+  };
+}
+
+async function rollbackFromBackup({ zipPath, applied }) {
+  const buf = fs.readFileSync(zipPath);
+  const entries = new Map(listEntries(buf).map((e) => [e.name.replace(/\\/g, '/'), e]));
+  const errors = [];
+  for (const item of [...applied].reverse()) {
+    try {
+      if (fs.existsSync(item.finalPath)) fs.rmSync(item.finalPath, { force: true });
+      const entry = entries.get(item.rel);
+      if (!entry) throw new Error(`备份缺少 ${item.rel}`);
+      fs.mkdirSync(path.dirname(item.oldPath), { recursive: true });
+      fs.writeFileSync(item.oldPath, readEntry(buf, entry));
+    } catch (e) {
+      errors.push(`${item.rel}: ${e.message}`);
+    }
+  }
+  return errors;
+}
+
 export async function applyModUpdates({ gameDir, versionId, items, onProgress = () => {} }) {
   const { dir, dirs } = await listModJars(gameDir, versionId);
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const result = { updated: [], failed: [], skipped: [], backupDir: null };
-  let done = 0;
-
+  const result = { updated: [], failed: [], skipped: [], backup: null, rolledBack: false };
+  const jobs = [];
   for (const it of items) {
-    ensureNotCancelled();
-    done++;
-
     const targetDir = it.dir || (it.type === 'resourcepack' ? dirs.resourcepack : it.type === 'shader' ? dirs.shader : dir);
-    const backupDir = path.join(targetDir, '.backup', stamp);
-    const oldPath = path.join(targetDir, it.oldName);
-    // 新文件名过一遍安全过滤，挡掉路径穿越；资源包/光影是 zip
     const safeNew = String(it.newName ?? '').split(/[\\/]/).pop();
     const ext = it.type === 'resourcepack' || it.type === 'shader' ? '.zip' : '.jar';
     if (!safeNew || !safeNew.toLowerCase().endsWith(ext)) {
       result.failed.push({ name: it.title ?? it.oldName, error: '新文件名不合法' });
-      onProgress({ done, total: items.length, message: `跳过 ${it.title}：文件名不合法` });
       continue;
     }
-
-    // 保持原来的停用状态：.disabled 的更新完还是 .disabled
+    const oldPath = path.join(targetDir, it.oldName);
+    if (!fs.existsSync(oldPath)) {
+      result.skipped.push({ name: it.title ?? it.oldName, note: '原文件已不在' });
+      continue;
+    }
     const finalName = it.disabled ? `${safeNew}.disabled` : safeNew;
-    const finalPath = path.join(targetDir, finalName);
-    const tmpPath = path.join(targetDir, `.${safeNew}.downloading`);
+    jobs.push({
+      it,
+      targetDir,
+      oldPath,
+      finalPath: path.join(targetDir, finalName),
+      tmpPath: path.join(targetDir, `.${safeNew}.downloading`),
+      rel: path.relative(instanceDir(gameDir, versionId), oldPath).replace(/\\/g, '/'),
+    });
+  }
+  if (!jobs.length) return result;
 
+  const stamp = backupStamp();
+  const backup = contentBackupPath(versionId, stamp);
+  const backupEntries = jobs.map((job) => ({ name: job.rel, file: job.oldPath }));
+  try {
+    await fsp.mkdir(backup.dir, { recursive: true });
+    const written = await writeZipStream(backup.zipPath, backupEntries, { hash: true });
+    await verifyZipStream(backup.zipPath, written.entries);
+    fs.writeFileSync(backup.metaPath, JSON.stringify({
+      source: 'modupdate',
+      kind: 'content',
+      type: 'modupdate',
+      versionId,
+      createdAt: new Date().toISOString(),
+      files: jobs.map((job) => job.rel),
+    }, null, 2), 'utf8');
+    result.backup = {
+      file: path.basename(backup.zipPath),
+      path: backup.zipPath,
+      source: 'modupdate',
+      type: 'modupdate',
+    };
+  } catch (e) {
+    try { fs.rmSync(backup.zipPath, { force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(backup.metaPath, { force: true }); } catch { /* ignore */ }
+    throw new Error(`更新前备份失败：${e.message}`);
+  }
+
+  const applied = [];
+  let done = 0;
+  for (const job of jobs) {
+    ensureNotCancelled();
+    done += 1;
+    const { it, targetDir, oldPath, finalPath, tmpPath, rel } = job;
     try {
-      if (!fs.existsSync(oldPath)) {
-        result.skipped.push({ name: it.title ?? it.oldName, note: '原文件已不在' });
-        continue;
-      }
-
-      onProgress({ done: done - 1, total: items.length, message: `下载 ${it.title} ${it.to}` });
+      onProgress({ done: done - 1, total: jobs.length, message: `下载 ${it.title} ${it.to}` });
       await downloadFile(it.url, tmpPath, {
         sha1: it.sha1 ?? undefined,
         size: it.size ?? undefined,
         retries: 3,
         timeout: 180000,
       });
-
       ensureNotCancelled();
-
-      // 老文件进备份，再落新文件
-      await fsp.mkdir(backupDir, { recursive: true });
-      await fsp.rename(oldPath, path.join(backupDir, it.oldName));
-      result.backupDir = backupDir;
-
-      // 同名的情况（只有版本号变了、文件名没变）已经在上一行移走了，这里直接改名
+      fs.rmSync(oldPath, { force: true });
+      applied.push({ oldPath, finalPath, rel });
       await fsp.rename(tmpPath, finalPath);
-
       result.updated.push({
         title: it.title ?? it.oldName,
         type: it.type || 'mod',
         from: it.from,
         to: it.to,
         from_file: it.oldName,
-        to_file: finalName,
+        to_file: path.basename(finalPath),
       });
-      onProgress({ done, total: items.length, message: `已更新 ${it.title} → ${it.to}` });
+      onProgress({ done, total: jobs.length, message: `已更新 ${it.title} → ${it.to}` });
     } catch (e) {
-      // 尽力清理临时文件；老文件若已移走，搬回去
-      try {
-        await fsp.rm(tmpPath, { force: true });
-      } catch {
-        /* ignore */
-      }
-      const backedUp = path.join(backupDir, it.oldName);
-      if (fs.existsSync(backedUp) && !fs.existsSync(oldPath)) {
-        try {
-          await fsp.rename(backedUp, oldPath);
-        } catch {
-          /* 还原失败只能报告 */
-        }
-      }
-      if (e?.cancelled || isCancelled()) {
-        result.failed.push({ name: it.title ?? it.oldName, error: '已取消' });
-        break;
-      }
-      result.failed.push({ name: it.title ?? it.oldName, error: e.message });
-      onProgress({ done, total: items.length, message: `失败 ${it.title}：${e.message}` });
+      try { await fsp.rm(tmpPath, { force: true }); } catch { /* ignore */ }
+      const rollbackErrors = await rollbackFromBackup({
+        zipPath: backup.zipPath,
+        applied,
+      });
+      result.rolledBack = true;
+      result.rolledBackFiles = applied.map((x) => x.rel);
+      if (rollbackErrors.length) result.rollbackErrors = rollbackErrors;
+      const reason = e?.cancelled || isCancelled() ? '已取消' : (e.message || '未知错误');
+      result.failed.push({ name: it.title ?? it.oldName, error: reason, rolledBack: true });
+      onProgress({
+        done: done - 1,
+        total: jobs.length,
+        message: `已回滚，失败的是 ${it.title ?? it.oldName}，原因 ${reason}`,
+      });
+      break;
     }
   }
 

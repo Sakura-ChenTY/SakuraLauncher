@@ -1931,3 +1931,8 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .mod-update-preview-row .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mod-update-preview-row .ver { flex: 0 0 auto; color: var(--text); }
 .mod-update-preview-more { padding: 5px 7px; font-size: 11px; color: var(--muted); }
+
+.content-backups { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.content-backups-head { font-size: 11px; color: var(--text-dim); margin-bottom: 5px; }
+.content-backup-row { display: flex; justify-content: space-between; gap: 10px; padding: 5px 7px; border-bottom: 1px solid var(--line); font-size: 11px; color: var(--text-dim); }
+.content-backup-row .kind { color: var(--accent); }
