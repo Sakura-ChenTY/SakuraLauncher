@@ -571,7 +571,14 @@ function showVerMenu(x, y, versionId) {
 /* ---- 实例导出 ---- */
 const exportState = { versionId: '', preview: null, zipPath: '' };
 
+function blockIfGameRunning() {
+  if (!state.running) return false;
+  toast('游戏还开着，先关掉再备份/导出', 'err');
+  return true;
+}
+
 async function openExport(versionId) {
+  if (blockIfGameRunning()) return;
   try {
     const p = await api('/api/export/preview', {
       method: 'POST',
@@ -616,6 +623,7 @@ async function pickExportDestination() {
 }
 
 async function startExport() {
+  if (blockIfGameRunning()) return;
   if (!exportState.versionId) return;
   const options = {
     resourcepacks: Boolean($('exportResourcepacks')?.checked),
@@ -740,6 +748,7 @@ async function reloadSaves() {
 }
 
 async function openSaves(versionId) {
+  if (blockIfGameRunning()) return;
   try {
     savesState.versionId = versionId;
     const data = await api('/api/saves?versionId=' + encodeURIComponent(versionId));
@@ -754,6 +763,7 @@ async function openSaves(versionId) {
 }
 
 async function backupSave(world) {
+  if (blockIfGameRunning()) return;
   if (!savesState.versionId) return;
   const progress = $('savesProgress');
   if (progress) progress.textContent = `正在备份 ${world}…`;
@@ -772,6 +782,7 @@ async function backupSave(world) {
 }
 
 async function backupAllSaves() {
+  if (blockIfGameRunning()) return;
   if (!savesState.versionId) return;
   const progress = $('savesProgress');
   if ($('savesBackupAll')) $('savesBackupAll').disabled = true;
@@ -793,6 +804,7 @@ async function backupAllSaves() {
 }
 
 async function restoreSave(file) {
+  if (blockIfGameRunning()) return;
   if (!savesState.versionId) return;
   if (!confirm(`恢复备份「${file}」？\n当前同名存档会先自动备份一次，再覆盖。`)) return;
   const progress = $('savesProgress');

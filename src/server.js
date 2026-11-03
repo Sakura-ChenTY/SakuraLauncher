@@ -90,6 +90,7 @@ import { JAVA_SCAN_CACHE } from './paths.js';
 import { HOME_DIR } from './paths.js';
 import { getSettings, saveSettings, DEFAULTS, SETTINGS_FILE } from './settings.js';
 import { resolveSource, measureSources, clearSourceCache } from './speedtest.js';
+import { appendLogLine } from './logfile.js';
 import { SOURCES, SOURCE_IDS } from './sources.js';
 import {
   msStartDeviceCode,
@@ -637,6 +638,7 @@ export const state = {
 
 const bus = new EventEmitter();
 bus.setMaxListeners(50);
+const RUNNING_ACTION_BLOCK = '游戏还开着，先关掉再备份/导出';
 
 function emit(type, payload) {
   bus.emit('event', { type, at: Date.now(), ...payload });
@@ -650,10 +652,9 @@ function pushLog(line) {
   try {
     const dir = path.join(os.homedir(), '.mclauncher', 'logs');
     fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(
+    appendLogLine(
       path.join(dir, 'launcher.log'),
-      `${new Date(entry.at).toISOString()} ${entry.line}\n`,
-      'utf8'
+      `${new Date(entry.at).toISOString()} ${entry.line}\n`
     );
   } catch {
     /* 文件日志失败不影响运行 */
@@ -3275,6 +3276,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/saves/backup' && req.method === 'POST') {
       const body = await readBody(req);
+      if (state.running) return json(res, 409, { error: RUNNING_ACTION_BLOCK });
       try {
         const versionId = String(body.versionId || '').trim();
         if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
@@ -3295,6 +3297,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/saves/backup-all' && req.method === 'POST') {
       const body = await readBody(req);
+      if (state.running) return json(res, 409, { error: RUNNING_ACTION_BLOCK });
       try {
         const versionId = String(body.versionId || '').trim();
         if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
@@ -3313,6 +3316,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/saves/restore' && req.method === 'POST') {
       const body = await readBody(req);
+      if (state.running) return json(res, 409, { error: RUNNING_ACTION_BLOCK });
       try {
         const versionId = String(body.versionId || '').trim();
         if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
@@ -3357,6 +3361,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/export' && req.method === 'POST') {
       const body = await readBody(req);
+      if (state.running) return json(res, 409, { error: RUNNING_ACTION_BLOCK });
       if (state.exporting) return json(res, 409, { error: '正在导出，请稍候' });
       state.exporting = true;
       try {
