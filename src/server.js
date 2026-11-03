@@ -73,6 +73,7 @@ import { createSession, getSession, chatSession } from './assistant-session.js';
 import { detectSymptom, guessSymptom, collectSymptomContext, SYMPTOMS, IMPLEMENTATION_NOTES } from './assistant-diagnostics.js';
 import { previewDiagnosticPackage, createDiagnosticPackage, sanitizeDiagnostic } from './diagnostic-package.js';
 import { snapshotCrashArtifacts, newCrashArtifacts } from './crash-watch.js';
+import { previewExport, exportInstance } from './modpack-export.js';
 import {
   addTracked,
   removeTracked,
@@ -565,14 +566,38 @@ async function handleDroppedFile(filePath, versionId) {
     try { manifest = JSON.parse(readEntry(buf, manifestEntry).toString('utf8')); } catch { /* ignore */ }
   }
   const mcVersion = manifest?.minecraft?.version ?? '';
-  const instanceId = targetVersion || safeInstanceName(manifest?.name || path.parse(src).name);
+  const sakuraExport = manifest?.format === 'sakura-instance';
+  let instanceId = targetVersion || safeInstanceName(manifest?.name || path.parse(src).name);
+  if (sakuraExport) {
+    // 自己导出的包：默认建一个新实例，避免同名覆盖原实例。
+    const base = safeInstanceName(manifest?.name || path.parse(src).name);
+    instanceId = base;
+    let n = 2;
+    while (fs.existsSync(path.join(state.gameDir, 'versions', instanceId))) {
+      instanceId = `${base}-${n}`;
+      n += 1;
+    }
+  }
   const instanceDir = path.join(state.gameDir, 'versions', instanceId);
   const count = extractZipTo(buf, entries, instanceDir);
+  if (sakuraExport) {
+    const sourceName = String(manifest?.versionJson || `${manifest?.name || ''}.json`).replace(/\\/g, '/');
+    const sourceJson = path.join(instanceDir, sourceName);
+    const targetJson = path.join(instanceDir, `${instanceId}.json`);
+    if (!fs.existsSync(sourceJson)) {
+      throw new Error(`整合包缺少版本描述：${sourceName || 'version JSON'}`);
+    }
+    const versionData = JSON.parse(fs.readFileSync(sourceJson, 'utf8'));
+    versionData.id = instanceId;
+    if (sourceJson !== targetJson) fs.rmSync(sourceJson, { force: true });
+    fs.writeFileSync(targetJson, JSON.stringify(versionData, null, 2), 'utf8');
+  }
   pushLog(`拖入 zip：解压 ${count} 个文件 → ${instanceId}${mcVersion ? `（MC ${mcVersion}）` : ''}`);
   return {
     kind: 'zip',
     versionId: instanceId,
     gameVersion: mcVersion || null,
+    loader: manifest?.loader || null,
     files: count,
   };
 }
@@ -3239,6 +3264,47 @@ const server = http.createServer(async (req, res) => {
         incident.prompted = false;
         return json(res, 400, { error: e.message });
       }
+    }
+    if (p === '/api/export/preview' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        return json(res, 200, previewExport({
+          gameDir: state.gameDir,
+          versionId: String(body.versionId || ''),
+          options: body.options || {},
+        }));
+      } catch (e) { return json(res, 400, { error: e.message }); }
+    }
+
+    if (p === '/api/export' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (state.exporting) return json(res, 409, { error: '正在导出，请稍候' });
+      state.exporting = true;
+      try {
+        const result = await exportInstance({
+          gameDir: state.gameDir,
+          versionId: String(body.versionId || ''),
+          destination: body.destination || '',
+          options: body.options || {},
+          onProgress: (p) => emit('export-progress', p),
+        });
+        pushLog(`整合包导出完成：${result.name}`);
+        return json(res, 200, result);
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      } finally {
+        state.exporting = false;
+      }
+    }
+
+    if (p === '/api/export/open' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const target = path.resolve(String(body.path || ''));
+        if (!fs.existsSync(target) || !/\.zip$/i.test(target)) throw new Error('导出文件不存在');
+        spawn('explorer.exe', ['/select,', target], { detached: true, stdio: 'ignore' }).unref();
+        return json(res, 200, { ok: true });
+      } catch (e) { return json(res, 400, { error: e.message }); }
     }
     if (p === '/api/assistant/diagnose/package/preview' && req.method === 'POST') {
       const body = await readBody(req);

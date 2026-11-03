@@ -1073,6 +1073,35 @@
       <button class="btn ghost" id="crashNoticeDismiss" type="button">不用了，我知道了</button>
     </div>
   </div>
+  <!-- 导出整合包 -->
+  <div class="modal" id="exportModal" hidden>
+    <div class="modal-box export-box">
+      <div class="modal-head">
+        <h3 id="exportTitle">导出实例</h3>
+        <button class="btn ghost" id="exportClose" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="exportInfo" class="export-info"></div>
+        <div class="export-options">
+          <label><input type="checkbox" id="exportResourcepacks"> 资源包</label>
+          <label><input type="checkbox" id="exportShaderpacks"> 光影</label>
+          <label><input type="checkbox" id="exportSaves"> 存档</label>
+          <label><input type="checkbox" id="exportScreenshots"> 截图</label>
+        </div>
+        <div class="field-line export-dest-line">
+          <input class="input grow mono" id="exportDest" readonly>
+          <button class="btn ghost" id="exportPickDest" type="button">选择位置</button>
+        </div>
+        <div class="export-progress" id="exportProgress"></div>
+        <pre class="diag-text export-result" id="exportResult"></pre>
+        <div class="field-line" style="margin-top:10px;justify-content:flex-end">
+          <button class="btn ghost" id="exportCopyPath" type="button" hidden>复制路径</button>
+          <button class="btn ghost" id="exportOpenFolder" type="button" hidden>打开所在文件夹</button>
+          <button class="btn" id="exportStart" type="button">开始导出</button>
+        </div>
+      </div>
+    </div>
+  </div>
   <!-- 版本选择弹窗 -->
   <div class="modal" id="versionModal" hidden>
     <div class="modal-box">

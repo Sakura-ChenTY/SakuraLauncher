@@ -440,10 +440,10 @@ function updateVersionHint(visible = true) {
 function showVerMenu(x, y, versionId) {
   const menu = $('verMenu');
   if (!menu) return;
-
   menu.innerHTML =
     '<button data-act="launch">启动</button>' +
     '<button data-act="folder">打开文件夹</button>' +
+    '<button data-act="export">导出整合包…</button>' +
     '<button data-act="copy">复制为新实例</button>' +
     '<button data-act="settings">该版本的 Java / 内存…</button>' +
     '<button data-act="delete" class="danger">删除</button>';
@@ -472,6 +472,10 @@ function showVerMenu(x, y, versionId) {
         } catch (e) {
           alert('打开文件夹失败：' + e.message);
         }
+        return;
+      }
+      if (act === 'export') {
+        openExport(versionId);
         return;
       }
       if (act === 'copy') {
@@ -557,6 +561,120 @@ function showVerMenu(x, y, versionId) {
       }
     });
   });
+}
+
+/* ---- 实例导出 ---- */
+const exportState = { versionId: '', preview: null, zipPath: '' };
+
+async function openExport(versionId) {
+  try {
+    const p = await api('/api/export/preview', {
+      method: 'POST',
+      body: JSON.stringify({ versionId, options: {} }),
+    });
+    exportState.versionId = versionId;
+    exportState.preview = p;
+    exportState.zipPath = '';
+    const info = $('exportInfo');
+    if (info) {
+      info.textContent = [
+        `实例：${versionId}`,
+        `加载器：${p.meta?.loader || 'vanilla'}`,
+        `游戏版本：${p.meta?.gameVersion || versionId}`,
+        `建议内存：${p.meta?.memory?.max || '未设置'}`,
+        `默认带：mods、config、版本描述`,
+        `默认不带：存档、资源包、光影、截图`,
+      ].join('\n');
+    }
+    if ($('exportDest')) $('exportDest').value = p.defaultDestination || '';
+    for (const id of ['exportResourcepacks', 'exportShaderpacks', 'exportSaves', 'exportScreenshots']) {
+      if ($(id)) $(id).checked = false;
+    }
+    if ($('exportProgress')) $('exportProgress').textContent = '';
+    if ($('exportResult')) $('exportResult').textContent = '';
+    if ($('exportCopyPath')) $('exportCopyPath').hidden = true;
+    if ($('exportOpenFolder')) $('exportOpenFolder').hidden = true;
+    if ($('exportStart')) {
+      $('exportStart').disabled = false;
+      $('exportStart').textContent = '开始导出';
+      $('exportStart').hidden = false;
+    }
+    if ($('exportModal')) $('exportModal').hidden = false;
+  } catch (e) {
+    alert('读取实例失败：' + e.message);
+  }
+}
+
+async function pickExportDestination() {
+  const p = await globalThis.mcWin?.pickFolder?.();
+  if (p && $('exportDest')) $('exportDest').value = p;
+}
+
+async function startExport() {
+  if (!exportState.versionId) return;
+  const options = {
+    resourcepacks: Boolean($('exportResourcepacks')?.checked),
+    shaderpacks: Boolean($('exportShaderpacks')?.checked),
+    saves: Boolean($('exportSaves')?.checked),
+    screenshots: Boolean($('exportScreenshots')?.checked),
+  };
+  const destination = String($('exportDest')?.value || '').trim();
+  if ($('exportStart')) {
+    $('exportStart').disabled = true;
+    $('exportStart').textContent = '正在导出…';
+  }
+  if ($('exportProgress')) $('exportProgress').textContent = '准备打包…';
+  try {
+    const r = await api('/api/export', {
+      method: 'POST',
+      body: JSON.stringify({ versionId: exportState.versionId, destination, options }),
+    });
+    exportState.zipPath = r.zipPath;
+    if ($('exportProgress')) $('exportProgress').textContent = '导出完成';
+    if ($('exportResult')) {
+      $('exportResult').textContent = [
+        `路径：${r.zipPath}`,
+        `大小：${(r.bytes / 1024 / 1024).toFixed(1)} MB`,
+        `文件：${r.files?.length || 0} 个`,
+        r.errors?.length ? `跳过：${r.errors.length} 个文件` : '',
+      ].filter(Boolean).join('\n');
+    }
+    if ($('exportCopyPath')) $('exportCopyPath').hidden = false;
+    if ($('exportOpenFolder')) $('exportOpenFolder').hidden = false;
+    if ($('exportStart')) {
+      $('exportStart').textContent = '重新导出';
+      $('exportStart').disabled = false;
+    }
+    toast(`已导出 ${r.name}`, 'ok');
+  } catch (e) {
+    if ($('exportProgress')) $('exportProgress').textContent = '导出失败：' + e.message;
+    if ($('exportStart')) {
+      $('exportStart').disabled = false;
+      $('exportStart').textContent = '重试导出';
+    }
+  }
+}
+
+async function copyExportPath() {
+  if (!exportState.zipPath) return;
+  try {
+    await navigator.clipboard.writeText(exportState.zipPath);
+    toast('导出包路径已复制');
+  } catch {
+    toast('复制失败，请手动选中路径', 'err');
+  }
+}
+
+async function openExportFolder() {
+  if (!exportState.zipPath) return;
+  try {
+    await api('/api/export/open', {
+      method: 'POST',
+      body: JSON.stringify({ path: exportState.zipPath }),
+    });
+  } catch (e) {
+    toast('打开文件夹失败：' + e.message, 'err');
+  }
 }
 
 /** 版本类型的中文名，列表图标上用 */
@@ -1946,6 +2064,9 @@ function connectEvents() {
         break;
       }
 
+      case 'export-progress':
+        if ($('exportProgress')) $('exportProgress').textContent = msg.message || '';
+        break;
       case 'install-start':
         state.installing = { versionId: msg.versionId, stage: 'start' };
         resetCancelButton();
@@ -3940,6 +4061,12 @@ function switchTab(name) {
 $('launchBtn').addEventListener('click', () => {
   if (state.selectedVersion) doLaunch(state.selectedVersion);
 });
+
+$('exportClose')?.addEventListener('click', () => { $('exportModal').hidden = true; });
+$('exportPickDest')?.addEventListener('click', pickExportDestination);
+$('exportStart')?.addEventListener('click', startExport);
+$('exportCopyPath')?.addEventListener('click', copyExportPath);
+$('exportOpenFolder')?.addEventListener('click', openExportFolder);
 
 $('launchRetryBtn')?.addEventListener('click', () => {
   const v = state.launchRetryVersion || state.selectedVersion;
