@@ -34,7 +34,7 @@ export const DEFAULTS = {
   // Java 策略，学 PCL：默认只认本机已有的 Java，不下载
   //   external = 只用外部 Java，缺了就报错提示用户自己装（体积最小）
   //   auto     = 缺了就自动下载对应版本的 JRE（开箱即用，但多占 ~180MB/版本）
-  javaMode: 'external',
+  javaMode: 'auto',
   concurrency: 16,
   downloadSource: 'auto', // auto | official | bmclapi
   preferMirror: false, // 旧字段，仅为兼容老 settings.json，保存时与 downloadSource 同步

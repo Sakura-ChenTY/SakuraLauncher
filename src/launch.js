@@ -22,6 +22,7 @@ import { resolveLibraries, classpathString, detectNativeSubdirs } from './classp
 import { buildLaunchCommand, offlineUuid, buildIdentityVars } from './args.js';
 import { extractNatives } from './zip.js';
 import { selectJava, scanJavas, probeVersion } from './java.js';
+import { ensureJava } from './javadl.js';
 import { getSettings, memoryArgs, splitArgs, jvmPresetArgs } from './settings.js';
 import { collectPluginArgs } from './plugins.js';
 import { currentAccount, msEnsureFresh, ensureAuthlibInjector } from './auth.js';
@@ -64,6 +65,30 @@ async function resolveJavaBin(opts, versionJson) {
       if (probed.ok) major = probed.major;
     }
     return { bin: sel.path, major, required: requiredMajor };
+  }
+
+  // 默认 auto 且玩家没有手填路径时，启动前补一个 JRE。
+  // 玩家显式指定了 javaPath 就绝不覆盖他的选择，只保留诊断报错。
+  if (requiredMajor && !opts.java && (getSettings().javaMode ?? 'auto') === 'auto') {
+    const onStage = typeof opts.onJavaStage === 'function' ? opts.onJavaStage : () => {};
+    const onProgress = typeof opts.onJavaProgress === 'function' ? opts.onJavaProgress : () => {};
+    try {
+      onStage({ stage: 'java', message: `缺少 Java ${requiredMajor}，准备自动下载 JRE` });
+      const installed = await ensureJava(requiredMajor, {
+        mode: 'auto',
+        cachePath,
+        onStage,
+        onProgress,
+      });
+      let major = installed.major ?? requiredMajor;
+      if (!major) {
+        const probed = await probeVersion(installed.path);
+        if (probed.ok) major = probed.major;
+      }
+      return { bin: installed.path, major, required: requiredMajor };
+    } catch (e) {
+      throw new Error(`缺少 Java ${requiredMajor}，自动下载失败：${e.message}\n\n可以点「重试启动」，或检查网络/磁盘空间后再试。`);
+    }
   }
 
   // 没找到合适的运行时：给出具体缺什么、现在有什么
