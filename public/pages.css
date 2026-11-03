@@ -875,7 +875,10 @@ body.has-custom-bg .wallpaper {
 .assistant-bubble-text { font-size: 12px; color: var(--text-dim); margin-bottom: 9px; }
 .assistant-bubble-close { position: absolute; top: 6px; right: 7px; border: 0; background: transparent; color: var(--text-dim); cursor: pointer; }
 .assistant-bubble .btn { width: 100%; }
-@media (max-width: 760px) { .assistant-layout { grid-template-columns: 1fr; } }
+@media (max-width: 760px) {
+  .home-assistant-bar { gap: 4px; }
+  .assistant-layout { grid-template-columns: 1fr; }
+}
 .ai-provider-info { margin: -3px 0 8px; font-size: 11px; }
 .ob-field .input { min-width: 0; }
 .ob-field .input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent); }
@@ -1443,6 +1446,7 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .home-assistant .assistant-chat-line #aiChatNew { display: none; }
 
 @media (max-width: 760px) {
+  .home-assistant-bar { gap: 4px; }
   .home-assistant.is-collapsed #aiAnalyze,
   .home-assistant.is-collapsed #homeDiagBtn { display: none; }
 }
@@ -1650,7 +1654,7 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
   white-space: nowrap;
 }
 .home-assistant.is-collapsed .home-assistant-title { order: 1 !important; }
-.home-assistant.is-collapsed #aiChatInput { order: 2 !important; }
+.home-assistant.is-collapsed #aiChatInput { order: 2 !important; min-width: 140px !important; }
 .home-assistant.is-collapsed #aiChatSend { order: 3 !important; }
 .home-assistant.is-collapsed #aiAnalyze { order: 4 !important; }
 .home-assistant.is-collapsed #homeDiagBtn { order: 5 !important; }
