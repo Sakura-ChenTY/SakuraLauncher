@@ -134,7 +134,8 @@ export function listSaves({ gameDir, versionId }) {
   return { versionId, savesDir: root, backupDir: backupDir(versionId), saves, backups, contentBackups };
 }
 
-export async function backupWorld({ gameDir, versionId, world, whileRunning = false, source = 'manual', onProgress = () => {} }) {
+export async function backupWorld({ gameDir, versionId, world, whileRunning = false, source = 'manual', onProgress = () => {}, shouldCancel = () => false }) {
+  if (shouldCancel()) { const e = new Error('已取消'); e.cancelled = true; throw e; }
   const { target } = worldDir(gameDir, versionId, world);
   if (!fs.existsSync(target) || !fs.statSync(target).isDirectory()) throw new Error('存档不存在');
   const files = [];
@@ -167,6 +168,7 @@ export async function backupWorld({ gameDir, versionId, world, whileRunning = fa
     const out = await writeZipStream(zipPath, entries, {
       hash: true,
       gzip: true,
+      shouldCancel,
       onProgress: (p) => onProgress({
         stage: 'save-backup',
         done: p.done,
@@ -180,14 +182,18 @@ export async function backupWorld({ gameDir, versionId, world, whileRunning = fa
   } catch (e) {
     try { fs.rmSync(zipPath, { force: true }); } catch { /* ignore */ }
     try { fs.rmSync(metaPathFor(zipPath), { force: true }); } catch { /* ignore */ }
+    if (e?.cancelled) throw e;
     throw new Error('这次没备成，重来一次');
   }
   return { zipPath, file: path.basename(zipPath), world, whileRunning: Boolean(whileRunning), source, verified: true, bytes: fs.statSync(zipPath).size, files: files.length };
 }
-export async function backupAll({ gameDir, versionId, whileRunning = false, source = 'manual', onProgress = () => {} }) {
+export async function backupAll({ gameDir, versionId, whileRunning = false, source = 'manual', onProgress = () => {}, shouldCancel = () => false }) {
   const saves = listSaves({ gameDir, versionId }).saves;
   const result = [];
-  for (const save of saves) result.push(await backupWorld({ gameDir, versionId, world: save.name, whileRunning, source, onProgress }));
+  for (const save of saves) {
+    if (shouldCancel()) { const e = new Error('已取消'); e.cancelled = true; throw e; }
+    result.push(await backupWorld({ gameDir, versionId, world: save.name, whileRunning, source, onProgress, shouldCancel }));
+  }
   return result;
 }
 

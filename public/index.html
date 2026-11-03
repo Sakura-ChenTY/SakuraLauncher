@@ -457,6 +457,7 @@
               <button class="btn ghost" id="savesPageRefresh" type="button">刷新</button>
               <button class="btn ghost" id="savesPageBackupAll" type="button">备份全部</button>
               <button class="btn ghost" id="savesPageImport" type="button">导入存档</button>
+              <button class="btn ghost" id="savesPageCancel" type="button" hidden>取消</button>
             </div>
             <div class="saves-progress" id="savesPageProgress"></div>
             <div class="saves-list" id="savesPageList"></div>
@@ -1124,6 +1125,7 @@
           <div class="track"><div class="fill" id="progressFill"></div></div>
           <div class="progress-meta" id="progressMeta"></div>
         </div>
+        <button class="btn ghost task-cancel" id="taskCancel" type="button" hidden>取消</button>
       </div>
     </footer>
   </div>
@@ -1193,6 +1195,7 @@
         <div class="field-line" style="margin-top:10px;justify-content:flex-end">
           <button class="btn ghost" id="exportCopyPath" type="button" hidden>复制路径</button>
           <button class="btn ghost" id="exportOpenFolder" type="button" hidden>打开所在文件夹</button>
+          <button class="btn ghost" id="exportCancel" type="button" hidden>取消</button>
           <button class="btn" id="exportStart" type="button">开始导出</button>
         </div>
       </div>
@@ -1258,6 +1261,7 @@
     <div class="modal-box saves-box">
       <div class="modal-head">
         <h3 id="savesTitle">存档管理</h3>
+        <button class="btn ghost" id="savesCancel" type="button" hidden>取消</button>
         <button class="btn ghost" id="savesClose" type="button">✕</button>
       </div>
       <div class="modal-body">

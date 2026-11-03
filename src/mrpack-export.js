@@ -141,6 +141,7 @@ export async function exportMrpack({ gameDir, versionId, destination, options = 
 
   try {
     await writeZipStream(zipPath, entries, {
+      shouldCancel: typeof options.shouldCancel === 'function' ? options.shouldCancel : () => false,
       onProgress: (p) => onProgress({
         stage: 'export',
         done: p.done,

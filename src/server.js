@@ -725,6 +725,29 @@ export const state = {
   msLogin: null,      // 进行中的微软设备码登录 { deviceCode, userCode, ... }
 };
 
+const activeTasks = new Map();
+
+function startTask(kind, requestedId) {
+  const id = String(requestedId || crypto.randomUUID());
+  activeTasks.set(id, { id, kind, cancelled: false, startedAt: Date.now() });
+  return id;
+}
+
+function taskCancelled(id) {
+  return Boolean(activeTasks.get(String(id))?.cancelled);
+}
+
+function finishTask(id) {
+  if (id) activeTasks.delete(String(id));
+}
+
+function cancelTask(id) {
+  const task = activeTasks.get(String(id));
+  if (!task) return false;
+  task.cancelled = true;
+  return true;
+}
+
 const bus = new EventEmitter();
 bus.setMaxListeners(50);
 const RUNNING_RESTORE_BLOCK = '游戏还开着，先关掉再恢复';
@@ -1581,6 +1604,15 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       if (!body.versionId) return json(res, 400, { error: '缺少 versionId' });
       return json(res, 200, await handleInstall(body.versionId));
+    }
+
+    if (p === '/api/tasks/cancel' && req.method === 'POST') {
+      const body = await readBody(req);
+      const taskId = String(body.taskId || '');
+      if (!taskId) return json(res, 400, { error: '缺少 taskId' });
+      if (!cancelTask(taskId)) return json(res, 409, { error: '任务已经结束' });
+      pushLog(`取消任务：${taskId}`);
+      return json(res, 200, { cancelled: true, taskId });
     }
 
     // 中途取消：只掐当前任务，不动已下好的文件。
@@ -3461,15 +3493,26 @@ const server = http.createServer(async (req, res) => {
         if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
         if (state.saving) throw new Error('正在处理存档，请稍候');
         state.saving = true;
-        const result = await backupWorld({
-          gameDir: state.gameDir,
-          versionId,
-          world: String(body.world || ''),
-          whileRunning: Boolean(state.running),
-          onProgress: (p) => emit('save-progress', p),
-        });
-        pushLog(`存档已备份：${result.world}`);
-        return json(res, 200, result);
+        const taskId = startTask('backup', body.taskId);
+        try {
+          const result = await backupWorld({
+            gameDir: state.gameDir,
+            versionId,
+            world: String(body.world || ''),
+            whileRunning: Boolean(state.running),
+            shouldCancel: () => taskCancelled(taskId),
+            onProgress: (p) => emit('save-progress', { ...p, taskId }),
+          });
+          pushLog(`存档已备份：${result.world}`);
+          return json(res, 200, { ...result, taskId });
+        } catch (e) {
+          if (e?.cancelled || taskCancelled(taskId)) {
+            return json(res, 200, { cancelled: true, taskId, message: '已取消' });
+          }
+          return json(res, 400, { error: e.message });
+        } finally {
+          finishTask(taskId);
+        }
       } catch (e) {
         return json(res, 400, { error: e.message });
       } finally { state.saving = false; }
@@ -3482,13 +3525,24 @@ const server = http.createServer(async (req, res) => {
         if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
         if (state.saving) throw new Error('正在处理存档，请稍候');
         state.saving = true;
-        const results = await backupAll({
-          gameDir: state.gameDir,
-          versionId,
-          whileRunning: Boolean(state.running),
-          onProgress: (p) => emit('save-progress', p),
-        });
-        return json(res, 200, { results });
+        const taskId = startTask('backup', body.taskId);
+        try {
+          const results = await backupAll({
+            gameDir: state.gameDir,
+            versionId,
+            whileRunning: Boolean(state.running),
+            shouldCancel: () => taskCancelled(taskId),
+            onProgress: (p) => emit('save-progress', { ...p, taskId }),
+          });
+          return json(res, 200, { results, taskId });
+        } catch (e) {
+          if (e?.cancelled || taskCancelled(taskId)) {
+            return json(res, 200, { cancelled: true, taskId, message: '已取消' });
+          }
+          return json(res, 400, { error: e.message });
+        } finally {
+          finishTask(taskId);
+        }
       } catch (e) {
         return json(res, 400, { error: e.message });
       } finally { state.saving = false; }
@@ -3619,20 +3673,30 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       if (state.exporting) return json(res, 409, { error: '正在导出，请稍候' });
       state.exporting = true;
+      const taskId = startTask('export', body.taskId);
       try {
         const result = await exportInstance({
           gameDir: state.gameDir,
           versionId: String(body.versionId || ''),
           destination: body.destination || '',
-          options: { ...(body.options || {}), whileRunning: Boolean(state.running) },
-          onProgress: (p) => emit('export-progress', p),
+          options: {
+            ...(body.options || {}),
+            whileRunning: Boolean(state.running),
+            shouldCancel: () => taskCancelled(taskId),
+          },
+          onProgress: (p) => emit('export-progress', { ...p, taskId }),
         });
         pushLog(`整合包导出完成：${result.name}`);
-        return json(res, 200, result);
+        return json(res, 200, { ...result, taskId });
       } catch (e) {
+        if (e?.cancelled || taskCancelled(taskId)) {
+          pushLog('整合包导出已取消，临时文件已清理');
+          return json(res, 200, { cancelled: true, taskId, message: '已取消' });
+        }
         return json(res, 400, { error: e.message });
       } finally {
         state.exporting = false;
+        finishTask(taskId);
       }
     }
 

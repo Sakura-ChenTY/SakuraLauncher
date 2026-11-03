@@ -121,7 +121,7 @@ function centralHeader(entry) {
  * opts.hash: 同时计算源文件 SHA-1，返回 entries[].sha1/dataOffset/compSize
  */
 export async function writeZipStream(file, entries, opts = {}) {
-  const { hash = false, onProgress = () => {} } = opts;
+  const { hash = false, onProgress = () => {}, shouldCancel = () => false } = opts;
   await fs.promises.mkdir(path.dirname(file), { recursive: true });
   const out = fs.createWriteStream(file);
   const written = [];
@@ -129,6 +129,11 @@ export async function writeZipStream(file, entries, opts = {}) {
   let done = 0;
   try {
     for (const item of entries) {
+      if (shouldCancel()) {
+        const e = new Error('已取消');
+        e.cancelled = true;
+        throw e;
+      }
       const name = String(item.name).replace(/\\/g, '/');
       let source;
       let expected = 0;

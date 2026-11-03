@@ -577,6 +577,50 @@ function showVerMenu(x, y, versionId) {
 /* ---- 实例导出 ---- */
 const exportState = { versionId: '', preview: null, zipPath: '' };
 
+let activeTask = null;
+
+function newTaskId() {
+  try { return crypto.randomUUID(); } catch { return `task-${Date.now()}-${Math.random().toString(16).slice(2)}`; }
+}
+
+function beginTask(kind) {
+  activeTask = { kind, id: newTaskId() };
+  for (const id of ['taskCancel', 'exportCancel', 'savesPageCancel', 'savesCancel']) {
+    if ($(id)) {
+      $(id).hidden = false;
+      $(id).disabled = false;
+      $(id).textContent = '取消';
+    }
+  }
+  return activeTask.id;
+}
+
+function endTask() {
+  activeTask = null;
+  for (const id of ['taskCancel', 'exportCancel', 'savesPageCancel', 'savesCancel']) {
+    if ($(id)) $(id).hidden = true;
+  }
+}
+
+async function cancelActiveTask() {
+  if (!activeTask) return;
+  const task = activeTask;
+  for (const id of ['taskCancel', 'exportCancel', 'savesPageCancel', 'savesCancel']) {
+    if ($(id)) { $(id).disabled = true; $(id).textContent = '正在取消…'; }
+  }
+  try {
+    await api('/api/tasks/cancel', {
+      method: 'POST',
+      body: JSON.stringify({ taskId: task.id }),
+    });
+  } catch (e) {
+    toast('取消失败：' + e.message, 'err');
+    for (const id of ['taskCancel', 'exportCancel', 'savesPageCancel', 'savesCancel']) {
+      if ($(id)) { $(id).disabled = false; $(id).textContent = '取消'; }
+    }
+  }
+}
+
 function syncExportFormat() {
   const mrpack = $('exportFormat')?.value === 'mrpack';
   const saves = $('exportSaves');
@@ -667,6 +711,7 @@ async function startExport() {
     $('exportStart').textContent = '正在导出…';
   }
   if ($('exportProgress')) $('exportProgress').textContent = '准备打包…';
+  let taskId = '';
   try {
     const preview = await api('/api/export/preview', {
       method: 'POST',
@@ -688,10 +733,20 @@ async function startExport() {
         return;
       }
     }
+    taskId = beginTask('export');
     const r = await api('/api/export', {
       method: 'POST',
-      body: JSON.stringify({ versionId: exportState.versionId, destination, options, whileRunning: Boolean(state.running) }),
+      body: JSON.stringify({ versionId: exportState.versionId, destination, options, whileRunning: Boolean(state.running), taskId }),
     });
+    if (r.cancelled) {
+      if ($('exportProgress')) $('exportProgress').textContent = '已取消';
+      if ($('exportStart')) {
+        $('exportStart').disabled = false;
+        $('exportStart').textContent = '开始导出';
+      }
+      toast('已取消');
+      return;
+    }
     exportState.zipPath = r.zipPath;
     if ($('exportProgress')) $('exportProgress').textContent = r.warnings?.length ? `导出完成：${r.warnings.join('；')}` : '导出完成';
     if (r.format === 'mrpack') {
@@ -739,6 +794,8 @@ async function startExport() {
       $('exportStart').disabled = false;
       $('exportStart').textContent = '重试导出';
     }
+  } finally {
+    if (taskId) endTask();
   }
 }
 
@@ -910,17 +967,26 @@ async function backupSave(world) {
   if (!savesState.versionId) return;
   const progress = $('savesProgress');
   if (progress) progress.textContent = `正在备份 ${world}…`;
+  let taskId = '';
   try {
+    taskId = beginTask('backup');
     const r = await api('/api/saves/backup', {
       method: 'POST',
-      body: JSON.stringify({ versionId: savesState.versionId, world }),
+      body: JSON.stringify({ versionId: savesState.versionId, world, taskId }),
     });
+    if (r.cancelled) {
+      if (progress) progress.textContent = '已取消';
+      toast('已取消');
+      return;
+    }
     if (progress) progress.textContent = `已备份：${r.file}`;
     toast(`已备份存档 ${world}`, 'ok');
     await reloadSaves();
   } catch (e) {
     if (progress) progress.textContent = '备份失败：' + e.message;
     toast('备份失败：' + e.message, 'err');
+  } finally {
+    if (taskId) endTask();
   }
 }
 
@@ -929,11 +995,18 @@ async function backupAllSaves() {
   const progress = $('savesProgress');
   if ($('savesBackupAll')) $('savesBackupAll').disabled = true;
   if (progress) progress.textContent = '正在备份全部存档…';
+  let taskId = '';
   try {
+    taskId = beginTask('backup');
     const r = await api('/api/saves/backup-all', {
       method: 'POST',
-      body: JSON.stringify({ versionId: savesState.versionId }),
+      body: JSON.stringify({ versionId: savesState.versionId, taskId }),
     });
+    if (r.cancelled) {
+      if (progress) progress.textContent = '已取消';
+      toast('已取消');
+      return;
+    }
     if (progress) progress.textContent = `已备份 ${r.results?.length || 0} 个存档`;
     toast('全部存档已备份', 'ok');
     await reloadSaves();
@@ -941,6 +1014,7 @@ async function backupAllSaves() {
     if (progress) progress.textContent = '备份失败：' + e.message;
     toast('备份失败：' + e.message, 'err');
   } finally {
+    if (taskId) endTask();
     if ($('savesBackupAll')) $('savesBackupAll').disabled = false;
   }
 }
@@ -1143,16 +1217,25 @@ async function backupSavePage(world) {
   if (!savesPageState.versionId) return;
   const progress = $('savesPageProgress');
   if (progress) progress.textContent = `正在备份 ${world}…`;
+  let taskId = '';
   try {
-    await api('/api/saves/backup', {
+    taskId = beginTask('backup');
+    const r = await api('/api/saves/backup', {
       method: 'POST',
-      body: JSON.stringify({ versionId: savesPageState.versionId, world }),
+      body: JSON.stringify({ versionId: savesPageState.versionId, world, taskId }),
     });
+    if (r.cancelled) {
+      if (progress) progress.textContent = '已取消';
+      toast('已取消');
+      return;
+    }
     toast(`已备份存档 ${world}`, 'ok');
     await loadSavesPage();
   } catch (e) {
     if (progress) progress.textContent = '备份失败：' + e.message;
     toast('备份失败：' + e.message, 'err');
+  } finally {
+    if (taskId) endTask();
   }
 }
 
@@ -1162,17 +1245,25 @@ async function backupAllSavesPage() {
   const progress = $('savesPageProgress');
   if (btn) btn.disabled = true;
   if (progress) progress.textContent = '正在备份全部存档…';
+  let taskId = '';
   try {
+    taskId = beginTask('backup');
     const r = await api('/api/saves/backup-all', {
       method: 'POST',
-      body: JSON.stringify({ versionId: savesPageState.versionId }),
+      body: JSON.stringify({ versionId: savesPageState.versionId, taskId }),
     });
+    if (r.cancelled) {
+      if (progress) progress.textContent = '已取消';
+      toast('已取消');
+      return;
+    }
     toast(`已备份 ${r.results?.length || 0} 个存档`, 'ok');
     await loadSavesPage();
   } catch (e) {
     if (progress) progress.textContent = '备份失败：' + e.message;
     toast('备份失败：' + e.message, 'err');
   } finally {
+    if (taskId) endTask();
     if (btn) btn.disabled = false;
   }
 }
@@ -4843,6 +4934,9 @@ $('exportClose')?.addEventListener('click', () => { $('exportModal').hidden = tr
 $('exportFormat')?.addEventListener('change', syncExportFormat);
 $('exportPickDest')?.addEventListener('click', pickExportDestination);
 $('exportStart')?.addEventListener('click', startExport);
+$('taskCancel')?.addEventListener('click', cancelActiveTask);
+$('exportCancel')?.addEventListener('click', cancelActiveTask);
+$('savesPageCancel')?.addEventListener('click', cancelActiveTask);
 $('exportCopyPath')?.addEventListener('click', copyExportPath);
 $('exportOpenFolder')?.addEventListener('click', openExportFolder);
 

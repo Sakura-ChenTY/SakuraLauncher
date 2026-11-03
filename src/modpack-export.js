@@ -170,6 +170,7 @@ export async function exportInstance({ gameDir, versionId, destination, options 
   entries.push({ name: 'manifest.json', data: Buffer.from(JSON.stringify(manifest, null, 2), 'utf8') });
   try {
     await writeZipStream(zipPath, entries, {
+      shouldCancel: typeof options.shouldCancel === 'function' ? options.shouldCancel : () => false,
       onProgress: (p) => onProgress({
         stage: 'export',
         done: p.done,
