@@ -1753,3 +1753,46 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 
 .home-assistant:not(.is-collapsed) #homeAssistantToggle,
 .home-assistant.is-collapsed #homeAssistantToggle { right: 11px; }
+
+/* 按钮分级响应：用 max-width/opacity 过渡，避免整行跳变 */
+.home-assistant #aiAnalyze,
+.home-assistant #homeDiagBtn {
+  display: inline-flex !important;
+  max-width: 100px;
+  overflow: hidden;
+  transition: max-width 240ms cubic-bezier(.2,.8,.2,1), opacity 160ms ease, padding 240ms cubic-bezier(.2,.8,.2,1);
+}
+@media (max-width: 759px) {
+  .home-assistant #homeDiagBtn {
+    max-width: 0 !important;
+    min-width: 0;
+    padding-left: 0;
+    padding-right: 0;
+    border-width: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+@media (max-width: 599px) {
+  .home-assistant #aiAnalyze {
+    max-width: 0 !important;
+    min-width: 0;
+    padding-left: 0;
+    padding-right: 0;
+    border-width: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+@media (max-width: 419px) {
+  .home-assistant.is-collapsed #aiChatInput {
+    min-width: 100px !important;
+  }
+}
+
+/* 600px 以下标题让位，保证底行仍是一行 */
+@media (max-width: 620px) {
+  .home-assistant.is-collapsed .home-assistant-title { display: none; }
+  .home-assistant.is-collapsed .home-assistant-bar { padding-left: 0; }
+  .home-assistant #homeAssistantMore { margin-right: 6px; }
+}
