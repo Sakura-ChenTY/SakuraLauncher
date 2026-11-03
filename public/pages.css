@@ -1904,3 +1904,5 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 
 .room-memory-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; font-size: 12px; color: var(--text-dim); }
 .room-memory-row .input { width: 110px; }
+
+.export-saves-note { margin-top: 6px; }

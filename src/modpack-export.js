@@ -9,9 +9,37 @@ import os from 'node:os';
 import { writeZipStream } from './zipstream.js';
 import { getSettings } from './settings.js';
 
-const ALWAYS = ['mods', 'config'];
-const OPTIONAL = ['resourcepacks', 'shaderpacks', 'saves', 'screenshots'];
+const CATEGORY_DIRS = ['mods', 'config', 'resourcepacks', 'shaderpacks', 'saves', 'screenshots'];
+const DEFAULT_SELECTED = new Set(['mods', 'config', 'resourcepacks']);
+const SECRET_RE = /token|api_key|secret|password|passwd|session|cookie|access_key/i;
 const FORBIDDEN = new Set(['logs', 'crash-reports', '.cache', '.backup', 'server', '.mclauncher']);
+
+function selectedDirs(options = {}, whileRunning = false) {
+  const selected = new Set();
+  for (const key of CATEGORY_DIRS) {
+    const wanted = options[key] === undefined ? DEFAULT_SELECTED.has(key) : Boolean(options[key]);
+    if (wanted && !(whileRunning && key === 'saves')) selected.add(key);
+  }
+  return selected;
+}
+
+function scanConfigSecrets(root) {
+  const configDir = path.join(root, 'config');
+  if (!fs.existsSync(configDir)) return { count: 0, files: [] };
+  const found = [];
+  const errors = [];
+  const files = [];
+  walk(configDir, root, files, errors);
+  for (const file of files) {
+    if (file.size > 2 * 1024 * 1024) continue;
+    try {
+      const data = fs.readFileSync(file.full);
+      if (data.includes(0)) continue;
+      if (SECRET_RE.test(data.toString('utf8'))) found.push(file.rel);
+    } catch { /* 单个文件读不到不影响导出 */ }
+  }
+  return { count: found.length, files: found };
+}
 
 function readJson(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
@@ -62,9 +90,7 @@ export function previewExport({ gameDir, versionId, options = {} }) {
   const root = path.join(gameDir, 'versions', versionId);
   const meta = instanceMeta(gameDir, versionId);
   const whileRunning = Boolean(options.whileRunning);
-  const selected = new Set(ALWAYS);
-  for (const key of OPTIONAL) if (options[key]) selected.add(key);
-  if (whileRunning) selected.delete('saves');
+  const selected = selectedDirs(options, whileRunning);
   const files = [];
   const errors = [];
   for (const dir of selected) {
@@ -76,14 +102,19 @@ export function previewExport({ gameDir, versionId, options = {} }) {
   if (fs.existsSync(versionFile)) files.push({ full: versionFile, rel: `${versionId}.json`, size: fs.statSync(versionFile).size });
   const bytes = files.reduce((n, f) => n + f.size, 0);
   const { version: _version, ...publicMeta } = meta;
+  const optionState = Object.fromEntries(CATEGORY_DIRS.map((key) => [key, selected.has(key)]));
+  const skipped = CATEGORY_DIRS.filter((key) => !selected.has(key));
   return {
     versionId,
     meta: publicMeta,
-    options: { mods: true, config: true, ...options, ...(whileRunning ? { saves: false } : {}) },
+    options: optionState,
+    included: [...selected],
+    skipped,
+    secretScan: selected.has('config') ? scanConfigSecrets(root) : { count: 0, files: [] },
     files: files.map(({ rel, size }) => ({ name: rel, size })),
     totalBytes: bytes,
     errors,
-    warnings: whileRunning ? ['游戏开着，存档没带'] : [],
+    warnings: whileRunning && (options.saves === undefined || options.saves) ? ['游戏开着，存档没带'] : [],
     defaultDestination: path.join(os.homedir(), 'Desktop'),
   };
 }
@@ -94,9 +125,7 @@ export async function exportInstance({ gameDir, versionId, destination, options 
   const root = path.join(gameDir, 'versions', versionId);
   const files = [];
   const errors = [];
-  const selected = new Set(ALWAYS);
-  for (const key of OPTIONAL) if (options[key]) selected.add(key);
-  if (whileRunning) selected.delete('saves');
+  const selected = selectedDirs(options, whileRunning);
   for (const dir of selected) {
     const full = path.join(root, dir);
     if (fs.existsSync(full)) walk(full, root, files, errors);
@@ -128,7 +157,7 @@ export async function exportInstance({ gameDir, versionId, destination, options 
     loaderVersion: preview.meta.loaderVersion || '',
     memory: preview.meta.memory,
     createdAt: new Date().toISOString(),
-    options: { mods: true, config: true, ...options, ...(whileRunning ? { saves: false } : {}) },
+    options: preview.options,
     whileRunning,
   };
   const entries = files.map((file) => ({ name: file.rel, file: file.full }));
@@ -155,7 +184,9 @@ export async function exportInstance({ gameDir, versionId, destination, options 
     files: entries.filter((e) => e.name !== 'manifest.json').map((e) => e.name),
     errors,
     warnings: preview.warnings || [],
-    skipped: whileRunning ? ['saves'] : [],
+    included: preview.included,
+    skipped: preview.skipped,
+    secretScan: preview.secretScan,
     preview,
   };
 }

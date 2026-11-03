@@ -1140,11 +1140,14 @@
       <div class="modal-body">
         <div id="exportInfo" class="export-info"></div>
         <div class="export-options">
-          <label><input type="checkbox" id="exportResourcepacks"> 资源包</label>
+          <label><input type="checkbox" id="exportMods" checked> Mod</label>
+          <label><input type="checkbox" id="exportConfig" checked> 配置</label>
+          <label><input type="checkbox" id="exportResourcepacks" checked> 资源包</label>
           <label><input type="checkbox" id="exportShaderpacks"> 光影</label>
           <label><input type="checkbox" id="exportSaves"> 存档</label>
           <label><input type="checkbox" id="exportScreenshots"> 截图</label>
         </div>
+        <div class="hint export-saves-note">游戏开着时存档会被跳过</div>
         <div class="field-line export-dest-line">
           <input class="input grow mono" id="exportDest" readonly>
           <button class="btn ghost" id="exportPickDest" type="button">选择位置</button>

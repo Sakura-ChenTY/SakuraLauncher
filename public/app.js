@@ -599,12 +599,15 @@ async function openExport(versionId) {
         `加载器：${p.meta?.loader || 'vanilla'}`,
         `游戏版本：${p.meta?.gameVersion || versionId}`,
         `建议内存：${p.meta?.memory?.max || '未设置'}`,
-        `默认带：mods、config、版本描述`,
-        `默认不带：存档、资源包、光影、截图`,
+        `默认带：Mod、配置、资源包（存档需要手动勾选）`,
+        `默认不带：光影、存档、截图`,
       ].join('\n');
     }
     if ($('exportDest')) $('exportDest').value = p.defaultDestination || '';
-    for (const id of ['exportResourcepacks', 'exportShaderpacks', 'exportSaves', 'exportScreenshots']) {
+    for (const id of ['exportMods', 'exportConfig', 'exportResourcepacks']) {
+      if ($(id)) $(id).checked = true;
+    }
+    for (const id of ['exportShaderpacks', 'exportSaves', 'exportScreenshots']) {
       if ($(id)) $(id).checked = false;
     }
     if ($('exportProgress')) $('exportProgress').textContent = state.running ? '游戏开着，存档没带' : '';
@@ -630,6 +633,8 @@ async function pickExportDestination() {
 async function startExport() {
   if (!exportState.versionId) return;
   const options = {
+    mods: Boolean($('exportMods')?.checked),
+    config: Boolean($('exportConfig')?.checked),
     resourcepacks: Boolean($('exportResourcepacks')?.checked),
     shaderpacks: Boolean($('exportShaderpacks')?.checked),
     saves: Boolean($('exportSaves')?.checked),
@@ -642,18 +647,49 @@ async function startExport() {
   }
   if ($('exportProgress')) $('exportProgress').textContent = '准备打包…';
   try {
+    const preview = await api('/api/export/preview', {
+      method: 'POST',
+      body: JSON.stringify({ versionId: exportState.versionId, options, whileRunning: Boolean(state.running) }),
+    });
+    const scan = preview.secretScan || { count: 0, files: [] };
+    if (scan.count) {
+      const shown = scan.files.slice(0, 10).map((f) => `- ${f}`).join('\n');
+      const more = scan.files.length > 10 ? `\n…还有 ${scan.files.length - 10} 个` : '';
+      const ok = confirm(
+        `有 ${scan.count} 个文件可能含账号/密钥信息，导出前建议检查\n\n${shown}${more}\n\n仍然导出？`
+      );
+      if (!ok) {
+        if ($('exportStart')) {
+          $('exportStart').disabled = false;
+          $('exportStart').textContent = '开始导出';
+        }
+        if ($('exportProgress')) $('exportProgress').textContent = '';
+        return;
+      }
+    }
     const r = await api('/api/export', {
       method: 'POST',
       body: JSON.stringify({ versionId: exportState.versionId, destination, options, whileRunning: Boolean(state.running) }),
     });
     exportState.zipPath = r.zipPath;
     if ($('exportProgress')) $('exportProgress').textContent = r.warnings?.length ? `导出完成：${r.warnings.join('；')}` : '导出完成';
+    const label = {
+      mods: 'Mod',
+      config: '配置',
+      resourcepacks: '资源包',
+      shaderpacks: '光影',
+      saves: '存档',
+      screenshots: '截图',
+    };
+    const included = (r.included || []).map((k) => label[k] || k);
+    const skipped = (r.skipped || []).map((k) => label[k] || k);
     if ($('exportResult')) {
       $('exportResult').textContent = [
         `路径：${r.zipPath}`,
         `大小：${(r.bytes / 1024 / 1024).toFixed(1)} MB`,
         `文件：${r.files?.length || 0} 个`,
-        r.errors?.length ? `跳过：${r.errors.length} 个文件` : '',
+        `本次带：${included.length ? included.join('、') : '无'}；跳过：${skipped.length ? skipped.join('、') : '无'}`,
+        r.errors?.length ? `读取失败：${r.errors.length} 个文件` : '',
       ].filter(Boolean).join('\n');
     }
     if ($('exportCopyPath')) $('exportCopyPath').hidden = false;
