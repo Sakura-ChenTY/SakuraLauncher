@@ -2126,6 +2126,15 @@ const server = http.createServer(async (req, res) => {
       }
     }
     if (p === '/api/cf/search') {
+      if (!hasCfKey()) {
+        return json(res, 200, {
+          source: 'curseforge',
+          total: 0,
+          hits: [],
+          skipped: true,
+          error: '已跳过 CurseForge（未配置 Key）',
+        });
+      }
       const type = url.searchParams.get('type') || 'mod';
       const q = url.searchParams.get('q') || '';
       const limit = Number(url.searchParams.get('limit') || 20);
@@ -2164,6 +2173,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/api/cf/project') {
+      if (!hasCfKey()) return json(res, 200, { skipped: true, error: '已跳过 CurseForge（未配置 Key）' });
       const slug = url.searchParams.get('slug');
       const id = url.searchParams.get('id');
       if (!slug && !id) return json(res, 400, { error: '缺少 slug 或 id' });
@@ -2178,6 +2188,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/api/cf/files') {
+      if (!hasCfKey()) return json(res, 200, { id: url.searchParams.get('id') || '', files: [], skipped: true, error: '已跳过 CurseForge（未配置 Key）' });
       const id = url.searchParams.get('id');
       if (!id) return json(res, 400, { error: '缺少 id' });
       const versionId = url.searchParams.get('versionId') || '';
@@ -2203,6 +2214,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/api/cf/pack/preview' && req.method === 'POST') {
+      if (!hasCfKey()) return json(res, 400, { skipped: true, error: '已跳过 CurseForge（未配置 Key）' });
       const body = await readBody(req);
       if (!body.modId) return json(res, 400, { error: '缺少 modId' });
       try {
@@ -2216,6 +2228,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/api/cf/pack/install' && req.method === 'POST') {
+      if (!hasCfKey()) return json(res, 400, { skipped: true, error: '已跳过 CurseForge（未配置 Key）' });
       const body = await readBody(req);
       if (!body.modId) return json(res, 400, { error: '缺少 modId' });
       if (state.installing) return json(res, 409, { error: '已有任务在进行' });

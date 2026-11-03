@@ -2362,16 +2362,22 @@ async function doPackSearch(offset = 0) {
       const url = (src === 'curseforge' ? '/api/cf/search?' : '/api/store/search?') + params;
       // 单个来源失败不能拖垮整个列表：包成 {ok:false} 让后面能分开讲
       return api(url)
-        .then((data) => ({ src, data, ok: !data?.error }))
-        .catch((e) => ({ src, data: null, ok: false, err: e.message }));
+        .then((data) => ({ src, data, ok: !data?.error || Boolean(data?.skipped), skipped: Boolean(data?.skipped) }))
+        .catch((e) => ({ src, data: null, ok: false, skipped: false, err: e.message }));
     });
 
     const results = await Promise.all(tasks);
-    const loaded = results.filter((r) => r.ok);
-    const failed = results.filter((r) => !r.ok);
+    const loaded = results.filter((r) => r.ok && !r.skipped);
+    const skipped = results.filter((r) => r.skipped);
+    const failed = results.filter((r) => !r.ok && !r.skipped);
 
     // 两个都挂了才真的没东西看
     if (!loaded.length) {
+      if (skipped.length) {
+        $('packResults').innerHTML = '<div class="empty">已跳过 CurseForge（未配置 Key）</div>';
+        $('packHint').textContent = '已跳过 CurseForge（未配置 Key）';
+        return;
+      }
       const msg = failed
         .map((f) => `${f.src === 'curseforge' ? 'CurseForge' : 'Modrinth'}：${escapeHtml(f.data?.error ?? f.err ?? '未知错误')}`)
         .join('<br>');
@@ -2402,11 +2408,13 @@ async function doPackSearch(offset = 0) {
 
     const cfDown = failed.some((f) => f.src === 'curseforge');
     const mrDown = failed.some((f) => f.src === 'modrinth');
+    const cfSkipped = skipped.some((f) => f.src === 'curseforge');
     let hint;
     if (multi) {
       hint = `共 ${fmtNum(total)} 个整合包（Modrinth + CurseForge 合并）。安装时会自动建实例并装好 loader。`;
       if (cfDown) hint += ' CurseForge 本次没连上，只显示了 Modrinth。';
       if (mrDown) hint += ' Modrinth 本次没连上，只显示了 CurseForge。';
+      if (cfSkipped) hint += ' 已跳过 CurseForge（未配置 Key）。';
     } else if (onlyCF) {
       hint = `共 ${fmtNum(total)} 个 CurseForge 整合包。安装时会自动建实例并装好 loader。`;
     } else {
@@ -2507,6 +2515,10 @@ async function pickPack(index) {
  * 所以点「预览」时要真下载一次整包才能读出来（服务端读完立刻删）。
  */
 async function pickCfPack(pack, packIcon) {
+  if (!window.cfHasKey) {
+    toast('已跳过 CurseForge（未配置 Key）');
+    return;
+  }
   if (!pack?.id) {
     $('modalBody').innerHTML = '<div class="empty">缺少 CurseForge 项目 id</div>';
     return;
@@ -5101,7 +5113,7 @@ function initPackSourcePicker() {
     label.textContent = items.length === 2
       ? '全部'
       : items.length === 1
-        ? (items[0] === 'modrinth' ? 'Modrinth' : 'CurseForge')
+        ? (items[0] === 'modrinth' ? 'Modrinth' : (window.cfHasKey ? 'CurseForge' : 'CurseForge（需要 API Key）'))
         : '未选择';
     btn.title = items.length === 2
       ? '从 Modrinth 和 CurseForge 一起搜'

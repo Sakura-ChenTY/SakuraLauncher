@@ -1038,11 +1038,21 @@ function roomProviderLabel(provider) {
 async function loadCfApiKey() {
   try {
     const d = await api('/api/cf/key');
+    window.cfHasKey = Boolean(d.hasKey);
     const hint = document.getElementById('cfApiKeyHint');
-    if (!hint) return;
-    if (d.source === 'env') hint.textContent = `已由环境变量提供（${d.keyMask}）`;
-    else if (d.hasKey) hint.textContent = `已保存：${d.keyMask}`;
-    else hint.textContent = '未设置；开 CurseForge 整合包房间需要';
+    if (hint) {
+      if (d.source === 'env') hint.textContent = `已由环境变量提供（${d.keyMask}）`;
+      else if (d.hasKey) hint.textContent = `已保存：${d.keyMask}`;
+      else hint.textContent = '未配置；CurseForge 搜索、安装和更新会跳过，只用 Modrinth';
+    }
+    const cfLabel = document.getElementById('packSrcCurseforge')?.closest('label');
+    const cfText = cfLabel?.querySelector('span:last-child');
+    if (cfText) cfText.textContent = d.hasKey ? 'CurseForge' : 'CurseForge（需要 API Key）';
+    const sourceHint = document.getElementById('packCfKeyHint');
+    if (sourceHint) {
+      sourceHint.hidden = Boolean(d.hasKey);
+      sourceHint.textContent = 'CurseForge 需要 API Key；未配置时自动只用 Modrinth';
+    }
     const link = document.getElementById('cfApiKeyLink');
     if (link && d.applyUrl) link.href = d.applyUrl;
   } catch { /* 旧服务没有这个接口时保持静默 */ }
@@ -1056,7 +1066,7 @@ async function saveCfApiKey() {
   try {
     const d = await api('/api/cf/key', { method: 'POST', body: JSON.stringify({ apiKey: key }) });
     if (input) input.value = '';
-    if (hint) hint.textContent = d.source === 'env' ? '环境变量优先，已生效' : `已保存：${d.keyMask}`;
+    await loadCfApiKey();
     if (typeof toast === 'function') toast('CurseForge API Key 已保存');
   } catch (e) {
     if (hint) hint.textContent = '保存失败：' + e.message;
