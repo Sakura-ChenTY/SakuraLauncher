@@ -430,6 +430,10 @@
       btn.textContent = collapsed ? '展开' : '收起';
       btn.setAttribute('aria-expanded', String(!collapsed));
     }
+    const analyze = el('aiAnalyze');
+    const diag = el('homeDiagBtn');
+    if (analyze) analyze.textContent = collapsed ? '分析失败' : '分析最近失败';
+    if (diag) diag.textContent = collapsed ? '诊断' : '收集诊断信息';
     if (more) more.hidden = !collapsed;
     if (!collapsed && el('homeAssistantMoreMenu')) el('homeAssistantMoreMenu').hidden = true;
     if (persist) localStorage.setItem('sakura.homeAssistantCollapsed', collapsed ? '1' : '0');

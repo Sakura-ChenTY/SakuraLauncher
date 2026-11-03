@@ -1294,23 +1294,24 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .home-assistant-hint { font-size: 10px; margin: 0; }
 .home-assistant.is-collapsed .home-assistant-log,
 .home-assistant.is-collapsed .home-assistant-hint { display: none; }
-.home-assistant.is-collapsed #aiAnalyze,
-.home-assistant.is-collapsed #homeDiagBtn { display: none; }
 .home-assistant.is-collapsed {
-  width: min(760px, calc(100% - 24px));
-  max-width: calc(100% - 24px);
+  width: auto;
+  max-width: none;
   max-height: none;
+  left: 12px;
   right: 12px;
-  left: auto;
+  box-sizing: border-box;
+  overflow-x: hidden;
   padding: 6px 8px;
   flex-direction: row;
   align-items: center;
   gap: 7px;
 }
 .home-assistant.is-collapsed .home-assistant-head {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
   gap: 6px;
+  overflow: hidden;
 }
 .home-assistant.is-collapsed .home-assistant-title {
   flex-direction: row;
@@ -1325,16 +1326,25 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
   text-overflow: ellipsis;
 }
 .home-assistant.is-collapsed .home-assistant-title .hint { display: none; }
-.home-assistant.is-collapsed .home-assistant-actions { flex: 0 0 auto; }
+.home-assistant.is-collapsed .home-assistant-actions { flex: 0 1 auto; min-width: 0; }
+.home-assistant.is-collapsed .home-assistant-actions .btn { padding: 3px 5px; }
 .home-assistant.is-collapsed .assistant-chat-line {
   display: flex;
-  flex: 1 1 180px;
+  flex: 1 1 120px;
   min-width: 0;
   margin: 0;
+  overflow: hidden;
 }
-.home-assistant.is-collapsed .assistant-chat-line .input { min-width: 0; }
+.home-assistant.is-collapsed .assistant-chat-line .input {
+  flex: 1 1 0;
+  min-width: 0;
+}
 .home-assistant.is-collapsed .assistant-chat-line #aiChatNew { display: none; }
-.home-assistant.is-collapsed .home-assistant-actions .btn { padding: 3px 5px; }
+
+@media (max-width: 760px) {
+  .home-assistant.is-collapsed #aiAnalyze,
+  .home-assistant.is-collapsed #homeDiagBtn { display: none; }
+}
 
 .home-assistant-more-menu {
   position: absolute;
