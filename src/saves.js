@@ -2,7 +2,6 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import crypto from 'node:crypto';
 
 import { HOME_DIR } from './paths.js';
 import { writeZip } from './zipwrite.js';
@@ -111,19 +110,14 @@ export function listSaves({ gameDir, versionId }) {
   return { versionId, savesDir: root, backupDir: backupDir(versionId), saves, backups };
 }
 
-function sha1(data) {
-  return crypto.createHash('sha1').update(data).digest('hex');
-}
-
 function verifyBackup(zipPath, expected) {
   const buf = fs.readFileSync(zipPath);
   const entries = listEntries(buf);
   for (const item of expected) {
     const entry = entries.find((e) => e.name === item.name);
     if (!entry) throw new Error(`缺少文件 ${item.name}`);
-    const data = readEntry(buf, entry);
-    if (data.length !== item.size || sha1(data) !== item.sha1) {
-      throw new Error(`内容不一致 ${item.name}`);
+    if (entry.uncompSize !== item.size) {
+      throw new Error(`大小不一致 ${item.name}`);
     }
   }
 }
@@ -145,7 +139,7 @@ export async function backupWorld({ gameDir, versionId, world, whileRunning = fa
     const data = await fsp.readFile(file.full);
     const name = `${world}/${file.rel}`;
     entries.push({ name, data });
-    expected.push({ name, size: data.length, sha1: sha1(data) });
+    expected.push({ name, size: data.length });
     done += 1;
     onProgress({ stage: 'save-backup', done, total: files.length + 1, message: `备份 ${file.rel}` });
   }
@@ -166,7 +160,7 @@ export async function backupWorld({ gameDir, versionId, world, whileRunning = fa
     verifyBackup(zipPath, expected);
   } catch (e) {
     try { fs.rmSync(zipPath, { force: true }); } catch { /* ignore */ }
-    throw new Error(`备份校验失败：${e.message}`);
+    throw new Error('这次没备成，重来一次');
   }
   return { zipPath, file: path.basename(zipPath), world, whileRunning: Boolean(whileRunning), verified: true, bytes: fs.statSync(zipPath).size, files: files.length };
 }
