@@ -1294,9 +1294,14 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .home-assistant-hint { font-size: 10px; margin: 0; }
 .home-assistant.is-collapsed .home-assistant-log,
 .home-assistant.is-collapsed .home-assistant-hint { display: none; }
+.home-assistant.is-collapsed #aiAnalyze,
+.home-assistant.is-collapsed #homeDiagBtn { display: none; }
 .home-assistant.is-collapsed {
-  width: min(960px, calc(100% - 40px));
+  width: min(760px, calc(100% - 24px));
+  max-width: calc(100% - 24px);
   max-height: none;
+  right: 12px;
+  left: auto;
   padding: 6px 8px;
   flex-direction: row;
   align-items: center;
@@ -1310,20 +1315,44 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .home-assistant.is-collapsed .home-assistant-title {
   flex-direction: row;
   align-items: baseline;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   gap: 6px;
+  overflow: hidden;
+}
+.home-assistant.is-collapsed .home-assistant-title b {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .home-assistant.is-collapsed .home-assistant-title .hint { display: none; }
 .home-assistant.is-collapsed .home-assistant-actions { flex: 0 0 auto; }
 .home-assistant.is-collapsed .assistant-chat-line {
   display: flex;
-  flex: 1 1 240px;
-  min-width: 150px;
+  flex: 1 1 180px;
+  min-width: 0;
   margin: 0;
 }
-.home-assistant.is-collapsed .assistant-chat-line .input { min-width: 80px; }
+.home-assistant.is-collapsed .assistant-chat-line .input { min-width: 0; }
 .home-assistant.is-collapsed .assistant-chat-line #aiChatNew { display: none; }
 .home-assistant.is-collapsed .home-assistant-actions .btn { padding: 3px 5px; }
+
+.home-assistant-more-menu {
+  position: absolute;
+  right: 8px;
+  bottom: calc(100% + 6px);
+  z-index: 22;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 120px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg-2);
+  box-shadow: 0 10px 24px rgba(0,0,0,.28);
+}
+.home-assistant-more-menu[hidden] { display: none; }
+.home-assistant-more-menu .btn { justify-content: flex-start; font-size: 10px; padding: 5px 7px; }
 .assistant-moved-note { margin-top: 4px; }
 .assistant-toast {
   position: fixed;
