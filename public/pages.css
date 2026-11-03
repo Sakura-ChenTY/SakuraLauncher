@@ -1851,3 +1851,27 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 @media (max-width: 380px) {
   .home-assistant-bar { gap: 0 !important; }
 }
+
+/* 标题和展开/收起垂直中线对齐；收起态贴底行内容区 */
+.home-assistant .home-assistant-title {
+  display: flex !important;
+  align-items: center !important;
+  height: 28px;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+.home-assistant #homeAssistantToggle {
+  display: inline-flex !important;
+  align-items: center !important;
+  height: 28px;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+.home-assistant.is-collapsed .home-assistant-title,
+.home-assistant.is-collapsed #homeAssistantToggle {
+  top: 6px !important;
+}
+.home-assistant:not(.is-collapsed) .home-assistant-title,
+.home-assistant:not(.is-collapsed) #homeAssistantToggle {
+  top: 0 !important;
+}
