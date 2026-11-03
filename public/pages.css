@@ -1334,3 +1334,6 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .assistant-toast.above-home { bottom: 310px; }
 @media (max-width: 900px) { .assistant-toast.above-home { bottom: 280px; } }
 @media (max-width: 720px) { .assistant-toast.above-home { bottom: 260px; } }
+
+.diag-box { width: min(760px, 88vw); max-height: 80vh; }
+.diag-text { max-height: 58vh; overflow: auto; white-space: pre-wrap; font-size: 11px; line-height: 1.55; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-2); color: var(--text); }

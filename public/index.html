@@ -203,7 +203,7 @@
               </div>
               <div class="home-assistant-actions">
                 <button class="btn ghost" id="aiAnalyze" type="button">分析最近失败</button>
-                <button class="btn ghost" id="homeAssistantToggle" type="button" aria-expanded="true">收起</button>
+                <button class="btn ghost" id="homeDiagBtn" type="button">收集诊断</button>`n                <button class="btn ghost" id="homeAssistantToggle" type="button" aria-expanded="true">收起</button>
               </div>
             </div>
             <div class="assistant-result home-assistant-log" id="aiResult">
@@ -1044,6 +1044,22 @@
     </footer>
   </div>
 
+  <!-- 诊断信息收集 -->
+  <div class="modal" id="diagModal" hidden>
+    <div class="modal-box diag-box">
+      <div class="modal-head">
+        <h3 id="diagTitle">诊断信息</h3>
+        <button class="btn ghost" id="diagClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <pre class="diag-text" id="diagText"></pre>
+        <div class="field-line" style="margin-top:12px;justify-content:flex-end">
+          <button class="btn ghost" id="diagCopy">复制</button>
+          <button class="btn" id="diagDone">关闭</button>
+        </div>
+      </div>
+    </div>
+  </div>
   <!-- 版本选择弹窗 -->
   <div class="modal" id="versionModal" hidden>
     <div class="modal-box">

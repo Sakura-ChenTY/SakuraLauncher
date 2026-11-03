@@ -177,9 +177,26 @@
     return currentSessionId;
   }
 
+  let lastUserText = '';
+
+  async function collectDiagnosticInfo() {
+    const message = String(el('aiChatInput')?.value || lastUserText || '启动不了').trim();
+    try {
+      const d = await api('/api/assistant/diagnose', {
+        method: 'POST',
+        body: JSON.stringify({ message }),
+      });
+      if (el('diagTitle')) el('diagTitle').textContent = `诊断信息 · ${d.label || d.category || ''}`;
+      if (el('diagText')) el('diagText').textContent = d.text || '没有收集到信息';
+      if (el('diagModal')) el('diagModal').hidden = false;
+    } catch (e) {
+      showAssistantToast('收集诊断信息失败：' + e.message, { timeout: 6000 });
+    }
+  }
   async function sendChat(text, { diagnostic = false } = {}) {
     const message = String(text ?? '').trim();
     if (!message || sending) return;
+    lastUserText = message;
     sending = true;
     const input = el('aiChatInput');
     if (input) input.value = '';
@@ -308,6 +325,13 @@
     el('aiAnalyze')?.addEventListener('click', runAnalyze);
     el('aiChatSend')?.addEventListener('click', () => sendChat(el('aiChatInput')?.value));
     el('aiChatNew')?.addEventListener('click', newSession);
+    el('homeDiagBtn')?.addEventListener('click', collectDiagnosticInfo);
+    el('diagClose')?.addEventListener('click', () => { el('diagModal').hidden = true; });
+    el('diagDone')?.addEventListener('click', () => { el('diagModal').hidden = true; });
+    el('diagCopy')?.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(el('diagText')?.textContent || ''); if (typeof toast === 'function') toast('诊断信息已复制'); }
+      catch { if (typeof toast === 'function') toast('复制失败，请手动选中', 'err'); }
+    });
     el('homeAssistantToggle')?.addEventListener('click', () => {
       const home = el('homeAssistant');
       setHomeCollapsed(!home?.classList.contains('is-collapsed'), { persist: true });
