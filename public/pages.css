@@ -1346,6 +1346,16 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
   margin: 0;
   overflow: hidden;
 }
+.home-assistant.is-collapsed #aiChatInput {
+  order: 1;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.home-assistant.is-collapsed #aiChatSend {
+  order: 2;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
 .home-assistant.is-collapsed .assistant-chat-line .input {
   flex: 1 1 0;
   min-width: 0;
