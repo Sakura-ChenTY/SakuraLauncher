@@ -1835,3 +1835,8 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
     padding: 2px 3px !important;
   }
 }
+
+@media (max-width: 419px) {
+  .home-assistant.is-collapsed .home-assistant-bar { padding-right: 0; }
+  .home-assistant #homeAssistantMore { margin-right: 0; }
+}
