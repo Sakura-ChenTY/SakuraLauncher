@@ -1084,23 +1084,25 @@ body.has-custom-bg .wallpaper {
 /* 主页最近游玩：比启动按钮小一档 */
 .recent-play-btn {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  width: min(320px, 86%);
-  margin: 8px auto 0;
-  padding: 9px 14px;
+  gap: 6px;
+  width: min(300px, 78%);
+  min-height: 30px;
+  margin: 5px auto 0;
+  padding: 4px 10px;
   border: 1px solid var(--line);
-  border-radius: 11px;
+  border-radius: 8px;
   background: var(--bg-2);
   color: var(--text);
   cursor: pointer;
+  line-height: 1.2;
   transition: border-color .15s, background .15s;
 }
 .recent-play-btn:hover { border-color: var(--accent); background: var(--bg-3); }
-.recent-play-btn > span { font-size: 12px; font-weight: 600; }
-.recent-play-btn > small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font-size: 10px; }
+.recent-play-btn > span { flex: 0 0 auto; font-size: 11px; font-weight: 600; line-height: 1.2; white-space: nowrap; }
+.recent-play-btn > small { min-width: 0; max-width: 155px; max-height: 1.2em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font-size: 9px; line-height: 1.2; }
 
 .room-head-actions { display: flex; align-items: center; gap: 8px; }
 .world-params-box { width: min(620px, 92vw); }
@@ -1364,17 +1366,6 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
   box-shadow: 0 10px 24px rgba(0,0,0,.28);
 }
 .home-assistant-more-menu[hidden] { display: none; }
-#panel-home.has-collapsed-assistant .home {
-  overflow-y: auto;
-  min-height: 0;
-  padding-bottom: calc(var(--assistant-bar-height, 42px) + 14px);
-}
-#panel-home.has-collapsed-assistant .content-panel {
-  padding-bottom: calc(var(--assistant-bar-height, 42px) + 14px);
-}
-#panel-home.has-collapsed-assistant .content-groups {
-  padding-bottom: calc(var(--assistant-bar-height, 42px) + 14px);
-}
 .home-assistant-more-menu .btn { justify-content: flex-start; font-size: 10px; padding: 5px 7px; }
 .assistant-moved-note { margin-top: 4px; }
 .assistant-toast {
