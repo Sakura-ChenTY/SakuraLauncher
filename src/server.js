@@ -71,7 +71,7 @@ import {
 import { installCurseForgePack, previewCurseForgePack } from './cfpack.js';
 import { createSession, getSession, chatSession } from './assistant-session.js';
 import { detectSymptom, guessSymptom, collectSymptomContext, SYMPTOMS, IMPLEMENTATION_NOTES } from './assistant-diagnostics.js';
-import { previewDiagnosticPackage, createDiagnosticPackage, sanitizeDiagnostic } from './diagnostic-package.js';
+import { previewDiagnosticPackage, createDiagnosticPackage, createCrashDiagnosticPackage, sanitizeDiagnostic } from './diagnostic-package.js';
 import { snapshotCrashArtifacts, newCrashArtifacts } from './crash-watch.js';
 import { previewExport, exportInstance } from './modpack-export.js';
 import { previewPackUpdate, applyPackUpdate } from './packupdate.js';
@@ -1224,6 +1224,18 @@ async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta 
       };
       state.crashIncident = incident;
       emit('crash-detected', { incident });
+      if (getSettings().autoDiagnostic !== false) {
+        void createCrashDiagnosticPackage({
+          gameDir: state.gameDir,
+          versionId,
+          incident,
+        }).then((pkg) => {
+          pushLog(`崩溃诊断包已生成：${pkg.zipPath}`);
+          emit('diagnostic-ready', { package: pkg, incidentId: incident.id });
+        }).catch((e) => {
+          pushLog(`诊断包生成失败：${e.message}`);
+        });
+      }
     }
     state.crashBaseline = null;
     emit('game-exit', { versionId, code: uiCode, forced: forcedExit, reason: reasonLine.slice(0, 500) });
@@ -3655,7 +3667,10 @@ const server = http.createServer(async (req, res) => {
       try {
         const target = path.resolve(String(body.path || ''));
         const root = path.resolve(HOME_DIR, 'diagnostic-packages');
-        if (!target.startsWith(root + path.sep)) throw new Error('诊断包目录不合法');
+        const desktop = path.resolve(os.homedir(), 'Desktop');
+        const desktopDiag = path.dirname(target) === desktop
+          && /^绘梨衣诊断-.*\.zip$/i.test(path.basename(target));
+        if (!target.startsWith(root + path.sep) && !desktopDiag) throw new Error('诊断包目录不合法');
         spawn('explorer.exe', [path.dirname(target)], { detached: true, stdio: 'ignore' }).unref();
         return json(res, 200, { ok: true });
       } catch (e) {

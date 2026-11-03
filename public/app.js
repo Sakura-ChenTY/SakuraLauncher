@@ -2996,6 +2996,11 @@ function connectEvents() {
         break;
 
       /* ---- 游戏 ---- */
+      case 'diagnostic-ready':
+        if (typeof window.assistantDiagnosticReady === 'function') {
+          window.assistantDiagnosticReady(msg.package);
+        }
+        break;
       case 'crash-detected':
         if (typeof window.assistantCrash === 'function') window.assistantCrash(msg.incident);
         break;
@@ -3529,6 +3534,7 @@ function applySettingsToForm(s) {
   if ($('setAutoBackupBefore')) $('setAutoBackupBefore').checked = s.autoBackupBeforeLaunch !== false;
   if ($('setAutoBackupAfter')) $('setAutoBackupAfter').checked = s.autoBackupAfterExit !== false;
   if ($('setAutoBackupKeep')) $('setAutoBackupKeep').value = String(s.autoBackupKeep ?? 5);
+  if ($('setAutoDiagnostic')) $('setAutoDiagnostic').checked = s.autoDiagnostic !== false;
   if ($('roomMemory')) $('roomMemory').value = String(Number(s.roomMemoryMb) > 0 ? s.roomMemoryMb : 2048);
   syncMemoryMode(false);
   $('setConcurrency').value = s.concurrency ?? 16;
@@ -3563,6 +3569,7 @@ function readSettingsForm() {
     autoBackupBeforeLaunch: Boolean($('setAutoBackupBefore')?.checked),
     autoBackupAfterExit: Boolean($('setAutoBackupAfter')?.checked),
     autoBackupKeep: Number($('setAutoBackupKeep')?.value || 5),
+    autoDiagnostic: Boolean($('setAutoDiagnostic')?.checked),
     concurrency: Number($('setConcurrency').value),
     downloadSource: $('setDownloadSource').value,
     isolated: $('setIsolated').value,

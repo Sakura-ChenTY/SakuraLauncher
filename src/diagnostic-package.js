@@ -147,3 +147,100 @@ export async function createDiagnosticPackage({ gameDir, versionId }) {
   const files = manifest.files.concat([{ name: 'manifest.json', bytes: Buffer.byteLength(JSON.stringify(manifest, null, 2)) }]);
   return { zipPath, outputDir: OUT_DIR, versionId: versionId || '', files, redaction: preview.redaction };
 }
+
+function tailLines(file, count = 2000) {
+  try {
+    return fs.readFileSync(file, 'utf8').split(/\r?\n/).slice(-count).join('\n');
+  } catch { return ''; }
+}
+
+function crashSanitize(text) {
+  let out = sanitizeDiagnostic(text);
+  out = out.replace(/(access[_-]?token|refresh[_-]?token|session[_-]?token|session|token)\s*[:=]\s*[^\s"',}]+/gi, (_m, key) => `${key}: ***`);
+  out = out.replace(/("(?:access[_-]?token|refresh[_-]?token|session[_-]?token|session|token)"\s*:\s*)"[^"]*"/gi, '$1"***"');
+  return out;
+}
+
+function systemInfo() {
+  let disk = 'unknown';
+  try {
+    const st = fs.statfsSync(os.homedir());
+    disk = `${Math.round(st.bavail * st.bsize / 1024 / 1024)} MB free / ${Math.round(st.blocks * st.bsize / 1024 / 1024)} MB total`;
+  } catch { /* unsupported */ }
+  return crashSanitize([
+    `OS: ${os.type()} ${os.release()} ${os.arch()}`,
+    `Memory: ${Math.round(os.totalmem() / 1024 / 1024)} MB total / ${Math.round(os.freemem() / 1024 / 1024)} MB free`,
+    `Disk: ${disk}`,
+    `Node: ${process.version}`,
+  ].join('\n'));
+}
+
+function crashInstanceInfo(gameDir, versionId) {
+  const root = path.join(gameDir, 'versions', versionId);
+  const v = readJson(path.join(root, `${versionId}.json`)) || {};
+  const tag = `${v.id || ''} ${v.inheritsFrom || ''} ${v.mainClass || ''}`;
+  let loader = 'vanilla';
+  if (/fabric/i.test(tag)) loader = 'fabric';
+  else if (/neoforge/i.test(tag)) loader = 'neoforge';
+  else if (/forge/i.test(tag)) loader = 'forge';
+  else if (/quilt/i.test(tag)) loader = 'quilt';
+  const settings = getSettings();
+  return crashSanitize([
+    `实例：${versionId || '未选择'}`,
+    `游戏版本：${v.inheritsFrom || v.id || versionId || '未知'}`,
+    `加载器：${loader}`,
+    `主类：${v.mainClass || ''}`,
+    `Java 版本：${v.javaVersion?.majorVersion ?? '未知'}`,
+    `Java 路径：${settings.javaPath || '自动'}`,
+    `Java 模式：${settings.javaMode || 'auto'}`,
+  ].join('\n'));
+}
+
+function modsList(gameDir, versionId) {
+  const dir = path.join(gameDir, 'versions', versionId, 'mods');
+  let names = [];
+  try { names = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isFile()); } catch { return '无'; }
+  if (!names.length) return '无';
+  return names.map((e) => {
+    try { return `${e.name}\t${fs.statSync(path.join(dir, e.name)).size} bytes`; } catch { return `${e.name}\t?`; }
+  }).join('\n');
+}
+
+export async function createCrashDiagnosticPackage({ gameDir, versionId, incident }) {
+  const dirs = instanceFiles(gameDir, versionId);
+  const entries = [];
+  const add = (name, data) => entries.push({ name, data: crashSanitize(data) });
+  const launcherLog = path.join(HOME_DIR, 'logs', 'launcher.log');
+  if (fs.existsSync(launcherLog)) add('launcher.log', tailLines(launcherLog, 2000));
+  if (dirs.crash) add('crash-report.txt', fs.readFileSync(dirs.crash, 'utf8'));
+  if (dirs.hs) add('hs_err.log', fs.readFileSync(dirs.hs, 'utf8'));
+  add('system-info.txt', systemInfo());
+  add('instance-info.txt', crashInstanceInfo(gameDir, versionId));
+  add('mods.txt', modsList(gameDir, versionId));
+  const manifest = {
+    createdAt: new Date().toISOString(),
+    versionId: versionId || '',
+    crash: {
+      id: incident?.id || '',
+      code: incident?.code ?? null,
+      reason: crashSanitize(incident?.reason || ''),
+    },
+    files: entries.map((e) => e.name),
+    note: 'local only; saves/config/account data excluded',
+  };
+  entries.push({ name: 'manifest.json', data: JSON.stringify(manifest, null, 2) });
+  const outDir = path.join(os.homedir(), 'Desktop');
+  await fsp.mkdir(outDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+  const safeVersion = String(versionId || '实例').replace(/[<>:"|?*\\/\x00-\x1f]/g, '_').slice(0, 60);
+  const zipPath = path.join(outDir, `绘梨衣诊断-${safeVersion}-${stamp}.zip`);
+  writeZip(zipPath, entries);
+  return {
+    zipPath,
+    outputDir: outDir,
+    versionId: versionId || '',
+    incidentId: incident?.id || '',
+    files: entries.map((e) => ({ name: e.name, bytes: Buffer.byteLength(e.data) })),
+    redaction: ['token / session / accessToken', '账号名 / 邮箱 / 用户目录', 'saves / config 不打包'],
+  };
+}

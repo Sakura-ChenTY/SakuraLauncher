@@ -667,6 +667,11 @@
                 <div class="field-note">只清理自动备份，手动备份不会被删除。</div>
               </div>
               <div class="field">
+                <label>崩溃诊断</label>
+                <label class="mem-optimize"><input id="setAutoDiagnostic" type="checkbox" checked> 崩溃后自动生成诊断包</label>
+                <div class="field-note">诊断包放在桌面，不含存档、配置、账号信息。</div>
+              </div>
+              <div class="field">
                 <label>内存</label>
                 <div class="mem-mode-row">
                   <label class="mem-mode"><input id="memModeAuto" type="radio" name="memMode" value="auto"> 自动配置</label>
@@ -1129,7 +1134,9 @@
     <div class="crash-notice-head">绘梨衣</div>
     <div class="crash-notice-text" id="crashNoticeText"></div>
     <div class="crash-notice-actions">
-      <button class="btn ghost" id="crashNoticeDismiss" type="button">不用了，我知道了</button>
+      <button class="btn ghost" id="crashOpenDiag" type="button">打开文件夹</button>
+      <button class="btn ghost" id="crashAnalyze" type="button">交给小助手分析</button>
+      <button class="btn ghost" id="crashNoticeDismiss" type="button">不用了</button>
     </div>
   </div>
   <!-- 导出整合包 -->

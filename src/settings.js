@@ -51,6 +51,7 @@ export const DEFAULTS = {
   autoBackupBeforeLaunch: true,
   autoBackupAfterExit: true,
   autoBackupKeep: 5,
+  autoDiagnostic: true,
   // 开房间内存；0 表示按原版 2048 / CurseForge 3072 自动取默认
   roomMemoryMb: 0,
   // 界面不透明度（百分比）。数值越大越不透明；30 = 几乎全透，90 = 接近实心。
@@ -145,6 +146,7 @@ export function normalize(raw = {}, base = DEFAULTS) {
   const autoKeep = Number(raw.autoBackupKeep);
   if (Number.isFinite(autoKeep) && autoKeep >= 1 && autoKeep <= 50) out.autoBackupKeep = Math.floor(autoKeep);
   else if (raw.autoBackupKeep !== undefined) notes.push('自动备份保留份数需在 1-50，已保留原值');
+  if (typeof raw.autoDiagnostic === 'boolean') out.autoDiagnostic = raw.autoDiagnostic;
   if (raw.roomMemoryMb !== undefined) {
     const n = Number(raw.roomMemoryMb);
     if (n === 0 || (Number.isFinite(n) && n >= 256 && n <= 16384)) out.roomMemoryMb = Math.round(n);

@@ -180,6 +180,7 @@
   let lastUserText = '';
   let diagPreview = null;
   let diagPackage = null;
+  let crashPackage = null;
 
   function renderDiagnosticPreview(data) {
     diagPreview = data;
@@ -429,11 +430,41 @@
       }
       setHomeCollapsed(false, { persist: true });
       const notice = el('crashNotice');
-      if (notice) notice.hidden = true;
+      if (notice && !crashPackage) notice.hidden = true;
     } catch (e) {
       showAssistantToast('自动分析崩溃失败：' + e.message, { timeout: 6500 });
     }
   }
+  async function openCrashDiagnostic() {
+    if (!crashPackage?.zipPath) return;
+    try {
+      await api('/api/assistant/diagnose/package/open', {
+        method: 'POST',
+        body: JSON.stringify({ path: crashPackage.zipPath }),
+      });
+    } catch (e) {
+      showAssistantToast('打开诊断包失败：' + e.message, { timeout: 6000 });
+    }
+  }
+
+  async function analyzeCrashDiagnostic() {
+    if (!crashPackage?.zipPath) return;
+    const notice = el('crashNotice');
+    if (notice) notice.hidden = true;
+    await sendChat(`分析这次崩溃。诊断包在：${crashPackage.zipPath}`, { diagnostic: true });
+  }
+
+  window.assistantDiagnosticReady = (pkg) => {
+    if (!pkg?.zipPath) return;
+    crashPackage = pkg;
+    diagPackage = pkg;
+    const notice = el('crashNotice');
+    const text = el('crashNoticeText');
+    if (text) text.textContent = '这次崩了，诊断包放桌面了';
+    if (notice) notice.hidden = false;
+    setHomeCollapsed(false, { persist: true });
+  };
+
   function showBubble() {
     const b = el('assistantBubble');
     if (b) b.hidden = true;
@@ -597,6 +628,8 @@
     el('aiChatNew')?.addEventListener('click', newSession);
     el('homeDiagBtn')?.addEventListener('click', openDiagnosticPreview);
     el('crashNoticeDismiss')?.addEventListener('click', () => { el('crashNotice').hidden = true; });
+    el('crashOpenDiag')?.addEventListener('click', openCrashDiagnostic);
+    el('crashAnalyze')?.addEventListener('click', analyzeCrashDiagnostic);
     el('diagPackBtn')?.addEventListener('click', createDiagnosticPackageNow);
     el('diagOpenBtn')?.addEventListener('click', openDiagnosticFolder);
     el('diagCopyPath')?.addEventListener('click', copyDiagnosticPath);
