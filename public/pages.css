@@ -1305,7 +1305,21 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 }
 .home-assistant-bar .home-assistant-head { display: contents; }
 .home-assistant-bar .home-assistant-actions { display: contents; }
-.home-assistant-bar .home-assistant-title { order: 1; flex: 0 0 auto; min-width: 0; }
+.home-assistant-bar .home-assistant-title { order: 1; flex: 0 0 auto; min-width: 0; }.home-assistant:not(.is-collapsed) .home-assistant-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+  grid-template-rows: auto 28px;
+  grid-template-areas:
+    "title title title title toggle"
+    "chat chat analyze diag more";
+  align-items: center;
+}
+.home-assistant:not(.is-collapsed) .home-assistant-bar .home-assistant-title { grid-area: title; }
+.home-assistant:not(.is-collapsed) .home-assistant-bar .assistant-chat-line { grid-area: chat; }
+.home-assistant:not(.is-collapsed) #aiAnalyze { grid-area: analyze; }
+.home-assistant:not(.is-collapsed) #homeDiagBtn { grid-area: diag; }
+.home-assistant:not(.is-collapsed) #homeAssistantMore { grid-area: more; }
+.home-assistant:not(.is-collapsed) #homeAssistantToggle { grid-area: toggle; }
 .home-assistant-bar .assistant-chat-line { order: 2; flex: 1 1 0; min-width: 0; }
 .home-assistant-bar #aiAnalyze { order: 3; }
 .home-assistant-bar #homeDiagBtn { order: 4; }
@@ -1330,6 +1344,28 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .home-assistant .assistant-chat-line .input { min-width: 0; padding: 6px 8px; font-size: 11px; }
 .home-assistant .assistant-chat-line .btn { padding: 5px 8px; font-size: 10px; }
 .home-assistant-hint { font-size: 10px; margin: 0; }
+.home-assistant-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 7px;
+}
+.home-assistant-header[hidden] { display: none; }
+.home-assistant-header #homeAssistantToggle { padding: 3px 5px; font-size: 10px; }
+.home-assistant-header .home-assistant-title {
+  flex-direction: row;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.home-assistant.is-collapsed .home-assistant-header { display: none; }
+.home-assistant:not(.is-collapsed) .home-assistant-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
 .home-assistant.is-collapsed {
   width: auto;
   max-width: none;

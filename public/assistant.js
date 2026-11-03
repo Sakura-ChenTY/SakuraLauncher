@@ -439,6 +439,91 @@
     });
   }
 
+  let assistantReflowTimer = 0;
+  function barReflowItems(home) {
+    return [
+      home.querySelector('.home-assistant-title'),
+      home.querySelector('.assistant-chat-line'),
+      el('aiAnalyze'),
+      el('homeDiagBtn'),
+      el('homeAssistantMore'),
+      el('homeAssistantToggle'),
+    ].filter(Boolean);
+  }
+  function captureBarReflow(home) {
+    const input = el('aiChatInput');
+    return {
+      rects: new Map(barReflowItems(home).map((node) => [node, node.getBoundingClientRect()])),
+      inputWidth: input ? input.getBoundingClientRect().width : 0,
+    };
+  }
+  function animateBarReflow(home, first) {
+    const input = el('aiChatInput');
+    const items = barReflowItems(home);
+    const transforms = [];
+    for (const node of items) {
+      const a = first.rects.get(node);
+      const b = node.getBoundingClientRect();
+      if (!a) continue;
+      const dx = a.left - b.left;
+      const dy = a.top - b.top;
+      if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+        node.style.transition = 'none';
+        node.style.transform = `translate(${dx}px, ${dy}px)`;
+        transforms.push(node);
+      }
+    }
+    const finalInputWidth = input ? input.getBoundingClientRect().width : 0;
+    const widthChanged = input && Math.abs(first.inputWidth - finalInputWidth) > 0.5;
+    if (widthChanged) {
+      input.style.transition = 'none';
+      input.style.width = `${first.inputWidth}px`;
+      input.style.flex = '0 0 auto';
+    }
+    // 强制一帧布局后把这些反向位移过渡回最终位置
+    void home.offsetWidth;
+    requestAnimationFrame(() => {
+      for (const node of transforms) {
+        node.style.transition = 'transform 240ms cubic-bezier(.2,.8,.2,1)';
+        node.style.transform = 'translate(0, 0)';
+      }
+      if (widthChanged) {
+        input.style.transition = 'width 240ms cubic-bezier(.2,.8,.2,1)';
+        input.style.width = `${finalInputWidth}px`;
+      }
+    });
+    if (assistantReflowTimer) clearTimeout(assistantReflowTimer);
+    assistantReflowTimer = setTimeout(() => {
+      assistantReflowTimer = 0;
+      for (const node of transforms) {
+        node.style.transition = '';
+        node.style.transform = '';
+      }
+      if (input) {
+        input.style.transition = '';
+        input.style.width = '';
+        input.style.flex = '';
+      }
+    }, 280);
+  }
+
+  function moveHomeNodes(home, collapsed) {
+    const header = el('homeAssistantHeader');
+    const title = home.querySelector('.home-assistant-title');
+    const toggle = el('homeAssistantToggle');
+    const head = home.querySelector('.home-assistant-head');
+    const actions = home.querySelector('.home-assistant-actions');
+    if (!header || !title || !toggle || !head || !actions) return;
+    if (!collapsed) {
+      header.hidden = false;
+      header.appendChild(title);
+      header.appendChild(toggle);
+    } else {
+      header.hidden = true;
+      head.prepend(title);
+      actions.appendChild(toggle);
+    }
+  }
   function setHomeCollapsed(collapsed, { persist = false } = {}) {
     const home = el('homeAssistant');
     const btn = el('homeAssistantToggle');
@@ -446,6 +531,7 @@
     if (!home) return;
     const wasCollapsed = home.classList.contains('is-collapsed');
     const changed = wasCollapsed !== Boolean(collapsed);
+    const firstLayout = changed ? captureBarReflow(home) : null;
     if (changed) {
       if (assistantExpandTimer) clearTimeout(assistantExpandTimer);
       home.classList.add('is-animating');
@@ -459,6 +545,7 @@
         }
       }, collapsed ? 360 : 260);
     }
+    moveHomeNodes(home, collapsed);
     home.classList.toggle('is-collapsed', Boolean(collapsed));
     if (btn) {
       btn.textContent = collapsed ? '展开' : '收起';
@@ -470,6 +557,7 @@
     if (diag) diag.textContent = '诊断';
     if (more) more.hidden = false;
     if (!collapsed && el('homeAssistantMoreMenu')) el('homeAssistantMoreMenu').hidden = true;
+    if (firstLayout) animateBarReflow(home, firstLayout);
     if (persist) localStorage.setItem('sakura.homeAssistantCollapsed', collapsed ? '1' : '0');
     scheduleAssistantBarHeight();
   }
