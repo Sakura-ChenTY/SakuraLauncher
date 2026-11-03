@@ -766,8 +766,9 @@ body.theme-light .content-panel {
 
 body.has-custom-bg .wallpaper {
   background-image: var(--custom-bg) !important;
-  background-size: cover;
-  background-position: center;
+  background-size: var(--custom-bg-size, cover);
+  background-repeat: var(--custom-bg-repeat, no-repeat);
+  background-position: var(--custom-bg-position, center);
   filter: none;
 }
 

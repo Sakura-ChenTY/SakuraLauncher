@@ -971,7 +971,20 @@
                   <button class="btn ghost" id="bgClear">恢复默认</button>
                   <input id="bgFile" type="file" accept="image/*" hidden>
                 </div>
-                <div class="field-note">图片只存在本机浏览器里，不会上传。太大的图会拖慢启动</div>
+                <div class="field-note">图片路径和主题都只保存在本机，不会上传；太大的图会拖慢启动</div>
+              </div>
+
+              <div class="field">
+                <label for="bgFit">填充方式</label>
+                <div class="field-line">
+                  <select id="bgFit" class="select">
+                    <option value="cover">铺满裁切</option>
+                    <option value="contain">完整显示</option>
+                    <option value="tile">平铺</option>
+                    <option value="center">居中</option>
+                    <option value="stretch">拉伸铺满</option>
+                  </select>
+                </div>
               </div>
 
               <div class="field">

@@ -1558,6 +1558,8 @@ const ACCENT_KEY = 'sakura.accent';
 const BG_COLOR_KEY = 'sakura.bgColor';
 const TEXT_COLOR_KEY = 'sakura.textColor';
 const BG_KEY = 'sakura.bg';
+const BG_PATH_KEY = 'sakura.bgPath';
+const BG_FIT_KEY = 'sakura.bgFit';
 
 function rgbOf(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex);
@@ -1883,6 +1885,8 @@ document.getElementById('bgFile').addEventListener('change', (e) => {
   reader.onload = () => {
     try {
       localStorage.setItem(BG_KEY, reader.result);
+      if (file.path) localStorage.setItem(BG_PATH_KEY, file.path);
+      else localStorage.removeItem(BG_PATH_KEY);
       applyBg();
     } catch {
       alert('保存失败，可能浏览器存储空间不够');
@@ -1891,21 +1895,48 @@ document.getElementById('bgFile').addEventListener('change', (e) => {
   reader.readAsDataURL(file);
 });
 
+document.getElementById('bgFit')?.addEventListener('change', (e) => {
+  localStorage.setItem(BG_FIT_KEY, e.target.value);
+  applyBg();
+});
+
 document.getElementById('bgClear').addEventListener('click', () => {
   localStorage.removeItem(BG_KEY);
+  localStorage.removeItem(BG_PATH_KEY);
+  localStorage.removeItem(BG_FIT_KEY);
   applyBg();
 });
 
 function applyBg() {
   const bg = localStorage.getItem(BG_KEY);
+  const fit = localStorage.getItem(BG_FIT_KEY) || 'cover';
   const preview = document.getElementById('bgPreview');
+  const fitSelect = document.getElementById('bgFit');
+  if (fitSelect) fitSelect.value = fit;
   if (bg) {
     document.body.classList.add('has-custom-bg');
     document.documentElement.style.setProperty('--custom-bg', `url("${bg}")`);
-    if (preview) preview.textContent = '当前使用：自定义图片';
+    const fitMap = {
+      cover: ['cover', 'no-repeat', 'center'],
+      contain: ['contain', 'no-repeat', 'center'],
+      tile: ['auto', 'repeat', 'left top'],
+      center: ['auto', 'no-repeat', 'center'],
+      stretch: ['100% 100%', 'no-repeat', 'center'],
+    };
+    const [size, repeat, position] = fitMap[fit] || fitMap.cover;
+    document.documentElement.style.setProperty('--custom-bg-size', size);
+    document.documentElement.style.setProperty('--custom-bg-repeat', repeat);
+    document.documentElement.style.setProperty('--custom-bg-position', position);
+    if (preview) {
+      const mode = { cover: '铺满裁切', contain: '完整显示', tile: '平铺', center: '居中', stretch: '拉伸铺满' }[fit] || '铺满裁切';
+      preview.textContent = `当前使用：本地图片 · ${mode}`;
+    }
   } else {
     document.body.classList.remove('has-custom-bg');
     document.documentElement.style.removeProperty('--custom-bg');
+    document.documentElement.style.removeProperty('--custom-bg-size');
+    document.documentElement.style.removeProperty('--custom-bg-repeat');
+    document.documentElement.style.removeProperty('--custom-bg-position');
     if (preview) preview.textContent = '当前使用：跟随系统壁纸';
   }
 }
