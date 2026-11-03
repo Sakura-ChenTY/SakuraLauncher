@@ -1273,12 +1273,19 @@ async function doLaunch(versionId, joinAddress, opts = {}) {
       }),
     });
     setStatus('running', `运行 ${versionId}`);
+    const retry = $('launchRetryBtn');
+    if (retry) retry.hidden = true;
+    showProgress(false);
     appendLog(`>>> 启动 ${versionId}，PID ${r.pid}`);
     syncLogs();
     if (typeof loadRecentPlay === 'function') loadRecentPlay();
   } catch (e) {
     setStatus('error', '启动失败');
     appendLog(`启动失败：${e.message}`);
+    showProgress(false);
+    state.launchRetryVersion = versionId;
+    const retry = $('launchRetryBtn');
+    if (retry) retry.hidden = false;
     alert('启动失败：' + e.message);
   }
 }
@@ -1992,6 +1999,16 @@ function connectEvents() {
         setTimeout(() => showProgress(false), 1800);
         break;
 
+      case 'launch-java-stage':
+        setStatus('busy', msg.message || '准备 Java 运行时…');
+        appendLog(`[java] ${msg.message || ''}`);
+        showProgress(true);
+        updateProgress({ stage: 'java', message: msg.message || '准备 Java 运行时…' });
+        break;
+
+      case 'launch-java-progress':
+        updateProgress({ ...msg, stage: 'java' });
+        break;
       /* ---- 内容 ---- */
       case 'content-start':
         state.installing = { versionId: msg.versionId };
@@ -3919,6 +3936,13 @@ function switchTab(name) {
 
 $('launchBtn').addEventListener('click', () => {
   if (state.selectedVersion) doLaunch(state.selectedVersion);
+});
+
+$('launchRetryBtn')?.addEventListener('click', () => {
+  const v = state.launchRetryVersion || state.selectedVersion;
+  if (!v) return;
+  $('launchRetryBtn').hidden = true;
+  doLaunch(v);
 });
 
 $('manageContent').addEventListener('click', () => {

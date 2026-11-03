@@ -944,6 +944,13 @@ async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta 
     extraGame,
     java: override.javaPath || undefined,
     memory: Object.keys(memory).length ? memory : undefined,
+    onJavaStage: ({ message }) => {
+      pushLog(`[java] ${message}`);
+      emit('launch-java-stage', { message });
+    },
+    onJavaProgress: (progress) => {
+      emit('launch-java-progress', progress || {});
+    },
   });
 
   state.lastLaunch = {
