@@ -1266,10 +1266,12 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 #panel-home { position: relative; }
 .home-assistant {
   position: absolute;
-  right: 20px;
+  left: 12px;
+  right: 12px;
   bottom: 18px;
   z-index: 18;
-  width: min(360px, 34vw);
+  width: auto;
+  max-width: none;
   max-height: 280px;
   padding: 11px 12px;
   border: 1px solid var(--line);
@@ -1280,6 +1282,7 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
   flex-direction: column;
   gap: 7px;
   backdrop-filter: blur(10px);
+  transition: max-height 150ms ease, opacity 150ms ease, padding 150ms ease;
 }
 .home-assistant-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .home-assistant-title { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
@@ -1302,7 +1305,7 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .home-assistant.is-collapsed {
   width: auto;
   max-width: none;
-  max-height: none;
+  max-height: 56px;
   left: 12px;
   right: 12px;
   box-sizing: border-box;
@@ -1393,7 +1396,7 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 }
 .assistant-toast:empty { display: none; }
 @media (max-width: 900px) {
-  .home-assistant { width: min(330px, 42vw); right: 12px; bottom: 12px; max-height: 250px; }
+  .home-assistant { left: 12px; right: 12px; width: auto; bottom: 12px; max-height: 250px; }
   .home-assistant-log { max-height: 112px; }
 }
 @media (max-width: 720px) {
