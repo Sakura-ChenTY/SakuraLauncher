@@ -85,10 +85,20 @@ function hasInstanceContext(text) {
 }
 
 function maxMemoryIn(text) {
+  const source = String(text || '');
+  // 实例覆盖是当前真值；日志里的旧 -Xmx 可能来自上一次启动，不能拿它当现状。
+  const override = /实例覆盖[^\n]*?memoryMax"?\s*:\s*"?(\d+)M/i.exec(source);
+  if (override) return Number(override[1]);
+  const configured = /memoryMax"?\s*[:=]\s*"?(\d+)M/i.exec(source);
+  if (configured) return Number(configured[1]);
   const found = [];
-  for (const m of String(text || '').matchAll(/-Xmx(\d+)m/gi)) found.push(Number(m[1]));
-  for (const m of String(text || '').matchAll(/memoryMax"?\s*[:=]\s*"?(\d+)M/gi)) found.push(Number(m[1]));
+  for (const m of source.matchAll(/-Xmx(\d+)m/gi)) found.push(Number(m[1]));
   return found.length ? Math.max(...found) : 0;
+}
+
+function availableMemoryIn(text) {
+  const m = /可用\s*(\d+)M/i.exec(String(text || ''));
+  return m ? Number(m[1]) : 0;
 }
 
 function localChatReply(message) {
@@ -113,7 +123,11 @@ function localDiagnosticReply(session, message, actions) {
     return '原因：这次没有读到明确的实例日志，也没看到具体报错。\n依据：没有可用的实例配置、crash-report 或 hs_err 记录。\n建议：把完整启动日志发我，或者先去「版本」页重新检查一次实例文件。';
   }
   if (/OutOfMemoryError|insufficient memory|Native memory allocation|malloc failed|页面文件|内存不足/i.test(cmd) || mem >= 3072) {
-    return `原因：内存不足。\n依据：实例最大内存是 ${mem || '较大'}M，日志里有内存分配失败。\n建议：先把最大内存降到 1024M，再启动一次。`;
+    const free = availableMemoryIn(cmd);
+    if (mem && mem <= 1024) {
+      return `原因：内存不足。\n依据：当前实例已经设置为 ${mem}M，日志里仍有内存分配失败；系统当时可用约 ${free || '很少'}M。\n建议：先关掉浏览器/别的游戏，确认 Windows 页面文件没有关闭；还不行再把最大内存降到 768M 试一次。`;
+    }
+    return `原因：内存不足。\n依据：当前实例最大内存是 ${mem || '较大'}M，系统当时可用约 ${free || '很少'}M，日志里有内存分配失败。\n建议：先把最大内存从 ${mem || '较大'}M 降到 1024M，并关掉占内存的程序。`;
   }
   if (/UnsupportedClassVersionError|class file version|Java 版本/i.test(cmd)) {
     return '原因：Java 版本对不上。\n依据：日志里出现 class file version / UnsupportedClassVersionError。\n建议：先换到实例要求的 Java，再启动。';
@@ -150,10 +164,12 @@ function buildActions(session) {
     'memory.set', 'java.open', 'java.set', 'redownload.version', 'redownload.resources',
     'open.instance', 'mod.disable', 'serverpack.redownload',
   ]);
+  const currentMemory = maxMemoryIn(context);
   const actions = actionsFor(Array.isArray(session.classified) ? session.classified : [], { versionId: session.versionId })
-    .filter((a) => allowed.has(a.id));
+    .filter((a) => allowed.has(a.id))
+    .filter((a) => a.id !== 'memory.set' || Number(String(a.payload?.memoryMax || '').replace(/[^0-9]/g, '')) > currentMemory);
   const has = (id) => actions.some((a) => a.id === id);
-  if (!has('memory.set') && maxMemoryIn(context) > 2048) {
+  if (!has('memory.set') && currentMemory > 2048) {
     actions.unshift({
       id: 'memory.set',
       label: '把实例内存降到 1024M',
@@ -209,6 +225,8 @@ export async function chatSession({ id, message, mode }) {
     const system = diagnostic
       ? `你是《龙族》里的上杉绘梨衣，正在帮 Sakura 排查 Minecraft 启动问题。说话安静、短，不卖萌。
 输出必须包含三段：原因：... / 依据：...（引用一到两条日志里的具体内容）/ 建议：...（一到两步）。
+当前实例最大内存：${maxMemoryIn(context) || '未知'}M；系统可用：${availableMemoryIn(context) || '未知'}M。
+不要建议把内存改成和当前相同的值。若当前已经 ≤1024M 且日志仍报内存不足，优先建议关掉别的程序、检查 Windows 页面文件，再考虑降到 768M。
 只输出人话，不输出 JSON 和堆栈。不要编造日志里没有的证据。`
       : `你是《龙族》里的上杉绘梨衣，正在和 Sakura 普通聊天。说话短、轻、安静，不卖萌。
 不要主动分析日志，不要使用「原因 / 依据 / 建议」这类排查标题，不要列一堆步骤。
