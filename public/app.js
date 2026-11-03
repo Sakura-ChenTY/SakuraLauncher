@@ -48,6 +48,7 @@ function api(path, opts) {
       const err = new Error(data.error || `HTTP ${r.status}`);
       err.code = data.code || '';
       err.missing = data.missing || [];
+      err.preflight = data.preflight || null;
       throw err;
     }
     return data;
@@ -1577,6 +1578,7 @@ async function doLaunch(versionId, joinAddress, opts = {}) {
     if (e.code === 'PREFLIGHT_MISSING') {
       state.preflightMissing = e.missing || [];
       state.preflightMessage = e.message || '';
+      state.preflightStructured = e.preflight || null;
       showPreflightError(e.missing, e.message);
       return;
     }
@@ -4272,9 +4274,10 @@ $('preflightAssistant')?.addEventListener('click', () => {
   const v = state.launchRetryVersion || state.selectedVersion || '';
   const missing = state.preflightMissing || [];
   const message = state.preflightMessage || '';
+  const preflight = state.preflightStructured || null;
   $('preflightModal').hidden = true;
   document.querySelector('.nav-item[data-tab="home"]')?.click();
-  setTimeout(() => window.assistantExplainPreflight?.({ versionId: v, missing, message }), 80);
+  setTimeout(() => window.assistantExplainPreflight?.({ versionId: v, missing, message, preflight }), 80);
 });
 $('preflightRetry')?.addEventListener('click', () => {
   const v = state.launchRetryVersion || state.selectedVersion;

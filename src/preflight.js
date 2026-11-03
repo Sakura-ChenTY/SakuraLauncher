@@ -103,6 +103,41 @@ export function inspectVersion({ gameDir, versionId }) {
   };
 }
 
+function failureInfo(info, repairError) {
+  const missing = info.missing || [];
+  const labels = missing.map((x) => x.label).join('、');
+  const step = missing.some((x) => ['forge-client', 'neoforge-client'].includes(x.kind))
+    ? 'Forge/NeoForge 客户端文件补齐'
+    : '客户端、库或资源文件检查';
+  const problem = `启动前检查失败（${step}），缺 ${missing.length} 个文件：${labels}`;
+  const raw = `${repairError?.message || ''}\n${repairError?.detail || ''}`;
+  let reason = '没查明原因';
+  if (/ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|fetch failed|network|网络|连接超时|connect/i.test(raw)) {
+    reason = '下载时网络连接失败，可能是断网或下载源不可达';
+  } else if (/\b(401|403)\b|unauthorized|forbidden|需要正版|授权|拒绝访问/i.test(raw)) {
+    reason = '下载源拒绝访问，可能需要正版登录或当前下载源返回 403';
+  } else if (/EBUSY|EPERM|EACCES|occupied|占用|权限不足|permission/i.test(raw)) {
+    reason = '文件被占用或没有写入权限，安装器无法覆盖';
+  } else if (/page file|errno=1455|insufficient memory|OutOfMemory|页面文件/i.test(raw)) {
+    reason = '系统内存或页面文件不足，Forge 安装器没有完成';
+  } else if (/Forge.*安装器|installer/i.test(raw)) {
+    reason = 'Forge 安装器没有成功完成，客户端文件没有被生成';
+  }
+  let advice = '先点「重试」；仍然失败就删除这个实例后重装。';
+  if (reason.startsWith('下载时网络')) advice = '连上网后点「重试」；仍然失败就换一个下载源再试。';
+  else if (reason.startsWith('下载源拒绝')) advice = '确认已登录正版账号，换一个下载源后点「重试」。';
+  else if (reason.startsWith('文件被占用')) advice = '关闭占用该文件的游戏、Java 或杀毒程序，再点「重试」。';
+  else if (reason.startsWith('系统内存')) advice = '关闭其他 Java/游戏进程，确认系统页面文件足够，再点「重试」。';
+  else if (reason.startsWith('Forge 安装器')) advice = '先点「重试」让安装器补齐；仍然失败就删除这个实例后重装 Forge。';
+  return {
+    problem,
+    step,
+    reason,
+    advice,
+    files: missing.map((x) => ({ label: x.label, path: x.path, kind: x.kind })),
+  };
+}
+
 async function fillGeneric(item, onStage) {
   if (!item.url) throw new Error(`没有下载地址：${item.label}`);
   onStage({ stage: 'preflight', status: 'repair', message: `补齐 ${item.label}` });
@@ -171,6 +206,7 @@ export async function ensureVersionFiles({ gameDir, versionId, onStage = () => {
     const err = new Error(`这个版本缺 ${info.missing.length} 个文件，补不上：\n${list.join('\n')}`);
     err.code = 'PREFLIGHT_MISSING';
     err.missing = info.missing.map((x) => ({ label: x.label, path: x.path, kind: x.kind }));
+    err.preflight = failureInfo(info, repairError);
     if (repairError?.message) err.detail = repairError.message;
     throw err;
   }

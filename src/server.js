@@ -1477,6 +1477,7 @@ const server = http.createServer(async (req, res) => {
           error: e.message,
           code: e.code || undefined,
           missing: e.missing || undefined,
+          preflight: e.preflight || undefined,
         });
       }
     }

@@ -380,22 +380,29 @@
     await sendChat('分析最近一次启动失败，为什么进不去游戏？', { diagnostic: true });
   }
 
-  window.assistantExplainPreflight = async ({ versionId, missing = [], message = '' } = {}) => {
-    const detail = (missing || []).slice(0, 80).map((x) => {
+  window.assistantExplainPreflight = async ({ versionId, missing = [], message = '', preflight = null } = {}) => {
+    const p = preflight || {};
+    const files = (p.files || missing || []).slice(0, 80).map((x) => {
       const label = x.label || x.kind || '文件';
       return x.path ? `- ${label}：${x.path}` : `- ${label}`;
     }).join('\n');
+    const problem = p.problem || `启动前检查缺 ${missing.length} 个文件：${missing.map((x) => x.label || x.kind || '文件').join('、')}`;
+    const reason = p.reason || '没查明原因';
+    const advice = p.advice || '先点「重试」；仍然失败就删除这个实例后重装。';
     const text = [
-      '启动前文件检查没有通过。',
+      '【问题】',
       `版本：${versionId || '当前实例'}`,
-      detail ? `缺失文件：\n${detail}` : '',
-      message ? `后端信息：${message}` : '',
-      '请解释这些文件为什么会影响启动，并给出最小、可执行的处理建议。',
-    ].filter(Boolean).join('\n\n');
+      problem,
+      files,
+      '【为什么补不上】',
+      reason,
+      '【建议】',
+      advice,
+      '请严格按【问题】【为什么补不上】【建议】三段回答，每段不超过两句话，不要写空话或额外段落。',
+    ].filter(Boolean).join('\n');
     setHomeCollapsed(false, { persist: true });
     return sendChat(text, { diagnostic: true });
   };
-
   async function onCrash(incident) {
     if (!incident?.id) return;
     try {
