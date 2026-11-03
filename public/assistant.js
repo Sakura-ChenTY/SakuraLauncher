@@ -300,7 +300,7 @@
       chatActions[msgs.length - 1] = d.actions || [];
       renderChat(msgs, chatActions);
       if (el('aiTarget')) el('aiTarget').textContent = `会话 ${sessionId.slice(0, 8)} · ${targetVersion() || '最近失败'}`;
-      showAssistantToast(d.reply || '没有新的分析结果。');
+      setHomeCollapsed(false, { persist: true });
       if (d.package) renderDiagnosticPackage(d.package);
     } catch (e) {
       if (pending) pending.querySelector('.assistant-msg-text').textContent = '出了点问题：' + e.message;
@@ -404,10 +404,9 @@
         box.appendChild(div);
         box.scrollTop = box.scrollHeight;
       }
+      setHomeCollapsed(false, { persist: true });
       const notice = el('crashNotice');
-      if (el('crashNoticeText')) el('crashNoticeText').textContent = d.reply || '游戏异常退出了。';
-      if (notice) notice.hidden = false;
-      showAssistantToast('游戏异常退出，原因已放在对话区。', { timeout: 5500 });
+      if (notice) notice.hidden = true;
     } catch (e) {
       showAssistantToast('自动分析崩溃失败：' + e.message, { timeout: 6500 });
     }
