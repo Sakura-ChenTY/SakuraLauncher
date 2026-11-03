@@ -353,14 +353,19 @@ export async function analyzeFailure({ gameDir, versionId, lastFailure, logs }) 
   const classified = classifyLogs(ctx);
   const cfg = loadAiConfig();
   if (!cfg.baseURL || !aiHasKey()) {
-    const mem = [...ctx.matchAll(/-Xmx(\d+)m/gi)].map((m) => Number(m[1]));
-    const maxMem = mem.length ? Math.max(...mem) : 0;
+    const override = /实例覆盖[^\n]*?memoryMax"?\s*:\s*"?(\d+)M/i.exec(ctx);
+    const configured = override || /memoryMax"?\s*[:=]\s*"?(\d+)M/i.exec(ctx);
+    const oldMem = [...ctx.matchAll(/-Xmx(\d+)m/gi)].map((m) => Number(m[1]));
+    const maxMem = configured ? Number(configured[1]) : (oldMem.length ? Math.max(...oldMem) : 0);
     const hasInstance = /实例配置|实例覆盖|实际启动命令|java_command/i.test(ctx);
     let analysis = '我看到了启动材料，但这次没有模型 key，只能按本地规则看。';
     if (!hasInstance) {
       analysis = '原因：这次没有读到明确的实例日志，也没看到具体报错。\n依据：没有可用的实例配置、crash-report 或 hs_err 记录。\n建议：把完整启动日志发我，或者先去「版本」页重新检查一次实例文件。';
     } else if (/insufficient memory|Native memory allocation|OutOfMemoryError|内存不足/i.test(ctx) || maxMem >= 3072) {
-      analysis = `原因：内存不足。\n依据：实例最大内存是 ${maxMem || '较大'}M，日志里有内存分配失败。\n建议：先把最大内存降到 1024M，再启动一次。`;
+      const free = /可用\s*(\d+)M/i.exec(ctx)?.[1] || '很少';
+      analysis = maxMem && maxMem <= 1024
+        ? `原因：内存不足。\n依据：当前实例已经设置为 ${maxMem}M，日志里仍有内存分配失败；系统当时可用约 ${free}M。\n建议：先关掉浏览器/别的游戏，确认 Windows 页面文件没有关闭；还不行再把最大内存降到 768M 试一次。`
+        : `原因：内存不足。\n依据：当前实例最大内存是 ${maxMem || '较大'}M，系统当时可用约 ${free}M，日志里有内存分配失败。\n建议：先把最大内存从 ${maxMem || '较大'}M 降到 1024M，并关掉占内存的程序。`;
     } else if (/UnsupportedClassVersionError|class file version/i.test(ctx)) {
       analysis = '原因：Java 版本对不上。\n依据：日志里出现 class file version / UnsupportedClassVersionError。\n建议：先换到实例要求的 Java，再启动。';
     } else if (classified.length) {
@@ -372,7 +377,8 @@ export async function analyzeFailure({ gameDir, versionId, lastFailure, logs }) 
     const actions = actionsFor(classified, { versionId, systemMemory: {
       total: Math.round(os.totalmem() / 1024 / 1024),
       free: Math.round(os.freemem() / 1024 / 1024),
-    } }).filter((a) => allowed.has(a.id));
+    } }).filter((a) => allowed.has(a.id))
+      .filter((a) => a.id !== 'memory.set' || Number(String(a.payload?.memoryMax || '').replace(/[^0-9]/g, '')) > maxMem);
     if (!hasInstance) return { analysis, classified, actions: [] };
     if (maxMem >= 3072 && !actions.some((a) => a.id === 'memory.set')) {
       actions.unshift({ id: 'memory.set', label: '把实例内存降到 1024M', payload: { versionId, memoryMin: '512M', memoryMax: '1024M' } });
