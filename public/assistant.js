@@ -420,6 +420,25 @@
   window.assistantOnFailure = showBubble;
   window.assistantCrash = onCrash;
 
+  let assistantBarFrame = 0;
+  function syncAssistantBarHeight() {
+    const panel = el('panel-home');
+    const home = el('homeAssistant');
+    if (!panel || !home) return;
+    const collapsed = home.classList.contains('is-collapsed');
+    panel.classList.toggle('has-collapsed-assistant', collapsed);
+    if (!collapsed) return;
+    const height = Math.ceil(home.getBoundingClientRect().height || 0);
+    if (height > 0) panel.style.setProperty('--assistant-bar-height', `${height}px`);
+  }
+  function scheduleAssistantBarHeight() {
+    if (assistantBarFrame) cancelAnimationFrame(assistantBarFrame);
+    assistantBarFrame = requestAnimationFrame(() => {
+      assistantBarFrame = 0;
+      syncAssistantBarHeight();
+    });
+  }
+
   function setHomeCollapsed(collapsed, { persist = false } = {}) {
     const home = el('homeAssistant');
     const btn = el('homeAssistantToggle');
@@ -437,6 +456,7 @@
     if (more) more.hidden = !collapsed;
     if (!collapsed && el('homeAssistantMoreMenu')) el('homeAssistantMoreMenu').hidden = true;
     if (persist) localStorage.setItem('sakura.homeAssistantCollapsed', collapsed ? '1' : '0');
+    scheduleAssistantBarHeight();
   }
   function init() {
     if (!el('aiBase')) return;
@@ -486,6 +506,11 @@
     });
     const savedCollapsed = localStorage.getItem('sakura.homeAssistantCollapsed');
     setHomeCollapsed(savedCollapsed === '1' || (savedCollapsed === null && window.innerWidth < 760));
+    if (window.ResizeObserver) {
+      const barForResize = el('homeAssistant');
+      if (barForResize) new ResizeObserver(scheduleAssistantBarHeight).observe(barForResize);
+    }
+    window.addEventListener('resize', scheduleAssistantBarHeight);
     el('aiChatInput')?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(el('aiChatInput').value); }
     });
