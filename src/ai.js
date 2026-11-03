@@ -198,6 +198,35 @@ function newestCrash(gameDir, versionId) {
   return best ? tailFile(best.file, 30000) : '';
 }
 
+function hasFailureArtifacts(gameDir, versionId) {
+  const dirs = [
+    versionId ? path.join(gameDir, 'versions', versionId) : '',
+    gameDir,
+  ].filter(Boolean);
+  for (const dir of dirs) {
+    try {
+      if (fs.readdirSync(dir).some((n) => /^hs_err_pid\d+\.log$/i.test(n))) return true;
+    } catch { /* ignore */ }
+    try {
+      const crashDir = path.join(dir, 'crash-reports');
+      if (fs.readdirSync(crashDir).some((n) => n.endsWith('.txt'))) return true;
+    } catch { /* ignore */ }
+  }
+  return false;
+}
+
+/** 闲聊层：只带实例/版本等基本信息，不读日志和 crash 文件。 */
+export function collectBasicContext({ gameDir, versionId, lastFailure, launchCommand }) {
+  const parts = [`系统内存：共 ${Math.round(os.totalmem() / 1024 / 1024)}M，可用 ${Math.round(os.freemem() / 1024 / 1024)}M`];
+  if (lastFailure) {
+    parts.push(`上次启动：实例=${lastFailure.versionId ?? versionId ?? '?'} 退出码=${lastFailure.code ?? '?'}`);
+  }
+  const info = instanceConfig(gameDir, versionId);
+  if (info) parts.push(`实例配置：\n${info}`);
+  const hasFailure = Boolean(lastFailure) || hasFailureArtifacts(gameDir, versionId);
+  parts.push(`失败上下文：${hasFailure ? '有' : '无'}`);
+  return redact(parts.join('\n\n')).slice(0, 12000);
+}
 export function collectContext({ gameDir, versionId, lastFailure, logs, launchCommand }) {
   const totalMb = Math.round(os.totalmem() / 1024 / 1024);
   const freeMb = Math.round(os.freemem() / 1024 / 1024);
@@ -329,15 +358,15 @@ export async function analyzeFailure({ gameDir, versionId, lastFailure, logs }) 
     const hasInstance = /实例配置|实例覆盖|实际启动命令|java_command/i.test(ctx);
     let analysis = '我看到了启动材料，但这次没有模型 key，只能按本地规则看。';
     if (!hasInstance) {
-      analysis = '这次没有读到明确的实例日志，也没看到具体报错。你可以把完整启动日志发我，或者先去「版本」页重新检查一次实例文件。';
+      analysis = '原因：这次没有读到明确的实例日志，也没看到具体报错。\n依据：没有可用的实例配置、crash-report 或 hs_err 记录。\n建议：把完整启动日志发我，或者先去「版本」页重新检查一次实例文件。';
     } else if (/insufficient memory|Native memory allocation|OutOfMemoryError|内存不足/i.test(ctx) || maxMem >= 3072) {
-      analysis = `看起来是内存不足。\n实例配置的最大内存是 ${maxMem || '较大'}M，日志里有内存分配失败。先把最大内存降到 1024M 试试。`;
+      analysis = `原因：内存不足。\n依据：实例最大内存是 ${maxMem || '较大'}M，日志里有内存分配失败。\n建议：先把最大内存降到 1024M，再启动一次。`;
     } else if (/UnsupportedClassVersionError|class file version/i.test(ctx)) {
-      analysis = '看起来是 Java 版本对不上。先换到实例要求的 Java，再试一次。';
+      analysis = '原因：Java 版本对不上。\n依据：日志里出现 class file version / UnsupportedClassVersionError。\n建议：先换到实例要求的 Java，再启动。';
     } else if (classified.length) {
-      analysis = `看到了：${classified.map((c) => c.label).join('、')}。先看最新的那行报错，再决定下一步。`;
+      analysis = `原因：${classified.map((c) => c.label).join('、')}相关报错。\n依据：日志里出现对应错误。\n建议：先看最新的那行报错，再决定下一步。`;
     } else {
-      analysis += '没有找到明确错误；可能只是没有生成日志。可以先把完整启动日志发我。';
+      analysis = '原因：暂时不能确定。\n依据：没有找到明确错误，可能只是没有生成日志。\n建议：先把完整启动日志发我。';
     }
     const allowed = new Set(['memory.set', 'java.open', 'java.set', 'redownload.version', 'redownload.resources', 'open.instance', 'mod.disable', 'serverpack.redownload']);
     const actions = actionsFor(classified, { versionId, systemMemory: {
@@ -357,9 +386,9 @@ export async function analyzeFailure({ gameDir, versionId, lastFailure, logs }) 
 只输出人话，不输出堆栈、不输出 JSON、不输出密钥。
 只根据最后一次失败和最近 100 行判断；更早的登录失败、上次启动旧日志不要拿来当本次原因。
 格式：
-出了什么问题：...
-为什么：...
-怎么解决：...
+原因：...
+依据：...（引用一到两条日志里的具体内容）
+建议：...（一到两步）
 如果无法判断，直接说不知道，不要编。`;
   const user = `规则命中（按最近错误）：${classified.map((c) => c.label).join('、') || '无'}\n系统内存：共 ${totalMb}M，可用 ${freeMb}M\n日志（已脱敏）：\n${ctx}`;
   const analysis = await callAi({
