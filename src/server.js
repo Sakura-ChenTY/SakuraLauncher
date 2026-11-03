@@ -750,7 +750,7 @@ function cancelTask(id) {
 
 const bus = new EventEmitter();
 bus.setMaxListeners(50);
-const RUNNING_RESTORE_BLOCK = '游戏还开着，先关掉再恢复';
+const RUNNING_RESTORE_BLOCK = '游戏运行中，先退出游戏';
 
 function emit(type, payload) {
   bus.emit('event', { type, at: Date.now(), ...payload });
@@ -3501,6 +3501,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/saves/backup' && req.method === 'POST') {
       const body = await readBody(req);
+      if (state.running) return json(res, 409, { error: '游戏运行中，先退出游戏' });
       try {
         const versionId = String(body.versionId || '').trim();
         if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
@@ -3533,6 +3534,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/saves/backup-all' && req.method === 'POST') {
       const body = await readBody(req);
+      if (state.running) return json(res, 409, { error: '游戏运行中，先退出游戏' });
       try {
         const versionId = String(body.versionId || '').trim();
         if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
@@ -3684,6 +3686,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/export' && req.method === 'POST') {
       const body = await readBody(req);
+      if (state.running) return json(res, 409, { error: '游戏运行中，先退出游戏' });
       if (state.exporting) return json(res, 409, { error: '正在导出，请稍候' });
       state.exporting = true;
       const taskId = startTask('export', body.taskId);

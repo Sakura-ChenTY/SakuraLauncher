@@ -124,6 +124,7 @@ function refreshStatus() {
   }
   // 主页大按钮跟着安装/运行状态变
   if (typeof updateHome === 'function') updateHome();
+  syncWriteGuards();
 }
 
 /* ---------------- 进度 ---------------- */
@@ -630,13 +631,42 @@ function syncExportFormat() {
   }
 }
 
+function syncWriteGuards() {
+  const running = Boolean(state.running);
+  const title = running ? '游戏运行中，先退出游戏' : '';
+  for (const id of ['exportStart', 'exportContentPack', 'savesPageBackupAll', 'savesBackupAll']) {
+    const btn = $(id);
+    if (!btn) continue;
+    btn.disabled = running;
+    btn.title = title;
+  }
+  document.querySelectorAll('[data-page-backup],[data-save-backup]').forEach((btn) => {
+    btn.disabled = running;
+    btn.title = title;
+  });
+  if (running) {
+    document.querySelectorAll('[data-page-restore],[data-save-restore]').forEach((btn) => {
+      btn.disabled = true;
+      btn.title = title;
+    });
+  }
+  for (const id of ['savesPageRunHint', 'savesRunHint']) {
+    const hint = $(id);
+    if (hint) hint.hidden = !running;
+  }
+}
+
 function blockIfGameRunning() {
   if (!state.running) return false;
-  toast('游戏还开着，先关掉再恢复', 'err');
+  toast('游戏运行中，先退出游戏', 'err');
   return true;
 }
 
 async function openExport(versionId) {
+  if (state.running) {
+    toast('游戏运行中，先退出游戏', 'err');
+    return;
+  }
   try {
     const p = await api('/api/export/preview', {
       method: 'POST',
@@ -690,6 +720,10 @@ async function pickExportDestination() {
 
 async function startExport() {
   if (!exportState.versionId) return;
+  if (state.running) {
+    toast('游戏运行中，先退出游戏', 'err');
+    return;
+  }
   const format = $('exportFormat')?.value === 'mrpack' ? 'mrpack' : 'sakura';
   let packVersion = String($('exportVersion')?.value || '').trim();
   if (format === 'mrpack' && !packVersion) {
@@ -930,7 +964,7 @@ function renderSaves(data) {
             <div class="save-row-name">${escapeHtml(s.name)}</div>
             <div class="save-row-meta">${fmtSize(s.size)} · ${new Date(s.modifiedAt).toLocaleString()}</div>
           </div>
-          <button class="btn ghost" data-save-backup="${escapeHtml(s.name)}">备份</button>
+          <button class="btn ghost" data-save-backup="${escapeHtml(s.name)}" ${state.running ? 'disabled title="游戏运行中，先退出游戏"' : ''}>备份</button>
         </div>`).join('');
       list.querySelectorAll('[data-save-backup]').forEach((btn) => {
         btn.addEventListener('click', () => backupSave(btn.dataset.saveBackup));
@@ -948,13 +982,14 @@ function renderSaves(data) {
             <div class="save-row-name">${escapeHtml(b.world)}</div>
             <div class="save-row-meta">${new Date(b.createdAt).toLocaleString()} · ${fmtSize(b.size)} · ${b.source === 'beforeLaunch' ? '进游戏前' : (b.source === 'afterExit' ? '退出后' : '手动')}${b.whileRunning ? ' · 运行中备份' : ''}</div>
           </div>
-          <button class="btn ghost" data-save-restore="${escapeHtml(b.file)}" ${state.running ? 'disabled title="游戏还开着，先关掉再恢复"' : ''}>恢复</button>
+          <button class="btn ghost" data-save-restore="${escapeHtml(b.file)}" ${state.running ? 'disabled title="游戏运行中，先退出游戏"' : ''}>恢复</button>
         </div>`).join('');
       backups.querySelectorAll('[data-save-restore]').forEach((btn) => {
         btn.addEventListener('click', () => restoreSave(btn.dataset.saveRestore));
       });
     }
   }
+  syncWriteGuards();
 }
 
 async function reloadSaves() {
@@ -978,6 +1013,7 @@ async function openSaves(versionId) {
 }
 
 async function backupSave(world) {
+  if (blockIfGameRunning()) return;
   if (!savesState.versionId) return;
   const progress = $('savesProgress');
   if (progress) progress.textContent = `正在备份 ${world}…`;
@@ -1005,6 +1041,7 @@ async function backupSave(world) {
 }
 
 async function backupAllSaves() {
+  if (blockIfGameRunning()) return;
   if (!savesState.versionId) return;
   const progress = $('savesProgress');
   if ($('savesBackupAll')) $('savesBackupAll').disabled = true;
@@ -1169,7 +1206,7 @@ function renderSavesPage(data) {
       }).join('')
       : '<option value="">没有可用备份</option>';
     const disabled = state.running || !own.length;
-    const title = state.running ? '游戏还开着，先关掉再恢复' : (!own.length ? '没有可用备份' : '');
+    const title = state.running ? '游戏运行中，先退出游戏' : (!own.length ? '没有可用备份' : '');
     return `<div class="save-row saves-page-row${savesPageState.selectedWorld === s.name ? ' selected' : ''}" data-page-world="${escapeHtml(s.name)}">
       <div class="save-row-main">
         <div class="save-row-name">${escapeHtml(s.name)}</div>
@@ -1177,7 +1214,7 @@ function renderSavesPage(data) {
       </div>
       <div class="saves-page-actions">
         <select class="select" data-page-backup-pick="${escapeHtml(s.name)}" ${own.length ? '' : 'disabled'}>${options}</select>
-        <button class="btn ghost" type="button" data-page-backup="${escapeHtml(s.name)}">备份</button>
+        <button class="btn ghost" type="button" data-page-backup="${escapeHtml(s.name)}" ${state.running ? 'disabled title="游戏运行中，先退出游戏"' : ''}>备份</button>
         <button class="btn ghost" type="button" data-page-restore="${escapeHtml(s.name)}" ${disabled ? 'disabled' : ''} title="${title}">恢复</button>
         <button class="btn ghost" type="button" data-page-open="${escapeHtml(s.name)}">打开所在目录</button>
       </div>
@@ -1204,6 +1241,7 @@ function renderSavesPage(data) {
     });
   });
   renderContentBackups(contentBackups);
+  syncWriteGuards();
 }
 
 async function loadSavesPage() {
@@ -1228,6 +1266,7 @@ async function loadSavesPage() {
 }
 
 async function backupSavePage(world) {
+  if (blockIfGameRunning()) return;
   if (!savesPageState.versionId) return;
   const progress = $('savesPageProgress');
   if (progress) progress.textContent = `正在备份 ${world}…`;
@@ -1254,6 +1293,7 @@ async function backupSavePage(world) {
 }
 
 async function backupAllSavesPage() {
+  if (blockIfGameRunning()) return;
   if (!savesPageState.versionId) return;
   const btn = $('savesPageBackupAll');
   const progress = $('savesPageProgress');
@@ -1285,7 +1325,7 @@ async function backupAllSavesPage() {
 async function restoreSavePage(file) {
   if (!savesPageState.versionId) return;
   if (state.running) {
-    toast('游戏还开着，先关掉再恢复', 'err');
+    toast('游戏运行中，先退出游戏', 'err');
     return;
   }
   if (!file) {
