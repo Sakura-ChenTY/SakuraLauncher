@@ -281,6 +281,7 @@ export function classifyLogs(text) {
 }
 
 export function actionsFor(classified, { versionId, systemMemory } = {}) {
+  classified = Array.isArray(classified) ? classified : [];
   const actions = [];
   if (classified.some((c) => c.id === 'memory')) {
     const totalMb = systemMemory?.total ?? Math.round(os.totalmem() / 1024 / 1024);
@@ -317,11 +318,37 @@ export async function testAi({ baseURL, apiKey, model }) {
 }
 
 export async function analyzeFailure({ gameDir, versionId, lastFailure, logs }) {
-  const ctx = collectContext({ gameDir, versionId, lastFailure, logs });
+  let ctx = '';
+  try { ctx = collectContext({ gameDir, versionId, lastFailure, logs }); }
+  catch (e) { ctx = `上下文收集失败：${e.message}`; }
   const classified = classifyLogs(ctx);
   const cfg = loadAiConfig();
   if (!cfg.baseURL || !aiHasKey()) {
-    throw new Error('还没有配置 AI：先填 baseURL 和 API 密钥');
+    const mem = [...ctx.matchAll(/-Xmx(\d+)m/gi)].map((m) => Number(m[1]));
+    const maxMem = mem.length ? Math.max(...mem) : 0;
+    const hasInstance = /实例配置|实例覆盖|实际启动命令|java_command/i.test(ctx);
+    let analysis = '我看到了启动材料，但这次没有模型 key，只能按本地规则看。';
+    if (!hasInstance) {
+      analysis = '这次没有读到明确的实例日志，也没看到具体报错。你可以把完整启动日志发我，或者先去「版本」页重新检查一次实例文件。';
+    } else if (/insufficient memory|Native memory allocation|OutOfMemoryError|内存不足/i.test(ctx) || maxMem >= 3072) {
+      analysis = `看起来是内存不足。\n实例配置的最大内存是 ${maxMem || '较大'}M，日志里有内存分配失败。先把最大内存降到 1024M 试试。`;
+    } else if (/UnsupportedClassVersionError|class file version/i.test(ctx)) {
+      analysis = '看起来是 Java 版本对不上。先换到实例要求的 Java，再试一次。';
+    } else if (classified.length) {
+      analysis = `看到了：${classified.map((c) => c.label).join('、')}。先看最新的那行报错，再决定下一步。`;
+    } else {
+      analysis += '没有找到明确错误；可能只是没有生成日志。可以先把完整启动日志发我。';
+    }
+    const allowed = new Set(['memory.set', 'java.open', 'java.set', 'redownload.version', 'redownload.resources', 'open.instance', 'mod.disable', 'serverpack.redownload']);
+    const actions = actionsFor(classified, { versionId, systemMemory: {
+      total: Math.round(os.totalmem() / 1024 / 1024),
+      free: Math.round(os.freemem() / 1024 / 1024),
+    } }).filter((a) => allowed.has(a.id));
+    if (!hasInstance) return { analysis, classified, actions: [] };
+    if (maxMem >= 3072 && !actions.some((a) => a.id === 'memory.set')) {
+      actions.unshift({ id: 'memory.set', label: '把实例内存降到 1024M', payload: { versionId, memoryMin: '512M', memoryMax: '1024M' } });
+    }
+    return { analysis, classified, actions };
   }
   const totalMb = Math.round(os.totalmem() / 1024 / 1024);
   const freeMb = Math.round(os.freemem() / 1024 / 1024);

@@ -49,7 +49,9 @@ function publicSession(s) {
 }
 
 export function createSession({ gameDir, versionId, lastFailure, logs, launchCommand }) {
-  const context = collectContext({ gameDir, versionId, lastFailure, logs, launchCommand });
+  let context = '';
+  try { context = collectContext({ gameDir, versionId, lastFailure, logs, launchCommand }); }
+  catch (e) { context = `上下文收集失败：${e.message}`; }
   const session = {
     id: crypto.randomUUID(),
     versionId: versionId || '',
@@ -77,7 +79,11 @@ function localReply(session, message, actions) {
   for (const m of cmd.matchAll(/-Xmx(\d+)m/gi)) memMatches.push(Number(m[1]));
   for (const m of cmd.matchAll(/memoryMax"?\s*[:=]\s*"?(\d+)M/gi)) memMatches.push(Number(m[1]));
   const mem = memMatches.length ? String(Math.max(...memMatches)) : '';
-  const memoryIssue = /OutOfMemoryError|insufficient memory|Native memory allocation|malloc failed|页面文件|内存不足/i.test(cmd);
+  const hasInstance = /实例配置|实例覆盖|实际启动命令|java_command/i.test(cmd);
+  if (!hasInstance) {
+    return '这次没有读到明确的实例日志，也没看到具体报错。你可以把完整启动日志发我，或者先去「版本」页重新检查一次实例文件。';
+  }
+  const memoryIssue = hasInstance && /OutOfMemoryError|insufficient memory|Native memory allocation|malloc failed|页面文件|内存不足/i.test(cmd);
   const second = /第二条|第二个|第二个按钮/i.test(String(message));
   if (second && actions[1]) {
     return `第二条是「${actions[1].label}」。它对应上面的问题，点之前会先确认。`;
@@ -91,15 +97,16 @@ function localReply(session, message, actions) {
   if (/NoClassDefFoundError|missing depend|Mod|Mixin/i.test(cmd)) {
     return '看起来是 mod 或前置的问题。先看日志里第一个报错的 mod，必要时先停用它。';
   }
-  return '我看了这次会话的启动上下文，暂时只能确定不是单一文件损坏。先看最新的报错行，再决定下一步。';
+  return '这次没有读到明确的实例日志，也没看到具体报错。你可以把完整启动日志发我，或者先去「版本」页重新检查一次实例文件。';
 }
 
 function buildActions(session) {
+  if (!/实例配置|实例覆盖|实际启动命令|java_command/i.test(String(session.context || ''))) return [];
   const allowed = new Set([
     'memory.set', 'java.open', 'java.set', 'redownload.version', 'redownload.resources',
     'open.instance', 'mod.disable', 'serverpack.redownload',
   ]);
-  const actions = actionsFor(session.classified, { versionId: session.versionId })
+  const actions = actionsFor(Array.isArray(session.classified) ? session.classified : [], { versionId: session.versionId })
     .filter((a) => allowed.has(a.id));
   const has = (id) => actions.some((a) => a.id === id);
   if (!has('memory.set')) {
@@ -144,6 +151,8 @@ export async function chatSession({ id, message }) {
   if (!session) throw new Error('会话不存在或已过期');
   const text = String(message ?? '').trim();
   if (!text) throw new Error('消息不能为空');
+  if (!Array.isArray(session.messages)) session.messages = [];
+  if (!Array.isArray(session.classified)) session.classified = [];
   const actions = buildActions(session);
   let reply = '';
   if (aiHasKey() && loadAiConfig().baseURL) {
