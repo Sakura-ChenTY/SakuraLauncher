@@ -1102,6 +1102,30 @@
       </div>
     </div>
   </div>
+  <!-- 存档管理 -->
+  <div class="modal" id="savesModal" hidden>
+    <div class="modal-box saves-box">
+      <div class="modal-head">
+        <h3 id="savesTitle">存档管理</h3>
+        <button class="btn ghost" id="savesClose" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="saves-head">
+          <div class="saves-info" id="savesInfo"></div>
+          <div class="field-line">
+            <button class="btn ghost" id="savesBackupAll" type="button">备份全部</button>
+            <button class="btn ghost" id="savesOpenFolder" type="button">打开存档文件夹</button>
+            <button class="btn ghost" id="savesOpenBackups" type="button">打开备份文件夹</button>
+          </div>
+        </div>
+        <div class="saves-progress" id="savesProgress"></div>
+        <h4 class="saves-subtitle">存档</h4>
+        <div id="savesList" class="saves-list"></div>
+        <h4 class="saves-subtitle">本地备份</h4>
+        <div id="savesBackupList" class="saves-list"></div>
+      </div>
+    </div>
+  </div>
   <!-- 版本选择弹窗 -->
   <div class="modal" id="versionModal" hidden>
     <div class="modal-box">

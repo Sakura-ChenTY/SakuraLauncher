@@ -74,6 +74,7 @@ import { detectSymptom, guessSymptom, collectSymptomContext, SYMPTOMS, IMPLEMENT
 import { previewDiagnosticPackage, createDiagnosticPackage, sanitizeDiagnostic } from './diagnostic-package.js';
 import { snapshotCrashArtifacts, newCrashArtifacts } from './crash-watch.js';
 import { previewExport, exportInstance } from './modpack-export.js';
+import { listSaves, backupWorld, backupAll, restoreBackup } from './saves.js';
 import {
   addTracked,
   removeTracked,
@@ -3264,6 +3265,84 @@ const server = http.createServer(async (req, res) => {
         incident.prompted = false;
         return json(res, 400, { error: e.message });
       }
+    }
+    if (p === '/api/saves' && req.method === 'GET') {
+      const url = new URL(req.url, 'http://127.0.0.1');
+      const versionId = String(url.searchParams.get('versionId') || '').trim();
+      if (!versionId || !resolveInstanceDir(versionId)) return json(res, 404, { error: '实例不存在' });
+      return json(res, 200, listSaves({ gameDir: state.gameDir, versionId }));
+    }
+
+    if (p === '/api/saves/backup' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const versionId = String(body.versionId || '').trim();
+        if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
+        if (state.saving) throw new Error('正在处理存档，请稍候');
+        state.saving = true;
+        const result = await backupWorld({
+          gameDir: state.gameDir,
+          versionId,
+          world: String(body.world || ''),
+          onProgress: (p) => emit('save-progress', p),
+        });
+        pushLog(`存档已备份：${result.world}`);
+        return json(res, 200, result);
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      } finally { state.saving = false; }
+    }
+
+    if (p === '/api/saves/backup-all' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const versionId = String(body.versionId || '').trim();
+        if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
+        if (state.saving) throw new Error('正在处理存档，请稍候');
+        state.saving = true;
+        const results = await backupAll({
+          gameDir: state.gameDir,
+          versionId,
+          onProgress: (p) => emit('save-progress', p),
+        });
+        return json(res, 200, { results });
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      } finally { state.saving = false; }
+    }
+
+    if (p === '/api/saves/restore' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const versionId = String(body.versionId || '').trim();
+        if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
+        if (state.saving) throw new Error('正在处理存档，请稍候');
+        state.saving = true;
+        const result = await restoreBackup({
+          gameDir: state.gameDir,
+          versionId,
+          file: String(body.file || ''),
+          onProgress: (p) => emit('save-progress', p),
+        });
+        pushLog(`存档已恢复：${result.world}`);
+        return json(res, 200, result);
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      } finally { state.saving = false; }
+    }
+
+    if (p === '/api/saves/open' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const versionId = String(body.versionId || '').trim();
+        if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
+        const kind = body.kind === 'backups' ? 'backups' : 'saves';
+        const info = listSaves({ gameDir: state.gameDir, versionId });
+        const target = kind === 'backups' ? info.backupDir : info.savesDir;
+        fs.mkdirSync(target, { recursive: true });
+        spawn('explorer.exe', [target], { detached: true, stdio: 'ignore' }).unref();
+        return json(res, 200, { ok: true, path: target });
+      } catch (e) { return json(res, 400, { error: e.message }); }
     }
     if (p === '/api/export/preview' && req.method === 'POST') {
       const body = await readBody(req);

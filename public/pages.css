@@ -1362,3 +1362,16 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .export-dest-line { margin-bottom: 8px; }
 .export-progress { min-height: 18px; font-size: 11px; color: var(--muted); }
 .export-result { max-height: 140px; white-space: pre-wrap; }
+
+.saves-info { font-size: 12px; color: var(--text-2); line-height: 1.7; margin-bottom: 8px; white-space: pre-wrap; }
+.saves-head { margin-bottom: 8px; }
+.saves-progress { min-height: 18px; font-size: 11px; color: var(--muted); margin: 6px 0; }
+.saves-subtitle { margin: 12px 0 6px; font-size: 12px; color: var(--text); }
+.saves-list { display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow: auto; }
+.save-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-2); }
+.save-row-main { min-width: 0; }
+.save-row-name { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.save-row-meta { font-size: 10px; color: var(--muted); margin-top: 2px; }
+.save-row button { flex: 0 0 auto; }
+.saves-empty { font-size: 11px; color: var(--muted); padding: 8px 0; }
+.saves-box { max-width: 640px; }

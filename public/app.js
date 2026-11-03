@@ -444,6 +444,7 @@ function showVerMenu(x, y, versionId) {
     '<button data-act="launch">启动</button>' +
     '<button data-act="folder">打开文件夹</button>' +
     '<button data-act="export">导出整合包…</button>' +
+    '<button data-act="saves">存档管理…</button>' +
     '<button data-act="copy">复制为新实例</button>' +
     '<button data-act="settings">该版本的 Java / 内存…</button>' +
     '<button data-act="delete" class="danger">删除</button>';
@@ -476,6 +477,10 @@ function showVerMenu(x, y, versionId) {
       }
       if (act === 'export') {
         openExport(versionId);
+        return;
+      }
+      if (act === 'saves') {
+        openSaves(versionId);
         return;
       }
       if (act === 'copy') {
@@ -671,6 +676,147 @@ async function openExportFolder() {
     await api('/api/export/open', {
       method: 'POST',
       body: JSON.stringify({ path: exportState.zipPath }),
+    });
+  } catch (e) {
+    toast('打开文件夹失败：' + e.message, 'err');
+  }
+}
+
+/* ---- 存档管理 ---- */
+const savesState = { versionId: '', data: null };
+
+function renderSaves(data) {
+  savesState.data = data;
+  const info = $('savesInfo');
+  if (info) {
+    info.textContent = [
+      `实例：${data.versionId}`,
+      `存档目录：${data.savesDir}`,
+      `备份目录：${data.backupDir}`,
+    ].join('\n');
+  }
+  const list = $('savesList');
+  if (list) {
+    if (!data.saves?.length) {
+      list.innerHTML = '<div class="saves-empty">没有存档。进入游戏创建世界后会出现在这里。</div>';
+    } else {
+      list.innerHTML = data.saves.map((s) => `
+        <div class="save-row">
+          <div class="save-row-main">
+            <div class="save-row-name">${escapeHtml(s.name)}</div>
+            <div class="save-row-meta">${fmtSize(s.size)} · ${new Date(s.modifiedAt).toLocaleString()}</div>
+          </div>
+          <button class="btn ghost" data-save-backup="${escapeHtml(s.name)}">备份</button>
+        </div>`).join('');
+      list.querySelectorAll('[data-save-backup]').forEach((btn) => {
+        btn.addEventListener('click', () => backupSave(btn.dataset.saveBackup));
+      });
+    }
+  }
+  const backups = $('savesBackupList');
+  if (backups) {
+    if (!data.backups?.length) {
+      backups.innerHTML = '<div class="saves-empty">还没有本地备份。</div>';
+    } else {
+      backups.innerHTML = data.backups.map((b) => `
+        <div class="save-row">
+          <div class="save-row-main">
+            <div class="save-row-name">${escapeHtml(b.world)}</div>
+            <div class="save-row-meta">${new Date(b.createdAt).toLocaleString()} · ${fmtSize(b.size)}</div>
+          </div>
+          <button class="btn ghost" data-save-restore="${escapeHtml(b.file)}">恢复</button>
+        </div>`).join('');
+      backups.querySelectorAll('[data-save-restore]').forEach((btn) => {
+        btn.addEventListener('click', () => restoreSave(btn.dataset.saveRestore));
+      });
+    }
+  }
+}
+
+async function reloadSaves() {
+  if (!savesState.versionId) return;
+  const data = await api('/api/saves?versionId=' + encodeURIComponent(savesState.versionId));
+  renderSaves(data);
+}
+
+async function openSaves(versionId) {
+  try {
+    savesState.versionId = versionId;
+    const data = await api('/api/saves?versionId=' + encodeURIComponent(versionId));
+    if ($('savesTitle')) $('savesTitle').textContent = `存档管理 · ${versionId}`;
+    if ($('savesProgress')) $('savesProgress').textContent = '';
+    if ($('savesBackupAll')) $('savesBackupAll').disabled = false;
+    if ($('savesModal')) $('savesModal').hidden = false;
+    renderSaves(data);
+  } catch (e) {
+    alert('读取存档失败：' + e.message);
+  }
+}
+
+async function backupSave(world) {
+  if (!savesState.versionId) return;
+  const progress = $('savesProgress');
+  if (progress) progress.textContent = `正在备份 ${world}…`;
+  try {
+    const r = await api('/api/saves/backup', {
+      method: 'POST',
+      body: JSON.stringify({ versionId: savesState.versionId, world }),
+    });
+    if (progress) progress.textContent = `已备份：${r.file}`;
+    toast(`已备份存档 ${world}`, 'ok');
+    await reloadSaves();
+  } catch (e) {
+    if (progress) progress.textContent = '备份失败：' + e.message;
+    toast('备份失败：' + e.message, 'err');
+  }
+}
+
+async function backupAllSaves() {
+  if (!savesState.versionId) return;
+  const progress = $('savesProgress');
+  if ($('savesBackupAll')) $('savesBackupAll').disabled = true;
+  if (progress) progress.textContent = '正在备份全部存档…';
+  try {
+    const r = await api('/api/saves/backup-all', {
+      method: 'POST',
+      body: JSON.stringify({ versionId: savesState.versionId }),
+    });
+    if (progress) progress.textContent = `已备份 ${r.results?.length || 0} 个存档`;
+    toast('全部存档已备份', 'ok');
+    await reloadSaves();
+  } catch (e) {
+    if (progress) progress.textContent = '备份失败：' + e.message;
+    toast('备份失败：' + e.message, 'err');
+  } finally {
+    if ($('savesBackupAll')) $('savesBackupAll').disabled = false;
+  }
+}
+
+async function restoreSave(file) {
+  if (!savesState.versionId) return;
+  if (!confirm(`恢复备份「${file}」？\n当前同名存档会先自动备份一次，再覆盖。`)) return;
+  const progress = $('savesProgress');
+  if (progress) progress.textContent = '正在恢复…';
+  try {
+    const r = await api('/api/saves/restore', {
+      method: 'POST',
+      body: JSON.stringify({ versionId: savesState.versionId, file }),
+    });
+    if (progress) progress.textContent = `已恢复：${r.world}`;
+    toast(`已恢复存档 ${r.world}`, 'ok');
+    await reloadSaves();
+  } catch (e) {
+    if (progress) progress.textContent = '恢复失败：' + e.message;
+    toast('恢复失败：' + e.message, 'err');
+  }
+}
+
+async function openSavesFolder(kind) {
+  if (!savesState.versionId) return;
+  try {
+    await api('/api/saves/open', {
+      method: 'POST',
+      body: JSON.stringify({ versionId: savesState.versionId, kind }),
     });
   } catch (e) {
     toast('打开文件夹失败：' + e.message, 'err');
@@ -2063,6 +2209,10 @@ function connectEvents() {
         }
         break;
       }
+
+      case 'save-progress':
+        if ($('savesProgress')) $('savesProgress').textContent = msg.message || '';
+        break;
 
       case 'export-progress':
         if ($('exportProgress')) $('exportProgress').textContent = msg.message || '';
@@ -4061,6 +4211,11 @@ function switchTab(name) {
 $('launchBtn').addEventListener('click', () => {
   if (state.selectedVersion) doLaunch(state.selectedVersion);
 });
+
+$('savesClose')?.addEventListener('click', () => { $('savesModal').hidden = true; });
+$('savesBackupAll')?.addEventListener('click', backupAllSaves);
+$('savesOpenFolder')?.addEventListener('click', () => openSavesFolder('saves'));
+$('savesOpenBackups')?.addEventListener('click', () => openSavesFolder('backups'));
 
 $('exportClose')?.addEventListener('click', () => { $('exportModal').hidden = true; });
 $('exportPickDest')?.addEventListener('click', pickExportDestination);
