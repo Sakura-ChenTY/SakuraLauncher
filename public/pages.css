@@ -1748,8 +1748,8 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 }
 
 .home-assistant #homeAssistantToggle {
-  right: 15px;
+  right: 11px;
 }
 
 .home-assistant:not(.is-collapsed) #homeAssistantToggle,
-.home-assistant.is-collapsed #homeAssistantToggle { right: 15px; }
+.home-assistant.is-collapsed #homeAssistantToggle { right: 11px; }
