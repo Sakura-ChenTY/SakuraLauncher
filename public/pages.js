@@ -1702,7 +1702,7 @@ function rgbToHsl(hex) {
     else h = (rn - gn) / d + 4;
     h /= 6;
   }
-  return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
+  return { h: h * 360, s: s * 100, l: l * 100 };
 }
 
 function hslToRgb(h, s, l) {
