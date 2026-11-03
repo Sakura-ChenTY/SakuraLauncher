@@ -4431,6 +4431,9 @@ $('trackCheck').addEventListener('click', checkTrackNow);
 
 $('closeContent').addEventListener('click', () => { $('contentPanel').hidden = true; });
 $('checkModUpdates').addEventListener('click', checkModUpdates);
+$('exportContentPack').addEventListener('click', () => {
+  openExport(state.contentVersion || state.selectedVersion);
+});
 $('settingsSave').addEventListener('click', saveSettingsForm);
 $('settingsReset').addEventListener('click', resetSettingsForm);
 $('browseGameDir').addEventListener('click', pickGameDir);
