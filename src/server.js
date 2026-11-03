@@ -3179,7 +3179,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/assistant/chat' && req.method === 'POST') {
       const body = await readBody(req);
       try {
-        const result = await chatSession({ id: body.sessionId, message: body.message });
+        const result = await chatSession({ id: body.sessionId, message: body.message, mode: body.mode });
         return json(res, 200, result);
       } catch (e) {
         return json(res, 400, { error: e.message });

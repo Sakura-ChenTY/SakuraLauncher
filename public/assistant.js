@@ -166,7 +166,7 @@
     return currentSessionId;
   }
 
-  async function sendChat(text) {
+  async function sendChat(text, { diagnostic = false } = {}) {
     const message = String(text ?? '').trim();
     if (!message || sending) return;
     sending = true;
@@ -183,7 +183,7 @@
       const sessionId = await ensureSession(false);
       const d = await api('/api/assistant/chat', {
         method: 'POST',
-        body: JSON.stringify({ sessionId, message }),
+        body: JSON.stringify({ sessionId, message, mode: diagnostic ? 'diagnostic' : 'chat' }),
       });
       const msgs = d.messages || [];
       chatActions = {};
@@ -266,7 +266,7 @@
 
   async function runAnalyze() {
     if (el('aiChatInput')) el('aiChatInput').value = '分析最近一次启动失败，为什么进不去游戏？';
-    await sendChat('分析最近一次启动失败，为什么进不去游戏？');
+    await sendChat('分析最近一次启动失败，为什么进不去游戏？', { diagnostic: true });
   }
 
   function showBubble() {
