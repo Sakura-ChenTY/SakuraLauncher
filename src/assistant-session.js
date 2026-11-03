@@ -18,7 +18,7 @@ import {
   loadAiConfig,
   aiHasKey,
 } from './ai.js';
-import { detectSymptom, isTechnicalQuestion, collectSymptomContext, SYMPTOMS, IMPLEMENTATION_NOTES } from './assistant-diagnostics.js';
+import { detectSymptom, isTechnicalQuestion, guessSymptom, evidenceSummary, collectSymptomContext, SYMPTOMS, IMPLEMENTATION_NOTES } from './assistant-diagnostics.js';
 
 const FILE = path.join(HOME_DIR, 'assistant-sessions.json');
 const MAX_SESSIONS = 20;
@@ -274,19 +274,15 @@ export async function chatSession({ id, message, mode, diagnosticsState }) {
   if (!Array.isArray(session.messages)) session.messages = [];
   if (!Array.isArray(session.classified)) session.classified = [];
 
-  const category = intentCategory(session, text, mode);
+  let category = intentCategory(session, text, mode);
+  let guessed = false;
+  if (category === 'unknown') {
+    category = guessSymptom(text, diagnosticsState);
+    guessed = true;
+  }
   const diagnostic = Boolean(category);
   let context = String(session.basicContext || session.context || '');
   let candidates = [];
-  if (category === 'unknown') {
-    const question = '是启动不了，还是联机进不去？';
-    session.messages.push({ role: 'user', content: text, at: Date.now() });
-    session.messages.push({ role: 'assistant', content: question, at: Date.now() });
-    session.messages = session.messages.slice(-MAX_MESSAGES);
-    session.updatedAt = Date.now();
-    writeAll(data);
-    return { sessionId: id, mode: 'diagnostic', category, reply: question, actions: [], messages: session.messages };
-  }
   if (diagnostic) {
     context = await collectDiagnostic(session, category, diagnosticsState);
     candidates = buildActions(session);
@@ -330,6 +326,11 @@ ${category === 'startup' ? `当前实例最大内存：${maxMemoryIn(context) ||
     reply = diagnostic ? localDiagnosticReply(session, text, candidates, category) : localChatReply(text);
   }
   const actions = diagnostic ? actionsFromReply(reply, session) : [];
+  if (guessed) {
+    const evidence = evidenceSummary(category, diagnosticsState);
+    if (!/我看到的依据是/.test(reply)) reply += `\n\n我看到的依据是：${evidence}。`;
+    reply += '\n\n如果不是这个，把报错原文贴给我。';
+  }
 
   session.messages.push({ role: 'user', content: text, at: Date.now() });
   session.messages.push({ role: 'assistant', content: reply, at: Date.now() });
