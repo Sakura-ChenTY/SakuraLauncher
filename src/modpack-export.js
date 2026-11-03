@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-import { writeZip } from './zipwrite.js';
+import { writeZipStream } from './zipstream.js';
 import { getSettings } from './settings.js';
 
 const ALWAYS = ['mods', 'config'];
@@ -131,23 +131,21 @@ export async function exportInstance({ gameDir, versionId, destination, options 
     options: { mods: true, config: true, ...options, ...(whileRunning ? { saves: false } : {}) },
     whileRunning,
   };
-  const entries = [];
-  let done = 0;
-  const total = files.length + 1;
-  for (const file of files) {
-    try {
-      const data = fs.readFileSync(file.full);
-      entries.push({ name: file.rel, data });
-      done += 1;
-      onProgress({ stage: 'export', done, total, bytes: data.length, message: `打包 ${file.rel}` });
-    } catch (e) {
-      errors.push(`${file.rel}: ${e.message}`);
-    }
-  }
+  const entries = files.map((file) => ({ name: file.rel, file: file.full }));
   entries.push({ name: 'manifest.json', data: Buffer.from(JSON.stringify(manifest, null, 2), 'utf8') });
-  done += 1;
-  onProgress({ stage: 'export', done, total, message: '写入 zip' });
-  writeZip(zipPath, entries);
+  try {
+    await writeZipStream(zipPath, entries, {
+      onProgress: (p) => onProgress({
+        stage: 'export',
+        done: p.done,
+        total: entries.length,
+        message: `打包 ${p.name}`,
+      }),
+    });
+  } catch (e) {
+    try { fs.rmSync(zipPath, { force: true }); } catch { /* ignore */ }
+    throw e;
+  }
   return {
     ok: true,
     zipPath,

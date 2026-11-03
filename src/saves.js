@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 
 import { HOME_DIR } from './paths.js';
-import { writeZip } from './zipwrite.js';
+import { writeZipStream, verifyZipStream } from './zipstream.js';
 import { listEntries, readEntry, extractAll } from './zip.js';
 
 const BACKUP_ROOT = path.join(HOME_DIR, 'save-backups');
@@ -63,7 +63,15 @@ function safeBackupPath(versionId, file) {
   return target;
 }
 
+function metaPathFor(zipPath) {
+  return zipPath.replace(/\.zip$/i, '.json');
+}
+
 function readBackupMeta(zipPath) {
+  try {
+    const sidecar = metaPathFor(zipPath);
+    if (fs.existsSync(sidecar)) return JSON.parse(fs.readFileSync(sidecar, 'utf8'));
+  } catch { /* fall back to zip manifest */ }
   try {
     const buf = fs.readFileSync(zipPath);
     const entries = listEntries(buf);
@@ -72,7 +80,6 @@ function readBackupMeta(zipPath) {
     return JSON.parse(readEntry(buf, entry).toString('utf8'));
   } catch { return null; }
 }
-
 export function listSaves({ gameDir, versionId }) {
   const root = path.join(verDir(gameDir, versionId), 'saves');
   const saves = [];
@@ -110,18 +117,6 @@ export function listSaves({ gameDir, versionId }) {
   return { versionId, savesDir: root, backupDir: backupDir(versionId), saves, backups };
 }
 
-function verifyBackup(zipPath, expected) {
-  const buf = fs.readFileSync(zipPath);
-  const entries = listEntries(buf);
-  for (const item of expected) {
-    const entry = entries.find((e) => e.name === item.name);
-    if (!entry) throw new Error(`缺少文件 ${item.name}`);
-    if (entry.uncompSize !== item.size) {
-      throw new Error(`大小不一致 ${item.name}`);
-    }
-  }
-}
-
 export async function backupWorld({ gameDir, versionId, world, whileRunning = false, onProgress = () => {} }) {
   const { target } = worldDir(gameDir, versionId, world);
   if (!fs.existsSync(target) || !fs.statSync(target).isDirectory()) throw new Error('存档不存在');
@@ -132,17 +127,6 @@ export async function backupWorld({ gameDir, versionId, world, whileRunning = fa
   const d = new Date();
   const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}`;
   const zipPath = path.join(dir, `${safePart(world)}-${stamp}.zip`);
-  const entries = [];
-  const expected = [];
-  let done = 0;
-  for (const file of files) {
-    const data = await fsp.readFile(file.full);
-    const name = `${world}/${file.rel}`;
-    entries.push({ name, data });
-    expected.push({ name, size: data.length });
-    done += 1;
-    onProgress({ stage: 'save-backup', done, total: files.length + 1, message: `备份 ${file.rel}` });
-  }
   const manifest = {
     format: 'sakura-save-backup',
     formatVersion: 1,
@@ -153,18 +137,30 @@ export async function backupWorld({ gameDir, versionId, world, whileRunning = fa
     files: files.length,
     bytes: files.reduce((n, f) => n + f.size, 0),
   };
+  const entries = files.map((file) => ({ name: `${world}/${file.rel}`, file: file.full }));
   entries.push({ name: 'manifest.json', data: Buffer.from(JSON.stringify(manifest, null, 2), 'utf8') });
-  onProgress({ stage: 'save-backup', done: files.length + 1, total: files.length + 1, message: '写入备份 zip' });
+  let written = [];
   try {
-    writeZip(zipPath, entries);
-    verifyBackup(zipPath, expected);
+    const out = await writeZipStream(zipPath, entries, {
+      hash: true,
+      gzip: true,
+      onProgress: (p) => onProgress({
+        stage: 'save-backup',
+        done: p.done,
+        total: entries.length,
+        message: `备份 ${p.name}`,
+      }),
+    });
+    written = out.entries;
+    await verifyZipStream(zipPath, written);
+    try { await fsp.writeFile(metaPathFor(zipPath), JSON.stringify(manifest, null, 2), 'utf8'); } catch { /* optional sidecar */ }
   } catch (e) {
     try { fs.rmSync(zipPath, { force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(metaPathFor(zipPath), { force: true }); } catch { /* ignore */ }
     throw new Error('这次没备成，重来一次');
   }
   return { zipPath, file: path.basename(zipPath), world, whileRunning: Boolean(whileRunning), verified: true, bytes: fs.statSync(zipPath).size, files: files.length };
 }
-
 export async function backupAll({ gameDir, versionId, whileRunning = false, onProgress = () => {} }) {
   const saves = listSaves({ gameDir, versionId }).saves;
   const result = [];
