@@ -216,15 +216,14 @@ function hasFailureArtifacts(gameDir, versionId) {
 }
 
 /** 闲聊层：只带实例/版本等基本信息，不读日志和 crash 文件。 */
-export function collectBasicContext({ gameDir, versionId, lastFailure, launchCommand }) {
-  const parts = [`系统内存：共 ${Math.round(os.totalmem() / 1024 / 1024)}M，可用 ${Math.round(os.freemem() / 1024 / 1024)}M`];
-  if (lastFailure) {
-    parts.push(`上次启动：实例=${lastFailure.versionId ?? versionId ?? '?'} 退出码=${lastFailure.code ?? '?'}`);
+export function collectBasicContext({ gameDir, versionId }) {
+  const parts = [`当前实例：${versionId || '未选择'}`];
+  if (versionId) {
+    const versionJson = readJson(path.join(gameDir, 'versions', versionId, `${versionId}.json`));
+    if (versionJson) {
+      parts.push(`版本：${versionJson.id ?? versionId}；加载器入口：${versionJson.mainClass ?? '原版'}`);
+    }
   }
-  const info = instanceConfig(gameDir, versionId);
-  if (info) parts.push(`实例配置：\n${info}`);
-  const hasFailure = Boolean(lastFailure) || hasFailureArtifacts(gameDir, versionId);
-  parts.push(`失败上下文：${hasFailure ? '有' : '无'}`);
   return redact(parts.join('\n\n')).slice(0, 12000);
 }
 export function collectContext({ gameDir, versionId, lastFailure, logs, launchCommand }) {
