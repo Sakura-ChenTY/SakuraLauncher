@@ -420,6 +420,7 @@
   window.assistantCrash = onCrash;
 
   let assistantBarFrame = 0;
+  let assistantExpandTimer = 0;
   function syncAssistantBarHeight() {
     const panel = el('panel-home');
     const home = el('homeAssistant');
@@ -443,6 +444,20 @@
     const btn = el('homeAssistantToggle');
     const more = el('homeAssistantMore');
     if (!home) return;
+    const wasCollapsed = home.classList.contains('is-collapsed');
+    const changed = wasCollapsed !== Boolean(collapsed);
+    if (changed) {
+      if (assistantExpandTimer) clearTimeout(assistantExpandTimer);
+      home.classList.add('is-animating');
+      assistantExpandTimer = setTimeout(() => {
+        assistantExpandTimer = 0;
+        home.classList.remove('is-animating');
+        if (!home.classList.contains('is-collapsed')) {
+          const box = el('aiResult');
+          if (box) box.scrollTop = box.scrollHeight;
+        }
+      }, 260);
+    }
     home.classList.toggle('is-collapsed', Boolean(collapsed));
     if (btn) {
       btn.textContent = collapsed ? '展开' : '收起';

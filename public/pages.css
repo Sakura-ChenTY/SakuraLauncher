@@ -1317,7 +1317,9 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .home-assistant-title .hint { display: none; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .home-assistant-actions { display: flex; gap: 5px; flex: 0 0 auto; flex-wrap: nowrap; }
 .home-assistant-actions .btn { padding: 3px 5px; font-size: 10px; white-space: nowrap; }
-.home-assistant-log { min-height: 54px; max-height: 146px; overflow-y: auto; margin: 0; white-space: normal; font-size: 11px; line-height: 1.55; }
+.home-assistant-log { min-height: 54px; max-height: 146px; overflow-y: auto; scrollbar-gutter: stable; margin: 0; white-space: normal; font-size: 11px; line-height: 1.55; }
+.home-assistant.is-animating .home-assistant-log,
+.home-assistant.is-collapsed .home-assistant-log { overflow-y: hidden; }
 .home-assistant-log .assistant-msg { margin: 5px 0; padding: 6px 8px; border-radius: 7px; }
 .home-assistant-log .assistant-msg-role { font-size: 9px; margin-bottom: 2px; }
 .home-assistant-log .assistant-msg-text { font-size: 11px; line-height: 1.5; }
