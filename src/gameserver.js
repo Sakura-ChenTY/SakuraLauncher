@@ -132,6 +132,7 @@ function emptyRoom() {
     autoStopOnExit: true,
     settings: { ...WORLD_DEFAULTS },
     frp: null,
+    requestedFrp: null,
     hostGamePid: null,
     logs: [],
   };
@@ -288,7 +289,7 @@ function waitForReady(onLog) {
   });
 }
 
-export async function startRoom({ versionId, gameDir, eulaAccepted = false, memoryMb = ROOM_MEMORY_MB, autoStopOnExit = true, settings = {}, pack = null, onStage, onLog } = {}) {
+export async function startRoom({ versionId, gameDir, eulaAccepted = false, memoryMb = ROOM_MEMORY_MB, autoStopOnExit = true, settings = {}, pack = null, requestedFrp = null, onStage, onLog } = {}) {
   if (!versionId) throw new Error('缺少 versionId');
   if (!gameDir) throw new Error('缺少 gameDir');
   if (!eulaAccepted) throw new Error('需要先同意 Minecraft EULA');
@@ -304,6 +305,7 @@ export async function startRoom({ versionId, gameDir, eulaAccepted = false, memo
   room.autoStopOnExit = autoStopOnExit !== false;
   room.settings = normalizeWorldSettings(settings);
   room.error = '';
+  room.requestedFrp = requestedFrp;
   try {
     await assertPortFree(ROOM_PORT);
     const serverPaths = resolveServerPaths(gameDir, versionId);

@@ -70,6 +70,7 @@ import {
 } from './curseforge.js';
 import { installCurseForgePack, previewCurseForgePack } from './cfpack.js';
 import { createSession, getSession, chatSession } from './assistant-session.js';
+import { detectSymptom, collectSymptomContext, SYMPTOMS, IMPLEMENTATION_NOTES } from './assistant-diagnostics.js';
 import {
   addTracked,
   removeTracked,
@@ -2548,6 +2549,7 @@ const server = http.createServer(async (req, res) => {
           autoStopOnExit: body.autoStopOnExit !== false,
           settings: body.settings,
           pack: body.pack || null,
+          requestedFrp: { provider: body.provider || '', tunnelId: body.tunnelId || '' },
           onStage: (message) => {
             emit('room-stage', { message });
             pushLog(`[room] ${message}`);
@@ -3179,13 +3181,32 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/assistant/chat' && req.method === 'POST') {
       const body = await readBody(req);
       try {
-        const result = await chatSession({ id: body.sessionId, message: body.message, mode: body.mode });
+        const result = await chatSession({ id: body.sessionId, message: body.message, mode: body.mode, diagnosticsState: state });
         return json(res, 200, result);
       } catch (e) {
         return json(res, 400, { error: e.message });
       }
     }
 
+    if (p === '/api/assistant/diagnose' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const category = body.category && SYMPTOMS[body.category]
+          ? body.category
+          : detectSymptom(body.message || '');
+        if (category === 'unknown') {
+          return json(res, 200, { category, text: '是启动不了，还是联机进不去？先告诉我是哪一类，我再收集对应的信息。' });
+        }
+        const text = await collectSymptomContext(category, {
+          gameDir: state.gameDir,
+          versionId: body.versionId || state.running?.versionId || state.lastFailure?.versionId || '',
+          state,
+        });
+        return json(res, 200, { category, label: SYMPTOMS[category], text });
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
     if (p === '/api/assistant/session' && req.method === 'GET') {
       const session = getSession(url.searchParams.get('id') || '');
       return json(res, session ? 200 : 404, session ? { session } : { error: '会话不存在' });

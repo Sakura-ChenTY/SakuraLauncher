@@ -18,6 +18,7 @@ import {
   loadAiConfig,
   aiHasKey,
 } from './ai.js';
+import { detectSymptom, isTechnicalQuestion, collectSymptomContext, SYMPTOMS, IMPLEMENTATION_NOTES } from './assistant-diagnostics.js';
 
 const FILE = path.join(HOME_DIR, 'assistant-sessions.json');
 const MAX_SESSIONS = 20;
@@ -123,13 +124,36 @@ function localChatReply(message) {
   return '嗯。你说。';
 }
 
-function localDiagnosticReply(session, message, actions) {
+function localDiagnosticReply(session, message, actions, category = 'startup') {
   const cmd = String(session.diagnosticContext || session.context || '');
   const mem = maxMemoryIn(cmd);
   const hasInstance = hasInstanceContext(cmd);
   const second = /第二条|第二个|第二个按钮/i.test(String(message));
   if (second && actions[1]) {
     return `第二条是「${actions[1].label}」。它对应上面的问题，点之前会先确认。`;
+  }
+  if (category === 'online') {
+    const provider = /当前 provider：([^\n]+)/.exec(cmd)?.[1] || '未选择';
+    const room = /房间状态：([^\n]+)/.exec(cmd)?.[1] || '未知';
+    const frp = /frpc 最近输出：\n([\s\S]*?)(?:\n\n|$)/.exec(cmd)?.[1]?.split(/\r?\n/).filter(Boolean).slice(-3).join(' / ') || '无输出';
+    return `原因：联机链路没有建立。\n依据：provider=${provider}；房间=${room}；frpc=${frp}。\n建议：先确认选中的隧道 local_port 是 25565、frpc 正在运行；再看房间 error 和防火墙是否放行 java/javaw。`;
+  }
+  if (category === 'modpack') {
+    const err = /房间状态：[^\n]*error=([^\n]+)/.exec(cmd)?.[1] || /error=([^\n]+)/.exec(cmd)?.[1] || '未读到明确 error';
+    const sp = /serverPackFileId：([^\n]+)/.exec(cmd)?.[1] || '无';
+    return `原因：整合包下载或安装没有完成。\n依据：${err.slice(0, 220)}；serverPackFileId=${sp}。\n建议：先看房间错误里的 HTTP/API 返回；有 serverPackFileId 但下载不到时，把 server-pack.zip 放进服务端目录再开房。`;
+  }
+  if (category === 'download') {
+    const last = /最近失败：([^\n]+)/.exec(cmd)?.[1] || '没有最近的失败摘要';
+    return `原因：资源/版本文件下载失败。\n依据：${last.slice(0, 220)}。\n建议：先换下载源再重试一次，检查磁盘空间和代理；还失败就把状态码和 URL 发我。`;
+  }
+  if (category === 'mod') {
+    const lines = /相关日志：\n([\s\S]*?)(?:\n\n|$)/.exec(cmd)?.[1]?.split(/\r?\n/).filter(Boolean).slice(0, 3).join(' / ') || '没有抓到明确冲突行';
+    return `原因：可能是 mod 冲突或前置缺失。\n依据：${lines.slice(0, 220)}。\n建议：先停用日志里第一个报错的 mod，确认前置版本后重启。`;
+  }
+  if (category === 'performance') {
+    const memLine = /系统内存：([^\n]+)/.exec(cmd)?.[1] || '内存信息不足';
+    return `原因：性能瓶颈更可能在内存/GC 或客户端渲染。\n依据：${memLine}。\n建议：先看任务管理器占用，再降低视距/光影，检查 Java 参数和后台程序。`;
   }
   if (!hasInstance) {
     return '原因：这次没有读到明确的实例日志，也没看到具体报错。\n依据：没有可用的实例配置、crash-report 或 hs_err 记录。\n建议：把完整启动日志发我，或者先去「版本」页重新检查一次实例文件。';
@@ -153,14 +177,14 @@ function localDiagnosticReply(session, message, actions) {
   return '原因：暂时不能确定。\n依据：这次没有读到足够明确的报错行。\n建议：把完整启动日志发我，别先改一堆设置。';
 }
 
-function collectDiagnostic(session) {
-  if (session.diagnosticContext) return session.diagnosticContext;
+async function collectDiagnostic(session, category, diagnosticsState) {
+  if (session.diagnosticCategory === category && session.diagnosticContext) return session.diagnosticContext;
+  session.diagnosticCategory = category;
   try {
-    session.diagnosticContext = collectContext({
-      gameDir: session.gameDir,
+    session.diagnosticContext = await collectSymptomContext(category, {
+      gameDir: session.gameDir || diagnosticsState?.gameDir,
       versionId: session.versionId,
-      lastFailure: null,
-      logs: [],
+      state: diagnosticsState,
     });
   } catch (e) {
     session.diagnosticContext = `上下文收集失败：${e.message}`;
@@ -202,11 +226,11 @@ function buildActions(session) {
 function actionsFromReply(reply, session) {
   const text = String(reply || '');
   const context = String(session.diagnosticContext || '');
-  if (!hasInstanceContext(context)) return [];
+  const hasInstance = hasInstanceContext(context);
   const current = maxMemoryIn(context);
   const actions = [];
   const memory = /(?:降到|降至|改成|改为|调到|设置为)\s*(\d{3,4})\s*M/i.exec(text);
-  if (memory) {
+  if (hasInstance && memory) {
     const target = Number(memory[1]);
     if (target >= 512 && target !== current) {
       actions.push({
@@ -216,24 +240,23 @@ function actionsFromReply(reply, session) {
       });
     }
   }
-  if (/Java|java|JVM|运行时/.test(text) && /换|改|设置|版本|对不上|不匹配/.test(text)) {
+  if (hasInstance && /Java|java|JVM|运行时/.test(text) && /换|改|设置|版本|对不上|不匹配/.test(text)) {
     actions.push({ id: 'java.open', label: '换 Java 运行时' });
   }
-  if (/打开.*目录|实例目录/.test(text)) actions.push({ id: 'open.instance', label: '打开实例目录' });
-  if (/重新下载.*版本|版本文件/.test(text)) actions.push({ id: 'redownload.version', label: '重新下载版本文件' });
-  if (/重新下载.*资源|资源文件/.test(text)) actions.push({ id: 'redownload.resources', label: '重新下载资源文件' });
+  if (hasInstance && /打开.*目录|实例目录/.test(text)) actions.push({ id: 'open.instance', label: '打开实例目录' });
+  if (hasInstance && /重新下载.*版本|版本文件/.test(text)) actions.push({ id: 'redownload.version', label: '重新下载版本文件' });
+  if (hasInstance && /重新下载.*资源|资源文件/.test(text)) actions.push({ id: 'redownload.resources', label: '重新下载资源文件' });
   if (/server\s*pack|服务端包/i.test(text)) actions.push({ id: 'serverpack.redownload', label: '重新下载 server pack' });
   if (/停用.*mod|禁用.*mod|停用可疑/.test(text)) actions.push({ id: 'mod.disable', label: '停用可疑 mod（需确认）' });
   return actions;
 }
 
-function isDiagnosticIntent(session, message, mode) {
-  if (mode === 'diagnostic' || mode === 'analyze') return true;
-  const text = String(message || '');
-  const diagWords = /进不去|启动失败|闪退|崩溃|报错|错误日志|日志|crash|hs_err|内存不足|Java 版本|class file|mod 冲突|退出码|卡在|打不开|连不上|无法启动|异常/i;
-  if (!diagWords.test(text)) return false;
-  if (session.hasFailure || /失败上下文：有/.test(String(session.basicContext || ''))) return true;
-  return /进不去|启动失败|闪退|崩溃|报错|日志|hs_err|crash|退出码|内存不足|卡在|打不开|连不上|无法启动/i.test(text);
+function intentCategory(session, message, mode) {
+  const detected = detectSymptom(message);
+  if (detected !== 'unknown') return detected;
+  if (mode === 'diagnostic' || mode === 'analyze') return 'startup';
+  if (isTechnicalQuestion(message)) return 'unknown';
+  return null;
 }
 
 function historyForModel(session) {
@@ -242,7 +265,7 @@ function historyForModel(session) {
     .map((m) => ({ role: m.role, content: m.content }));
 }
 
-export async function chatSession({ id, message, mode }) {
+export async function chatSession({ id, message, mode, diagnosticsState }) {
   const data = readAll();
   const session = data.sessions.find((x) => x.id === id);
   if (!session) throw new Error('会话不存在或已过期');
@@ -251,11 +274,21 @@ export async function chatSession({ id, message, mode }) {
   if (!Array.isArray(session.messages)) session.messages = [];
   if (!Array.isArray(session.classified)) session.classified = [];
 
-  const diagnostic = isDiagnosticIntent(session, text, mode);
+  const category = intentCategory(session, text, mode);
+  const diagnostic = Boolean(category);
   let context = String(session.basicContext || session.context || '');
   let candidates = [];
+  if (category === 'unknown') {
+    const question = '是启动不了，还是联机进不去？';
+    session.messages.push({ role: 'user', content: text, at: Date.now() });
+    session.messages.push({ role: 'assistant', content: question, at: Date.now() });
+    session.messages = session.messages.slice(-MAX_MESSAGES);
+    session.updatedAt = Date.now();
+    writeAll(data);
+    return { sessionId: id, mode: 'diagnostic', category, reply: question, actions: [], messages: session.messages };
+  }
   if (diagnostic) {
-    context = collectDiagnostic(session);
+    context = await collectDiagnostic(session, category, diagnosticsState);
     candidates = buildActions(session);
   }
 
@@ -263,17 +296,19 @@ export async function chatSession({ id, message, mode }) {
   let reply = '';
   if (aiHasKey() && cfg.baseURL) {
     const system = diagnostic
-      ? `你是《龙族》里的上杉绘梨衣，正在帮 Sakura 排查 Minecraft 启动问题。说话安静、短，不卖萌。
-输出必须包含三段：原因：... / 依据：...（引用一到两条日志里的具体内容）/ 建议：...（一到两步）。
-当前实例最大内存：${maxMemoryIn(context) || '未知'}M；系统可用：${availableMemoryIn(context) || '未知'}M。
-不要建议把内存改成和当前相同的值。若当前已经 ≤1024M 且日志仍报内存不足，优先建议关掉别的程序、检查 Windows 页面文件，再考虑降到 768M。
-只输出人话，不输出 JSON 和堆栈。不要编造日志里没有的证据。`
+      ? `你是《龙族》里的上杉绘梨衣，正在帮 Sakura 排查 Minecraft 问题。说话安静、短，不卖萌。
+当前症状类别：${SYMPTOMS[category] || category}。
+输出必须包含三段：原因：... / 依据：...（引用一到两条当前类别材料里的具体内容）/ 建议：...（一到两步）。
+${category === 'startup' ? `当前实例最大内存：${maxMemoryIn(context) || '未知'}M；系统可用：${availableMemoryIn(context) || '未知'}M。
+不要建议把内存改成和当前相同的值。若当前已经 ≤1024M 且日志仍报内存不足，优先建议关掉别的程序、检查 Windows 页面文件，再考虑降到 768M。` : '按联机/下载/整合包/mod/性能对应的材料回答，不要把问题一律归因于内存。'}
+我们的实现约束：${IMPLEMENTATION_NOTES}
+只输出人话，不输出 JSON 和堆栈。不要编造材料里没有的证据。`
       : `你是《龙族》里的上杉绘梨衣，正在和 Sakura 普通聊天。说话短、轻、安静、有一点自己的态度，不卖萌，不装客服。
 可以正常说两三句话；觉得需要时可以反问一句。不要主动分析日志，不要使用「原因 / 依据 / 建议」这类排查标题，不要列步骤。
 不要主动提内存、报错、日志或启动问题；只有用户明确问这些时才展开。
 当前实例：${session.versionId || '未选择'}。`;
     const ctx = diagnostic
-      ? `启动上下文快照（已脱敏）：\n${context}`
+      ? `当前问题的诊断材料（已脱敏）：\n${context}`
       : `会话基本信息：\n${context}`;
     const history = historyForModel(session);
     const first = history.length === 0;
@@ -286,13 +321,13 @@ export async function chatSession({ id, message, mode }) {
     try {
       reply = await callAi({ ...cfg, messages, maxTokens: diagnostic ? 1000 : 500 });
       if (diagnostic && !/原因[:：]/.test(reply)) {
-        reply = localDiagnosticReply(session, text, candidates);
+        reply = localDiagnosticReply(session, text, candidates, category);
       }
     } catch {
-      reply = diagnostic ? localDiagnosticReply(session, text, candidates) : localChatReply(text);
+      reply = diagnostic ? localDiagnosticReply(session, text, candidates, category) : localChatReply(text);
     }
   } else {
-    reply = diagnostic ? localDiagnosticReply(session, text, candidates) : localChatReply(text);
+    reply = diagnostic ? localDiagnosticReply(session, text, candidates, category) : localChatReply(text);
   }
   const actions = diagnostic ? actionsFromReply(reply, session) : [];
 
@@ -301,5 +336,5 @@ export async function chatSession({ id, message, mode }) {
   session.messages = session.messages.slice(-MAX_MESSAGES);
   session.updatedAt = Date.now();
   writeAll(data);
-  return { sessionId: id, mode: diagnostic ? 'diagnostic' : 'chat', reply, actions, messages: session.messages };
+  return { sessionId: id, mode: diagnostic ? 'diagnostic' : 'chat', category: category || 'chat', reply, actions, messages: session.messages };
 }
