@@ -666,7 +666,8 @@
       setHomeCollapsed(!home?.classList.contains('is-collapsed'), { persist: true });
     });
     const savedCollapsed = localStorage.getItem('sakura.homeAssistantCollapsed');
-    setHomeCollapsed(savedCollapsed === '1' || (savedCollapsed === null && window.innerWidth < 760));
+    // 首次安装没有本地状态时默认收起，宽窗口也一样；用户展开/收起后按保存值恢复。
+    setHomeCollapsed(savedCollapsed === null || savedCollapsed === '1');
     if (window.ResizeObserver) {
       const barForResize = el('homeAssistant');
       if (barForResize) new ResizeObserver(scheduleAssistantBarHeight).observe(barForResize);
