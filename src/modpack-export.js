@@ -61,8 +61,10 @@ function instanceMeta(gameDir, versionId) {
 export function previewExport({ gameDir, versionId, options = {} }) {
   const root = path.join(gameDir, 'versions', versionId);
   const meta = instanceMeta(gameDir, versionId);
+  const whileRunning = Boolean(options.whileRunning);
   const selected = new Set(ALWAYS);
   for (const key of OPTIONAL) if (options[key]) selected.add(key);
+  if (whileRunning) selected.delete('saves');
   const files = [];
   const errors = [];
   for (const dir of selected) {
@@ -77,21 +79,24 @@ export function previewExport({ gameDir, versionId, options = {} }) {
   return {
     versionId,
     meta: publicMeta,
-    options: { mods: true, config: true, ...options },
+    options: { mods: true, config: true, ...options, ...(whileRunning ? { saves: false } : {}) },
     files: files.map(({ rel, size }) => ({ name: rel, size })),
     totalBytes: bytes,
     errors,
+    warnings: whileRunning ? ['游戏开着，存档没带'] : [],
     defaultDestination: path.join(os.homedir(), 'Desktop'),
   };
 }
 
 export async function exportInstance({ gameDir, versionId, destination, options = {}, onProgress = () => {} }) {
-  const preview = previewExport({ gameDir, versionId, options });
+  const whileRunning = Boolean(options.whileRunning);
+  const preview = previewExport({ gameDir, versionId, options: { ...options, whileRunning } });
   const root = path.join(gameDir, 'versions', versionId);
   const files = [];
   const errors = [];
   const selected = new Set(ALWAYS);
   for (const key of OPTIONAL) if (options[key]) selected.add(key);
+  if (whileRunning) selected.delete('saves');
   for (const dir of selected) {
     const full = path.join(root, dir);
     if (fs.existsSync(full)) walk(full, root, files, errors);
@@ -123,7 +128,8 @@ export async function exportInstance({ gameDir, versionId, destination, options 
     loaderVersion: preview.meta.loaderVersion || '',
     memory: preview.meta.memory,
     createdAt: new Date().toISOString(),
-    options: { mods: true, config: true, ...options },
+    options: { mods: true, config: true, ...options, ...(whileRunning ? { saves: false } : {}) },
+    whileRunning,
   };
   const entries = [];
   let done = 0;
@@ -150,6 +156,8 @@ export async function exportInstance({ gameDir, versionId, destination, options 
     bytes: fs.statSync(zipPath).size,
     files: entries.filter((e) => e.name !== 'manifest.json').map((e) => e.name),
     errors,
+    warnings: preview.warnings || [],
+    skipped: whileRunning ? ['saves'] : [],
     preview,
   };
 }

@@ -573,12 +573,11 @@ const exportState = { versionId: '', preview: null, zipPath: '' };
 
 function blockIfGameRunning() {
   if (!state.running) return false;
-  toast('游戏还开着，先关掉再备份/导出', 'err');
+  toast('游戏还开着，先关掉再恢复', 'err');
   return true;
 }
 
 async function openExport(versionId) {
-  if (blockIfGameRunning()) return;
   try {
     const p = await api('/api/export/preview', {
       method: 'POST',
@@ -602,7 +601,7 @@ async function openExport(versionId) {
     for (const id of ['exportResourcepacks', 'exportShaderpacks', 'exportSaves', 'exportScreenshots']) {
       if ($(id)) $(id).checked = false;
     }
-    if ($('exportProgress')) $('exportProgress').textContent = '';
+    if ($('exportProgress')) $('exportProgress').textContent = state.running ? '游戏开着，存档没带' : '';
     if ($('exportResult')) $('exportResult').textContent = '';
     if ($('exportCopyPath')) $('exportCopyPath').hidden = true;
     if ($('exportOpenFolder')) $('exportOpenFolder').hidden = true;
@@ -623,7 +622,6 @@ async function pickExportDestination() {
 }
 
 async function startExport() {
-  if (blockIfGameRunning()) return;
   if (!exportState.versionId) return;
   const options = {
     resourcepacks: Boolean($('exportResourcepacks')?.checked),
@@ -640,10 +638,10 @@ async function startExport() {
   try {
     const r = await api('/api/export', {
       method: 'POST',
-      body: JSON.stringify({ versionId: exportState.versionId, destination, options }),
+      body: JSON.stringify({ versionId: exportState.versionId, destination, options, whileRunning: Boolean(state.running) }),
     });
     exportState.zipPath = r.zipPath;
-    if ($('exportProgress')) $('exportProgress').textContent = '导出完成';
+    if ($('exportProgress')) $('exportProgress').textContent = r.warnings?.length ? `导出完成：${r.warnings.join('；')}` : '导出完成';
     if ($('exportResult')) {
       $('exportResult').textContent = [
         `路径：${r.zipPath}`,
@@ -658,7 +656,8 @@ async function startExport() {
       $('exportStart').textContent = '重新导出';
       $('exportStart').disabled = false;
     }
-    toast(`已导出 ${r.name}`, 'ok');
+    if (r.warnings?.length) toast(r.warnings.join('；'), 'err');
+    else toast(`已导出 ${r.name}`, 'ok');
   } catch (e) {
     if ($('exportProgress')) $('exportProgress').textContent = '导出失败：' + e.message;
     if ($('exportStart')) {
@@ -730,9 +729,9 @@ function renderSaves(data) {
         <div class="save-row">
           <div class="save-row-main">
             <div class="save-row-name">${escapeHtml(b.world)}</div>
-            <div class="save-row-meta">${new Date(b.createdAt).toLocaleString()} · ${fmtSize(b.size)}</div>
+            <div class="save-row-meta">${new Date(b.createdAt).toLocaleString()} · ${fmtSize(b.size)}${b.whileRunning ? ' · 运行中备份' : ''}</div>
           </div>
-          <button class="btn ghost" data-save-restore="${escapeHtml(b.file)}">恢复</button>
+          <button class="btn ghost" data-save-restore="${escapeHtml(b.file)}" ${state.running ? 'disabled title="游戏还开着，先关掉再恢复"' : ''}>恢复</button>
         </div>`).join('');
       backups.querySelectorAll('[data-save-restore]').forEach((btn) => {
         btn.addEventListener('click', () => restoreSave(btn.dataset.saveRestore));
@@ -748,7 +747,6 @@ async function reloadSaves() {
 }
 
 async function openSaves(versionId) {
-  if (blockIfGameRunning()) return;
   try {
     savesState.versionId = versionId;
     const data = await api('/api/saves?versionId=' + encodeURIComponent(versionId));
@@ -763,7 +761,6 @@ async function openSaves(versionId) {
 }
 
 async function backupSave(world) {
-  if (blockIfGameRunning()) return;
   if (!savesState.versionId) return;
   const progress = $('savesProgress');
   if (progress) progress.textContent = `正在备份 ${world}…`;
@@ -782,7 +779,6 @@ async function backupSave(world) {
 }
 
 async function backupAllSaves() {
-  if (blockIfGameRunning()) return;
   if (!savesState.versionId) return;
   const progress = $('savesProgress');
   if ($('savesBackupAll')) $('savesBackupAll').disabled = true;

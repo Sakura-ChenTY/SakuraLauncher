@@ -638,7 +638,7 @@ export const state = {
 
 const bus = new EventEmitter();
 bus.setMaxListeners(50);
-const RUNNING_ACTION_BLOCK = '游戏还开着，先关掉再备份/导出';
+const RUNNING_RESTORE_BLOCK = '游戏还开着，先关掉再恢复';
 
 function emit(type, payload) {
   bus.emit('event', { type, at: Date.now(), ...payload });
@@ -3276,7 +3276,6 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/saves/backup' && req.method === 'POST') {
       const body = await readBody(req);
-      if (state.running) return json(res, 409, { error: RUNNING_ACTION_BLOCK });
       try {
         const versionId = String(body.versionId || '').trim();
         if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
@@ -3286,6 +3285,7 @@ const server = http.createServer(async (req, res) => {
           gameDir: state.gameDir,
           versionId,
           world: String(body.world || ''),
+          whileRunning: Boolean(state.running),
           onProgress: (p) => emit('save-progress', p),
         });
         pushLog(`存档已备份：${result.world}`);
@@ -3297,7 +3297,6 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/saves/backup-all' && req.method === 'POST') {
       const body = await readBody(req);
-      if (state.running) return json(res, 409, { error: RUNNING_ACTION_BLOCK });
       try {
         const versionId = String(body.versionId || '').trim();
         if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
@@ -3306,6 +3305,7 @@ const server = http.createServer(async (req, res) => {
         const results = await backupAll({
           gameDir: state.gameDir,
           versionId,
+          whileRunning: Boolean(state.running),
           onProgress: (p) => emit('save-progress', p),
         });
         return json(res, 200, { results });
@@ -3316,7 +3316,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/saves/restore' && req.method === 'POST') {
       const body = await readBody(req);
-      if (state.running) return json(res, 409, { error: RUNNING_ACTION_BLOCK });
+      if (state.running) return json(res, 409, { error: RUNNING_RESTORE_BLOCK });
       try {
         const versionId = String(body.versionId || '').trim();
         if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
@@ -3354,14 +3354,13 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, previewExport({
           gameDir: state.gameDir,
           versionId: String(body.versionId || ''),
-          options: body.options || {},
+          options: { ...(body.options || {}), whileRunning: Boolean(state.running) },
         }));
       } catch (e) { return json(res, 400, { error: e.message }); }
     }
 
     if (p === '/api/export' && req.method === 'POST') {
       const body = await readBody(req);
-      if (state.running) return json(res, 409, { error: RUNNING_ACTION_BLOCK });
       if (state.exporting) return json(res, 409, { error: '正在导出，请稍候' });
       state.exporting = true;
       try {
@@ -3369,7 +3368,7 @@ const server = http.createServer(async (req, res) => {
           gameDir: state.gameDir,
           versionId: String(body.versionId || ''),
           destination: body.destination || '',
-          options: body.options || {},
+          options: { ...(body.options || {}), whileRunning: Boolean(state.running) },
           onProgress: (p) => emit('export-progress', p),
         });
         pushLog(`整合包导出完成：${result.name}`);

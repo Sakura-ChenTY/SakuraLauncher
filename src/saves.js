@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 import { HOME_DIR } from './paths.js';
 import { writeZip } from './zipwrite.js';
@@ -101,6 +102,7 @@ export function listSaves({ gameDir, versionId }) {
         size: fs.statSync(file).size,
         createdAt: fs.statSync(file).mtimeMs,
         world: meta?.world || name.replace(/-\d{8}-\d{6}\.zip$/i, ''),
+        whileRunning: Boolean(meta?.whileRunning),
         versionId,
       });
     }
@@ -109,7 +111,24 @@ export function listSaves({ gameDir, versionId }) {
   return { versionId, savesDir: root, backupDir: backupDir(versionId), saves, backups };
 }
 
-export async function backupWorld({ gameDir, versionId, world, onProgress = () => {} }) {
+function sha1(data) {
+  return crypto.createHash('sha1').update(data).digest('hex');
+}
+
+function verifyBackup(zipPath, expected) {
+  const buf = fs.readFileSync(zipPath);
+  const entries = listEntries(buf);
+  for (const item of expected) {
+    const entry = entries.find((e) => e.name === item.name);
+    if (!entry) throw new Error(`缺少文件 ${item.name}`);
+    const data = readEntry(buf, entry);
+    if (data.length !== item.size || sha1(data) !== item.sha1) {
+      throw new Error(`内容不一致 ${item.name}`);
+    }
+  }
+}
+
+export async function backupWorld({ gameDir, versionId, world, whileRunning = false, onProgress = () => {} }) {
   const { target } = worldDir(gameDir, versionId, world);
   if (!fs.existsSync(target) || !fs.statSync(target).isDirectory()) throw new Error('存档不存在');
   const files = [];
@@ -120,10 +139,13 @@ export async function backupWorld({ gameDir, versionId, world, onProgress = () =
   const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}`;
   const zipPath = path.join(dir, `${safePart(world)}-${stamp}.zip`);
   const entries = [];
+  const expected = [];
   let done = 0;
   for (const file of files) {
     const data = await fsp.readFile(file.full);
-    entries.push({ name: `${world}/${file.rel}`, data });
+    const name = `${world}/${file.rel}`;
+    entries.push({ name, data });
+    expected.push({ name, size: data.length, sha1: sha1(data) });
     done += 1;
     onProgress({ stage: 'save-backup', done, total: files.length + 1, message: `备份 ${file.rel}` });
   }
@@ -132,20 +154,27 @@ export async function backupWorld({ gameDir, versionId, world, onProgress = () =
     formatVersion: 1,
     versionId,
     world,
+    whileRunning: Boolean(whileRunning),
     createdAt: new Date().toISOString(),
     files: files.length,
     bytes: files.reduce((n, f) => n + f.size, 0),
   };
   entries.push({ name: 'manifest.json', data: Buffer.from(JSON.stringify(manifest, null, 2), 'utf8') });
   onProgress({ stage: 'save-backup', done: files.length + 1, total: files.length + 1, message: '写入备份 zip' });
-  writeZip(zipPath, entries);
-  return { zipPath, file: path.basename(zipPath), world, bytes: fs.statSync(zipPath).size, files: files.length };
+  try {
+    writeZip(zipPath, entries);
+    verifyBackup(zipPath, expected);
+  } catch (e) {
+    try { fs.rmSync(zipPath, { force: true }); } catch { /* ignore */ }
+    throw new Error(`备份校验失败：${e.message}`);
+  }
+  return { zipPath, file: path.basename(zipPath), world, whileRunning: Boolean(whileRunning), verified: true, bytes: fs.statSync(zipPath).size, files: files.length };
 }
 
-export async function backupAll({ gameDir, versionId, onProgress = () => {} }) {
+export async function backupAll({ gameDir, versionId, whileRunning = false, onProgress = () => {} }) {
   const saves = listSaves({ gameDir, versionId }).saves;
   const result = [];
-  for (const save of saves) result.push(await backupWorld({ gameDir, versionId, world: save.name, onProgress }));
+  for (const save of saves) result.push(await backupWorld({ gameDir, versionId, world: save.name, whileRunning, onProgress }));
   return result;
 }
 
