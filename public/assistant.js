@@ -423,12 +423,15 @@
   function setHomeCollapsed(collapsed, { persist = false } = {}) {
     const home = el('homeAssistant');
     const btn = el('homeAssistantToggle');
+    const more = el('homeAssistantMore');
     if (!home) return;
     home.classList.toggle('is-collapsed', Boolean(collapsed));
     if (btn) {
       btn.textContent = collapsed ? '展开' : '收起';
       btn.setAttribute('aria-expanded', String(!collapsed));
     }
+    if (more) more.hidden = !collapsed;
+    if (!collapsed && el('homeAssistantMoreMenu')) el('homeAssistantMoreMenu').hidden = true;
     if (persist) localStorage.setItem('sakura.homeAssistantCollapsed', collapsed ? '1' : '0');
   }
   function init() {
@@ -450,6 +453,28 @@
     el('diagCopy')?.addEventListener('click', async () => {
       try { await navigator.clipboard.writeText(el('diagText')?.textContent || ''); if (typeof toast === 'function') toast('诊断信息已复制'); }
       catch { if (typeof toast === 'function') toast('复制失败，请手动选中', 'err'); }
+    });
+    el('homeAssistantMore')?.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const menu = el('homeAssistantMoreMenu');
+      if (menu) menu.hidden = !menu.hidden;
+    });
+    el('homeAssistantMoreMenu')?.querySelectorAll('[data-more-action]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const menu = el('homeAssistantMoreMenu');
+        if (menu) menu.hidden = true;
+        const action = btn.dataset.moreAction;
+        if (action === 'analyze') runAnalyze();
+        else if (action === 'diag') openDiagnosticPreview();
+        else if (action === 'new') newSession();
+      });
+    });
+    document.addEventListener('click', (ev) => {
+      const menu = el('homeAssistantMoreMenu');
+      if (!menu || menu.hidden) return;
+      if (!ev.target.closest('#homeAssistantMoreMenu') && !ev.target.closest('#homeAssistantMore')) {
+        menu.hidden = true;
+      }
     });
     el('homeAssistantToggle')?.addEventListener('click', () => {
       const home = el('homeAssistant');

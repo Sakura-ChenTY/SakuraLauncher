@@ -205,8 +205,14 @@
               <div class="home-assistant-actions">
                 <button class="btn ghost" id="aiAnalyze" type="button">分析最近失败</button>
                 <button class="btn ghost" id="homeDiagBtn" type="button">收集诊断信息</button>
+                <button class="btn ghost" id="homeAssistantMore" type="button" hidden>更多</button>
                 <button class="btn ghost" id="homeAssistantToggle" type="button" aria-expanded="true">收起</button>
               </div>
+            </div>
+            <div class="home-assistant-more-menu" id="homeAssistantMoreMenu" hidden>
+              <button class="btn ghost" type="button" data-more-action="analyze">分析最近失败</button>
+              <button class="btn ghost" type="button" data-more-action="diag">收集诊断信息</button>
+              <button class="btn ghost" type="button" data-more-action="new">新会话</button>
             </div>
             <div class="assistant-result home-assistant-log" id="aiResult">
               <div class="empty">问吧。我会带着这次启动的上下文回答。</div>
