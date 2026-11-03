@@ -735,7 +735,7 @@ function renderSaves(data) {
         <div class="save-row">
           <div class="save-row-main">
             <div class="save-row-name">${escapeHtml(b.world)}</div>
-            <div class="save-row-meta">${new Date(b.createdAt).toLocaleString()} · ${fmtSize(b.size)}${b.whileRunning ? ' · 运行中备份' : ''}</div>
+            <div class="save-row-meta">${new Date(b.createdAt).toLocaleString()} · ${fmtSize(b.size)} · ${b.source === 'beforeLaunch' ? '进游戏前' : (b.source === 'afterExit' ? '退出后' : '手动')}${b.whileRunning ? ' · 运行中备份' : ''}</div>
           </div>
           <button class="btn ghost" data-save-restore="${escapeHtml(b.file)}" ${state.running ? 'disabled title="游戏还开着，先关掉再恢复"' : ''}>恢复</button>
         </div>`).join('');
@@ -865,7 +865,10 @@ function renderSavesPage(data) {
   list.innerHTML = saves.map((s) => {
     const own = backups.filter((b) => b.world === s.name);
     const options = own.length
-      ? own.map((b) => `<option value="${escapeHtml(b.file)}">${new Date(b.createdAt).toLocaleString()}${b.whileRunning ? ' · 运行中' : ''}</option>`).join('')
+      ? own.map((b) => {
+        const tag = b.source === 'beforeLaunch' ? '进游戏前' : (b.source === 'afterExit' ? '退出后' : '手动');
+        return `<option value="${escapeHtml(b.file)}">${new Date(b.createdAt).toLocaleString()} · ${tag}${b.whileRunning ? ' · 运行中' : ''}</option>`;
+      }).join('')
       : '<option value="">没有可用备份</option>';
     const disabled = state.running || !own.length;
     const title = state.running ? '游戏还开着，先关掉再恢复' : (!own.length ? '没有可用备份' : '');
@@ -3311,6 +3314,10 @@ function applySettingsToForm(s) {
   if ($('memModeAuto')) $('memModeAuto').checked = memoryMode === 'auto';
   if ($('memModeCustom')) $('memModeCustom').checked = memoryMode === 'custom';
   if ($('setMemoryOptimize')) $('setMemoryOptimize').checked = Boolean(s.memoryOptimize);
+  if ($('setAutoBackup')) $('setAutoBackup').checked = Boolean(s.autoBackup);
+  if ($('setAutoBackupBefore')) $('setAutoBackupBefore').checked = s.autoBackupBeforeLaunch !== false;
+  if ($('setAutoBackupAfter')) $('setAutoBackupAfter').checked = s.autoBackupAfterExit !== false;
+  if ($('setAutoBackupKeep')) $('setAutoBackupKeep').value = String(s.autoBackupKeep ?? 5);
   syncMemoryMode(false);
   $('setConcurrency').value = s.concurrency ?? 16;
   $('setDownloadSource').value = s.downloadSource ?? (s.preferMirror ? 'bmclapi' : 'auto');
@@ -3340,6 +3347,10 @@ function readSettingsForm() {
     memoryMax: $('setMemMax').value.trim().toUpperCase(),
     memoryMode: $('memModeCustom')?.checked ? 'custom' : 'auto',
     memoryOptimize: Boolean($('setMemoryOptimize')?.checked),
+    autoBackup: Boolean($('setAutoBackup')?.checked),
+    autoBackupBeforeLaunch: Boolean($('setAutoBackupBefore')?.checked),
+    autoBackupAfterExit: Boolean($('setAutoBackupAfter')?.checked),
+    autoBackupKeep: Number($('setAutoBackupKeep')?.value || 5),
     concurrency: Number($('setConcurrency').value),
     downloadSource: $('setDownloadSource').value,
     isolated: $('setIsolated').value,

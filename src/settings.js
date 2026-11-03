@@ -47,6 +47,10 @@ export const DEFAULTS = {
   memoryMode: 'auto',
   // 启动前是否执行内存优化（由后续启动流程决定具体动作）
   memoryOptimize: false,
+  autoBackup: false,
+  autoBackupBeforeLaunch: true,
+  autoBackupAfterExit: true,
+  autoBackupKeep: 5,
   // 界面不透明度（百分比）。数值越大越不透明；30 = 几乎全透，90 = 接近实心。
   // 前端把它当成 --glass-alpha 写进 CSS，亚克力与贴壁纸两种模式共用。
   glassOpacity: 42,
@@ -133,6 +137,12 @@ export function normalize(raw = {}, base = DEFAULTS) {
   if (['auto', 'custom'].includes(raw.memoryMode)) out.memoryMode = raw.memoryMode;
   else if (raw.memoryMode !== undefined) notes.push('memoryMode 只能是 auto / custom，已保留原值');
   if (typeof raw.memoryOptimize === 'boolean') out.memoryOptimize = raw.memoryOptimize;
+  if (typeof raw.autoBackup === 'boolean') out.autoBackup = raw.autoBackup;
+  if (typeof raw.autoBackupBeforeLaunch === 'boolean') out.autoBackupBeforeLaunch = raw.autoBackupBeforeLaunch;
+  if (typeof raw.autoBackupAfterExit === 'boolean') out.autoBackupAfterExit = raw.autoBackupAfterExit;
+  const autoKeep = Number(raw.autoBackupKeep);
+  if (Number.isFinite(autoKeep) && autoKeep >= 1 && autoKeep <= 50) out.autoBackupKeep = Math.floor(autoKeep);
+  else if (raw.autoBackupKeep !== undefined) notes.push('自动备份保留份数需在 1-50，已保留原值');
   if (Object.prototype.hasOwnProperty.call(JVM_PRESETS, raw.jvmPreset)) {
     out.jvmPreset = raw.jvmPreset;
   } else if (raw.jvmPreset !== undefined) {

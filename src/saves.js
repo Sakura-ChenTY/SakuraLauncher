@@ -108,7 +108,8 @@ export function listSaves({ gameDir, versionId }) {
         size: fs.statSync(file).size,
         createdAt: fs.statSync(file).mtimeMs,
         world: meta?.world || name.replace(/-\d{8}-\d{6}\.zip$/i, ''),
-        whileRunning: Boolean(meta?.whileRunning),
+        whileRunning: Boolean(meta?.whileRunning),        source: meta?.source || 'manual',
+
         versionId,
       });
     }
@@ -117,7 +118,7 @@ export function listSaves({ gameDir, versionId }) {
   return { versionId, savesDir: root, backupDir: backupDir(versionId), saves, backups };
 }
 
-export async function backupWorld({ gameDir, versionId, world, whileRunning = false, onProgress = () => {} }) {
+export async function backupWorld({ gameDir, versionId, world, whileRunning = false, source = 'manual', onProgress = () => {} }) {
   const { target } = worldDir(gameDir, versionId, world);
   if (!fs.existsSync(target) || !fs.statSync(target).isDirectory()) throw new Error('存档不存在');
   const files = [];
@@ -126,13 +127,19 @@ export async function backupWorld({ gameDir, versionId, world, whileRunning = fa
   await fsp.mkdir(dir, { recursive: true });
   const d = new Date();
   const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}`;
-  const zipPath = path.join(dir, `${safePart(world)}-${stamp}.zip`);
+  let zipPath = path.join(dir, `${safePart(world)}-${stamp}.zip`);
+  let suffix = 2;
+  while (fs.existsSync(zipPath)) {
+    zipPath = path.join(dir, `${safePart(world)}-${stamp}-${suffix}.zip`);
+    suffix += 1;
+  }
   const manifest = {
     format: 'sakura-save-backup',
     formatVersion: 1,
     versionId,
     world,
     whileRunning: Boolean(whileRunning),
+    source,
     createdAt: new Date().toISOString(),
     files: files.length,
     bytes: files.reduce((n, f) => n + f.size, 0),
@@ -159,15 +166,52 @@ export async function backupWorld({ gameDir, versionId, world, whileRunning = fa
     try { fs.rmSync(metaPathFor(zipPath), { force: true }); } catch { /* ignore */ }
     throw new Error('这次没备成，重来一次');
   }
-  return { zipPath, file: path.basename(zipPath), world, whileRunning: Boolean(whileRunning), verified: true, bytes: fs.statSync(zipPath).size, files: files.length };
+  return { zipPath, file: path.basename(zipPath), world, whileRunning: Boolean(whileRunning), source, verified: true, bytes: fs.statSync(zipPath).size, files: files.length };
 }
-export async function backupAll({ gameDir, versionId, whileRunning = false, onProgress = () => {} }) {
+export async function backupAll({ gameDir, versionId, whileRunning = false, source = 'manual', onProgress = () => {} }) {
   const saves = listSaves({ gameDir, versionId }).saves;
   const result = [];
-  for (const save of saves) result.push(await backupWorld({ gameDir, versionId, world: save.name, whileRunning, onProgress }));
+  for (const save of saves) result.push(await backupWorld({ gameDir, versionId, world: save.name, whileRunning, source, onProgress }));
   return result;
 }
 
+export function pruneAutoBackups({ gameDir, versionId, world, keep }) {
+  const limit = Math.max(1, Math.min(50, Number(keep) || 5));
+  const auto = listSaves({ gameDir, versionId }).backups
+    .filter((b) => b.world === world && b.source && b.source !== 'manual')
+    .sort((a, b) => b.createdAt - a.createdAt);
+  const removed = [];
+  for (const b of auto.slice(limit)) {
+    try {
+      fs.rmSync(b.path, { force: true });
+      fs.rmSync(metaPathFor(b.path), { force: true });
+      removed.push(b.file);
+    } catch { /* ignore individual cleanup failure */ }
+  }
+  return removed;
+}
+
+export async function autoBackupAll({ gameDir, versionId, source, keep = 5, onProgress = () => {} }) {
+  const saves = listSaves({ gameDir, versionId }).saves;
+  const results = [];
+  for (const save of saves) {
+    try {
+      const backup = await backupWorld({
+        gameDir,
+        versionId,
+        world: save.name,
+        whileRunning: false,
+        source,
+        onProgress,
+      });
+      const removed = pruneAutoBackups({ gameDir, versionId, world: save.name, keep });
+      results.push({ ...backup, removed });
+    } catch (e) {
+      results.push({ world: save.name, error: e.message });
+    }
+  }
+  return results;
+}
 export async function restoreBackup({ gameDir, versionId, file, onProgress = () => {} }) {
   const zipPath = safeBackupPath(versionId, file);
   if (!fs.existsSync(zipPath)) throw new Error('备份文件不存在');

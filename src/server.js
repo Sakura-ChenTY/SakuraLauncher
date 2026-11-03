@@ -74,7 +74,7 @@ import { detectSymptom, guessSymptom, collectSymptomContext, SYMPTOMS, IMPLEMENT
 import { previewDiagnosticPackage, createDiagnosticPackage, sanitizeDiagnostic } from './diagnostic-package.js';
 import { snapshotCrashArtifacts, newCrashArtifacts } from './crash-watch.js';
 import { previewExport, exportInstance } from './modpack-export.js';
-import { listSaves, backupWorld, backupAll, restoreBackup } from './saves.js';
+import { listSaves, backupWorld, backupAll, restoreBackup, autoBackupAll } from './saves.js';
 import {
   addTracked,
   removeTracked,
@@ -941,6 +941,30 @@ async function restoreRoomSakuraPort(frp) {
     return e.message || String(e);
   }
 }
+async function runAutoBackup(versionId, source) {
+  const s = getSettings();
+  if (!s.autoBackup) return;
+  if (source === 'beforeLaunch' && !s.autoBackupBeforeLaunch) return;
+  if (source === 'afterExit' && !s.autoBackupAfterExit) return;
+  try {
+    const results = await autoBackupAll({
+      gameDir: state.gameDir,
+      versionId,
+      source,
+      keep: s.autoBackupKeep,
+      onProgress: (p) => {
+        if (p?.message) pushLog(`自动备份：${p.message}`);
+      },
+    });
+    for (const r of results) {
+      if (r.error) pushLog(`自动备份失败：${r.world}: ${r.error}`);
+      else if (r.removed?.length) pushLog(`自动备份清理：${r.world} 删除 ${r.removed.join(', ')}`);
+    }
+  } catch (e) {
+    pushLog(`自动备份失败：${e.message}`);
+  }
+}
+
 async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta }) {
   if (state.installing) throw new Error('正在安装，稍后再启动');
   if (state.running) throw new Error(`已有游戏在运行（PID ${state.running.pid}）`);
@@ -977,6 +1001,7 @@ async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta 
     versionId,
     onStage: (event) => emit('launch-preflight', event),
   });
+  await runAutoBackup(versionId, 'beforeLaunch');
   state.crashBaseline = snapshotCrashArtifacts(state.gameDir, versionId);
   const r = await launch({
     gameDir: state.gameDir,
@@ -1090,6 +1115,7 @@ async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta 
   r.child.on('exit', (code) => {
     if (exitWatchdog) clearTimeout(exitWatchdog);
     state.running = null;
+    void runAutoBackup(versionId, 'afterExit');
     const uiCode = forcedExit ? 0 : code;
     const recent = state.logs.slice(-120).map((x) => String(x.line ?? x));
     const reasonLine = [...recent].reverse().find((line) =>
