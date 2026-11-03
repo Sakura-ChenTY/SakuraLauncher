@@ -71,7 +71,10 @@ import {
 import { installCurseForgePack, previewCurseForgePack } from './cfpack.js';
 import { createSession, getSession, chatSession } from './assistant-session.js';
 import { detectSymptom, guessSymptom, collectSymptomContext, SYMPTOMS, IMPLEMENTATION_NOTES } from './assistant-diagnostics.js';
-import { previewDiagnosticPackage, createDiagnosticPackage } from './diagnostic-package.js';
+import { previewDiagnosticPackage, createDiagnosticPackage, sanitizeDiagnostic } from './diagnostic-package.js';
+import { snapshotCrashArtifacts, newCrashArtifacts } from './crash-watch.js';
+import { previewExport, exportInstance } from './modpack-export.js';
+import { listSaves, backupWorld, backupAll, restoreBackup } from './saves.js';
 import {
   addTracked,
   removeTracked,
@@ -564,14 +567,38 @@ async function handleDroppedFile(filePath, versionId) {
     try { manifest = JSON.parse(readEntry(buf, manifestEntry).toString('utf8')); } catch { /* ignore */ }
   }
   const mcVersion = manifest?.minecraft?.version ?? '';
-  const instanceId = targetVersion || safeInstanceName(manifest?.name || path.parse(src).name);
+  const sakuraExport = manifest?.format === 'sakura-instance';
+  let instanceId = targetVersion || safeInstanceName(manifest?.name || path.parse(src).name);
+  if (sakuraExport) {
+    // 自己导出的包：默认建一个新实例，避免同名覆盖原实例。
+    const base = safeInstanceName(manifest?.name || path.parse(src).name);
+    instanceId = base;
+    let n = 2;
+    while (fs.existsSync(path.join(state.gameDir, 'versions', instanceId))) {
+      instanceId = `${base}-${n}`;
+      n += 1;
+    }
+  }
   const instanceDir = path.join(state.gameDir, 'versions', instanceId);
   const count = extractZipTo(buf, entries, instanceDir);
+  if (sakuraExport) {
+    const sourceName = String(manifest?.versionJson || `${manifest?.name || ''}.json`).replace(/\\/g, '/');
+    const sourceJson = path.join(instanceDir, sourceName);
+    const targetJson = path.join(instanceDir, `${instanceId}.json`);
+    if (!fs.existsSync(sourceJson)) {
+      throw new Error(`整合包缺少版本描述：${sourceName || 'version JSON'}`);
+    }
+    const versionData = JSON.parse(fs.readFileSync(sourceJson, 'utf8'));
+    versionData.id = instanceId;
+    if (sourceJson !== targetJson) fs.rmSync(sourceJson, { force: true });
+    fs.writeFileSync(targetJson, JSON.stringify(versionData, null, 2), 'utf8');
+  }
   pushLog(`拖入 zip：解压 ${count} 个文件 → ${instanceId}${mcVersion ? `（MC ${mcVersion}）` : ''}`);
   return {
     kind: 'zip',
     versionId: instanceId,
     gameVersion: mcVersion || null,
+    loader: manifest?.loader || null,
     files: count,
   };
 }
@@ -600,6 +627,8 @@ export const state = {
   lanPort: null,      // 从游戏 stdout 抓到的「对局域网开放」端口
   lastFailure: null,  // 最近一次非 0 退出的摘要
   lastLaunch: null,   // 最近一次实际启动命令与进程信息
+  crashBaseline: null, // 本次启动前的 crash/hs_err 文件快照
+  crashIncident: null, // 最近一次自动崩溃提示
   logs: [],           // 最近日志行（环形，最多 500）
   installInterrupted: null, // 上次安装被中断的信息（启动时取一次）
   forceFirstRun: false, // --first-run：强制显示引导，不删数据
@@ -939,6 +968,7 @@ async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta 
   try { ensureChineseLanguage(versionId); } catch { /* 不阻断启动 */ }
 
   // 玩家名 / 内存 / Java / 隔离 全部来自设置，不再由前端硬编码传参
+  state.crashBaseline = snapshotCrashArtifacts(state.gameDir, versionId);
   const r = await launch({
     gameDir: state.gameDir,
     versionId,
@@ -1059,6 +1089,21 @@ async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta 
     if (uiCode !== 0 && uiCode !== null && uiCode !== undefined) {
       state.lastFailure = { versionId, code: uiCode, reason: reasonLine.slice(0, 500), at: Date.now() };
     }
+    const newArtifacts = forcedExit ? [] : newCrashArtifacts(state.gameDir, versionId, state.crashBaseline);
+    if (!forcedExit && ((uiCode === null || (uiCode !== 0 && uiCode !== undefined)) || newArtifacts.length)) {
+      const incident = {
+        id: `crash-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+        versionId,
+        code: uiCode,
+        reason: sanitizeDiagnostic(reasonLine).slice(0, 500),
+        artifacts: newArtifacts,
+        at: Date.now(),
+        prompted: false,
+      };
+      state.crashIncident = incident;
+      emit('crash-detected', { incident });
+    }
+    state.crashBaseline = null;
     emit('game-exit', { versionId, code: uiCode, forced: forcedExit, reason: reasonLine.slice(0, 500) });
     pushLog(forcedExit ? '游戏已强制结束，状态回到空闲' : `游戏退出，code=${code}`);
     const roomBefore = getRoomState();
@@ -3196,6 +3241,150 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    if (p === '/api/assistant/auto' && req.method === 'POST') {
+      const incident = state.crashIncident;
+      if (!incident) return json(res, 404, { error: '没有新的崩溃记录' });
+      if (incident.prompted) return json(res, 200, { already: true, incident });
+      incident.prompted = true;
+      try {
+        const session = createSession({
+          gameDir: state.gameDir,
+          versionId: incident.versionId,
+          lastFailure: { versionId: incident.versionId, code: incident.code, reason: incident.reason, at: incident.at },
+          logs: state.logs.map((x) => x.line ?? x),
+          launchCommand: state.lastLaunch?.command ?? null,
+        });
+        const result = await chatSession({
+          id: session.id,
+          message: `游戏异常退出，退出码 ${incident.code ?? '未知'}。请分析原因并给下一步建议。`,
+          mode: 'diagnostic',
+          diagnosticsState: state,
+        });
+        return json(res, 200, { ...result, incident });
+      } catch (e) {
+        incident.prompted = false;
+        return json(res, 400, { error: e.message });
+      }
+    }
+    if (p === '/api/saves' && req.method === 'GET') {
+      const url = new URL(req.url, 'http://127.0.0.1');
+      const versionId = String(url.searchParams.get('versionId') || '').trim();
+      if (!versionId || !resolveInstanceDir(versionId)) return json(res, 404, { error: '实例不存在' });
+      return json(res, 200, listSaves({ gameDir: state.gameDir, versionId }));
+    }
+
+    if (p === '/api/saves/backup' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const versionId = String(body.versionId || '').trim();
+        if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
+        if (state.saving) throw new Error('正在处理存档，请稍候');
+        state.saving = true;
+        const result = await backupWorld({
+          gameDir: state.gameDir,
+          versionId,
+          world: String(body.world || ''),
+          onProgress: (p) => emit('save-progress', p),
+        });
+        pushLog(`存档已备份：${result.world}`);
+        return json(res, 200, result);
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      } finally { state.saving = false; }
+    }
+
+    if (p === '/api/saves/backup-all' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const versionId = String(body.versionId || '').trim();
+        if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
+        if (state.saving) throw new Error('正在处理存档，请稍候');
+        state.saving = true;
+        const results = await backupAll({
+          gameDir: state.gameDir,
+          versionId,
+          onProgress: (p) => emit('save-progress', p),
+        });
+        return json(res, 200, { results });
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      } finally { state.saving = false; }
+    }
+
+    if (p === '/api/saves/restore' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const versionId = String(body.versionId || '').trim();
+        if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
+        if (state.saving) throw new Error('正在处理存档，请稍候');
+        state.saving = true;
+        const result = await restoreBackup({
+          gameDir: state.gameDir,
+          versionId,
+          file: String(body.file || ''),
+          onProgress: (p) => emit('save-progress', p),
+        });
+        pushLog(`存档已恢复：${result.world}`);
+        return json(res, 200, result);
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      } finally { state.saving = false; }
+    }
+
+    if (p === '/api/saves/open' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const versionId = String(body.versionId || '').trim();
+        if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
+        const kind = body.kind === 'backups' ? 'backups' : 'saves';
+        const info = listSaves({ gameDir: state.gameDir, versionId });
+        const target = kind === 'backups' ? info.backupDir : info.savesDir;
+        fs.mkdirSync(target, { recursive: true });
+        spawn('explorer.exe', [target], { detached: true, stdio: 'ignore' }).unref();
+        return json(res, 200, { ok: true, path: target });
+      } catch (e) { return json(res, 400, { error: e.message }); }
+    }
+    if (p === '/api/export/preview' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        return json(res, 200, previewExport({
+          gameDir: state.gameDir,
+          versionId: String(body.versionId || ''),
+          options: body.options || {},
+        }));
+      } catch (e) { return json(res, 400, { error: e.message }); }
+    }
+
+    if (p === '/api/export' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (state.exporting) return json(res, 409, { error: '正在导出，请稍候' });
+      state.exporting = true;
+      try {
+        const result = await exportInstance({
+          gameDir: state.gameDir,
+          versionId: String(body.versionId || ''),
+          destination: body.destination || '',
+          options: body.options || {},
+          onProgress: (p) => emit('export-progress', p),
+        });
+        pushLog(`整合包导出完成：${result.name}`);
+        return json(res, 200, result);
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      } finally {
+        state.exporting = false;
+      }
+    }
+
+    if (p === '/api/export/open' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const target = path.resolve(String(body.path || ''));
+        if (!fs.existsSync(target) || !/\.zip$/i.test(target)) throw new Error('导出文件不存在');
+        spawn('explorer.exe', ['/select,', target], { detached: true, stdio: 'ignore' }).unref();
+        return json(res, 200, { ok: true });
+      } catch (e) { return json(res, 400, { error: e.message }); }
+    }
     if (p === '/api/assistant/diagnose/package/preview' && req.method === 'POST') {
       const body = await readBody(req);
       const versionId = String(body.versionId || state.running?.versionId || state.lastFailure?.versionId || '').trim();

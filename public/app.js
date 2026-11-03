@@ -440,10 +440,11 @@ function updateVersionHint(visible = true) {
 function showVerMenu(x, y, versionId) {
   const menu = $('verMenu');
   if (!menu) return;
-
   menu.innerHTML =
     '<button data-act="launch">启动</button>' +
     '<button data-act="folder">打开文件夹</button>' +
+    '<button data-act="export">导出整合包…</button>' +
+    '<button data-act="saves">存档管理…</button>' +
     '<button data-act="copy">复制为新实例</button>' +
     '<button data-act="settings">该版本的 Java / 内存…</button>' +
     '<button data-act="delete" class="danger">删除</button>';
@@ -472,6 +473,14 @@ function showVerMenu(x, y, versionId) {
         } catch (e) {
           alert('打开文件夹失败：' + e.message);
         }
+        return;
+      }
+      if (act === 'export') {
+        openExport(versionId);
+        return;
+      }
+      if (act === 'saves') {
+        openSaves(versionId);
         return;
       }
       if (act === 'copy') {
@@ -557,6 +566,261 @@ function showVerMenu(x, y, versionId) {
       }
     });
   });
+}
+
+/* ---- 实例导出 ---- */
+const exportState = { versionId: '', preview: null, zipPath: '' };
+
+async function openExport(versionId) {
+  try {
+    const p = await api('/api/export/preview', {
+      method: 'POST',
+      body: JSON.stringify({ versionId, options: {} }),
+    });
+    exportState.versionId = versionId;
+    exportState.preview = p;
+    exportState.zipPath = '';
+    const info = $('exportInfo');
+    if (info) {
+      info.textContent = [
+        `实例：${versionId}`,
+        `加载器：${p.meta?.loader || 'vanilla'}`,
+        `游戏版本：${p.meta?.gameVersion || versionId}`,
+        `建议内存：${p.meta?.memory?.max || '未设置'}`,
+        `默认带：mods、config、版本描述`,
+        `默认不带：存档、资源包、光影、截图`,
+      ].join('\n');
+    }
+    if ($('exportDest')) $('exportDest').value = p.defaultDestination || '';
+    for (const id of ['exportResourcepacks', 'exportShaderpacks', 'exportSaves', 'exportScreenshots']) {
+      if ($(id)) $(id).checked = false;
+    }
+    if ($('exportProgress')) $('exportProgress').textContent = '';
+    if ($('exportResult')) $('exportResult').textContent = '';
+    if ($('exportCopyPath')) $('exportCopyPath').hidden = true;
+    if ($('exportOpenFolder')) $('exportOpenFolder').hidden = true;
+    if ($('exportStart')) {
+      $('exportStart').disabled = false;
+      $('exportStart').textContent = '开始导出';
+      $('exportStart').hidden = false;
+    }
+    if ($('exportModal')) $('exportModal').hidden = false;
+  } catch (e) {
+    alert('读取实例失败：' + e.message);
+  }
+}
+
+async function pickExportDestination() {
+  const p = await globalThis.mcWin?.pickFolder?.();
+  if (p && $('exportDest')) $('exportDest').value = p;
+}
+
+async function startExport() {
+  if (!exportState.versionId) return;
+  const options = {
+    resourcepacks: Boolean($('exportResourcepacks')?.checked),
+    shaderpacks: Boolean($('exportShaderpacks')?.checked),
+    saves: Boolean($('exportSaves')?.checked),
+    screenshots: Boolean($('exportScreenshots')?.checked),
+  };
+  const destination = String($('exportDest')?.value || '').trim();
+  if ($('exportStart')) {
+    $('exportStart').disabled = true;
+    $('exportStart').textContent = '正在导出…';
+  }
+  if ($('exportProgress')) $('exportProgress').textContent = '准备打包…';
+  try {
+    const r = await api('/api/export', {
+      method: 'POST',
+      body: JSON.stringify({ versionId: exportState.versionId, destination, options }),
+    });
+    exportState.zipPath = r.zipPath;
+    if ($('exportProgress')) $('exportProgress').textContent = '导出完成';
+    if ($('exportResult')) {
+      $('exportResult').textContent = [
+        `路径：${r.zipPath}`,
+        `大小：${(r.bytes / 1024 / 1024).toFixed(1)} MB`,
+        `文件：${r.files?.length || 0} 个`,
+        r.errors?.length ? `跳过：${r.errors.length} 个文件` : '',
+      ].filter(Boolean).join('\n');
+    }
+    if ($('exportCopyPath')) $('exportCopyPath').hidden = false;
+    if ($('exportOpenFolder')) $('exportOpenFolder').hidden = false;
+    if ($('exportStart')) {
+      $('exportStart').textContent = '重新导出';
+      $('exportStart').disabled = false;
+    }
+    toast(`已导出 ${r.name}`, 'ok');
+  } catch (e) {
+    if ($('exportProgress')) $('exportProgress').textContent = '导出失败：' + e.message;
+    if ($('exportStart')) {
+      $('exportStart').disabled = false;
+      $('exportStart').textContent = '重试导出';
+    }
+  }
+}
+
+async function copyExportPath() {
+  if (!exportState.zipPath) return;
+  try {
+    await navigator.clipboard.writeText(exportState.zipPath);
+    toast('导出包路径已复制');
+  } catch {
+    toast('复制失败，请手动选中路径', 'err');
+  }
+}
+
+async function openExportFolder() {
+  if (!exportState.zipPath) return;
+  try {
+    await api('/api/export/open', {
+      method: 'POST',
+      body: JSON.stringify({ path: exportState.zipPath }),
+    });
+  } catch (e) {
+    toast('打开文件夹失败：' + e.message, 'err');
+  }
+}
+
+/* ---- 存档管理 ---- */
+const savesState = { versionId: '', data: null };
+
+function renderSaves(data) {
+  savesState.data = data;
+  const info = $('savesInfo');
+  if (info) {
+    info.textContent = [
+      `实例：${data.versionId}`,
+      `存档目录：${data.savesDir}`,
+      `备份目录：${data.backupDir}`,
+    ].join('\n');
+  }
+  const list = $('savesList');
+  if (list) {
+    if (!data.saves?.length) {
+      list.innerHTML = '<div class="saves-empty">没有存档。进入游戏创建世界后会出现在这里。</div>';
+    } else {
+      list.innerHTML = data.saves.map((s) => `
+        <div class="save-row">
+          <div class="save-row-main">
+            <div class="save-row-name">${escapeHtml(s.name)}</div>
+            <div class="save-row-meta">${fmtSize(s.size)} · ${new Date(s.modifiedAt).toLocaleString()}</div>
+          </div>
+          <button class="btn ghost" data-save-backup="${escapeHtml(s.name)}">备份</button>
+        </div>`).join('');
+      list.querySelectorAll('[data-save-backup]').forEach((btn) => {
+        btn.addEventListener('click', () => backupSave(btn.dataset.saveBackup));
+      });
+    }
+  }
+  const backups = $('savesBackupList');
+  if (backups) {
+    if (!data.backups?.length) {
+      backups.innerHTML = '<div class="saves-empty">还没有本地备份。</div>';
+    } else {
+      backups.innerHTML = data.backups.map((b) => `
+        <div class="save-row">
+          <div class="save-row-main">
+            <div class="save-row-name">${escapeHtml(b.world)}</div>
+            <div class="save-row-meta">${new Date(b.createdAt).toLocaleString()} · ${fmtSize(b.size)}</div>
+          </div>
+          <button class="btn ghost" data-save-restore="${escapeHtml(b.file)}">恢复</button>
+        </div>`).join('');
+      backups.querySelectorAll('[data-save-restore]').forEach((btn) => {
+        btn.addEventListener('click', () => restoreSave(btn.dataset.saveRestore));
+      });
+    }
+  }
+}
+
+async function reloadSaves() {
+  if (!savesState.versionId) return;
+  const data = await api('/api/saves?versionId=' + encodeURIComponent(savesState.versionId));
+  renderSaves(data);
+}
+
+async function openSaves(versionId) {
+  try {
+    savesState.versionId = versionId;
+    const data = await api('/api/saves?versionId=' + encodeURIComponent(versionId));
+    if ($('savesTitle')) $('savesTitle').textContent = `存档管理 · ${versionId}`;
+    if ($('savesProgress')) $('savesProgress').textContent = '';
+    if ($('savesBackupAll')) $('savesBackupAll').disabled = false;
+    if ($('savesModal')) $('savesModal').hidden = false;
+    renderSaves(data);
+  } catch (e) {
+    alert('读取存档失败：' + e.message);
+  }
+}
+
+async function backupSave(world) {
+  if (!savesState.versionId) return;
+  const progress = $('savesProgress');
+  if (progress) progress.textContent = `正在备份 ${world}…`;
+  try {
+    const r = await api('/api/saves/backup', {
+      method: 'POST',
+      body: JSON.stringify({ versionId: savesState.versionId, world }),
+    });
+    if (progress) progress.textContent = `已备份：${r.file}`;
+    toast(`已备份存档 ${world}`, 'ok');
+    await reloadSaves();
+  } catch (e) {
+    if (progress) progress.textContent = '备份失败：' + e.message;
+    toast('备份失败：' + e.message, 'err');
+  }
+}
+
+async function backupAllSaves() {
+  if (!savesState.versionId) return;
+  const progress = $('savesProgress');
+  if ($('savesBackupAll')) $('savesBackupAll').disabled = true;
+  if (progress) progress.textContent = '正在备份全部存档…';
+  try {
+    const r = await api('/api/saves/backup-all', {
+      method: 'POST',
+      body: JSON.stringify({ versionId: savesState.versionId }),
+    });
+    if (progress) progress.textContent = `已备份 ${r.results?.length || 0} 个存档`;
+    toast('全部存档已备份', 'ok');
+    await reloadSaves();
+  } catch (e) {
+    if (progress) progress.textContent = '备份失败：' + e.message;
+    toast('备份失败：' + e.message, 'err');
+  } finally {
+    if ($('savesBackupAll')) $('savesBackupAll').disabled = false;
+  }
+}
+
+async function restoreSave(file) {
+  if (!savesState.versionId) return;
+  if (!confirm(`恢复备份「${file}」？\n当前同名存档会先自动备份一次，再覆盖。`)) return;
+  const progress = $('savesProgress');
+  if (progress) progress.textContent = '正在恢复…';
+  try {
+    const r = await api('/api/saves/restore', {
+      method: 'POST',
+      body: JSON.stringify({ versionId: savesState.versionId, file }),
+    });
+    if (progress) progress.textContent = `已恢复：${r.world}`;
+    toast(`已恢复存档 ${r.world}`, 'ok');
+    await reloadSaves();
+  } catch (e) {
+    if (progress) progress.textContent = '恢复失败：' + e.message;
+    toast('恢复失败：' + e.message, 'err');
+  }
+}
+
+async function openSavesFolder(kind) {
+  if (!savesState.versionId) return;
+  try {
+    await api('/api/saves/open', {
+      method: 'POST',
+      body: JSON.stringify({ versionId: savesState.versionId, kind }),
+    });
+  } catch (e) {
+    toast('打开文件夹失败：' + e.message, 'err');
+  }
 }
 
 /** 版本类型的中文名，列表图标上用 */
@@ -1946,6 +2210,13 @@ function connectEvents() {
         break;
       }
 
+      case 'save-progress':
+        if ($('savesProgress')) $('savesProgress').textContent = msg.message || '';
+        break;
+
+      case 'export-progress':
+        if ($('exportProgress')) $('exportProgress').textContent = msg.message || '';
+        break;
       case 'install-start':
         state.installing = { versionId: msg.versionId, stage: 'start' };
         resetCancelButton();
@@ -2196,6 +2467,9 @@ function connectEvents() {
         break;
 
       /* ---- 游戏 ---- */
+      case 'crash-detected':
+        if (typeof window.assistantCrash === 'function') window.assistantCrash(msg.incident);
+        break;
       case 'game-start':
         state.running = { versionId: msg.versionId, pid: msg.pid };
         refreshStatus();
@@ -3937,6 +4211,17 @@ function switchTab(name) {
 $('launchBtn').addEventListener('click', () => {
   if (state.selectedVersion) doLaunch(state.selectedVersion);
 });
+
+$('savesClose')?.addEventListener('click', () => { $('savesModal').hidden = true; });
+$('savesBackupAll')?.addEventListener('click', backupAllSaves);
+$('savesOpenFolder')?.addEventListener('click', () => openSavesFolder('saves'));
+$('savesOpenBackups')?.addEventListener('click', () => openSavesFolder('backups'));
+
+$('exportClose')?.addEventListener('click', () => { $('exportModal').hidden = true; });
+$('exportPickDest')?.addEventListener('click', pickExportDestination);
+$('exportStart')?.addEventListener('click', startExport);
+$('exportCopyPath')?.addEventListener('click', copyExportPath);
+$('exportOpenFolder')?.addEventListener('click', openExportFolder);
 
 $('launchRetryBtn')?.addEventListener('click', () => {
   const v = state.launchRetryVersion || state.selectedVersion;

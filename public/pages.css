@@ -1278,10 +1278,10 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 }
 .home-assistant-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .home-assistant-title { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
-.home-assistant-title b { font-size: 12px; color: var(--text); }
+.home-assistant-title b { font-size: 12px; color: var(--text); white-space: nowrap; }
 .home-assistant-title .hint { font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.home-assistant-actions { display: flex; gap: 5px; flex: 0 0 auto; }
-.home-assistant-actions .btn { padding: 4px 7px; font-size: 10px; }
+.home-assistant-actions { display: flex; gap: 5px; flex: 0 0 auto; flex-wrap: nowrap; }
+.home-assistant-actions .btn { padding: 4px 7px; font-size: 10px; white-space: nowrap; }
 .home-assistant-log { min-height: 54px; max-height: 146px; overflow-y: auto; margin: 0; white-space: normal; font-size: 11px; line-height: 1.55; }
 .home-assistant-log .assistant-msg { margin: 5px 0; padding: 6px 8px; border-radius: 7px; }
 .home-assistant-log .assistant-msg-role { font-size: 9px; margin-bottom: 2px; }
@@ -1293,10 +1293,37 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .home-assistant .assistant-chat-line .btn { padding: 5px 8px; font-size: 10px; }
 .home-assistant-hint { font-size: 10px; margin: 0; }
 .home-assistant.is-collapsed .home-assistant-log,
-.home-assistant.is-collapsed .assistant-chat-line,
 .home-assistant.is-collapsed .home-assistant-hint { display: none; }
-.home-assistant.is-collapsed { width: 210px; max-height: none; }
+.home-assistant.is-collapsed {
+  width: min(960px, calc(100% - 40px));
+  max-height: none;
+  padding: 6px 8px;
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+}
+.home-assistant.is-collapsed .home-assistant-head {
+  flex: 0 1 auto;
+  min-width: 0;
+  gap: 6px;
+}
+.home-assistant.is-collapsed .home-assistant-title {
+  flex-direction: row;
+  align-items: baseline;
+  flex: 0 0 auto;
+  gap: 6px;
+}
 .home-assistant.is-collapsed .home-assistant-title .hint { display: none; }
+.home-assistant.is-collapsed .home-assistant-actions { flex: 0 0 auto; }
+.home-assistant.is-collapsed .assistant-chat-line {
+  display: flex;
+  flex: 1 1 240px;
+  min-width: 150px;
+  margin: 0;
+}
+.home-assistant.is-collapsed .assistant-chat-line .input { min-width: 80px; }
+.home-assistant.is-collapsed .assistant-chat-line #aiChatNew { display: none; }
+.home-assistant.is-collapsed .home-assistant-actions .btn { padding: 3px 5px; }
 .assistant-moved-note { margin-top: 4px; }
 .assistant-toast {
   position: fixed;
@@ -1337,3 +1364,41 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 
 .diag-box { width: min(760px, 88vw); max-height: 80vh; }
 .diag-text { max-height: 58vh; overflow: auto; white-space: pre-wrap; font-size: 11px; line-height: 1.55; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-2); color: var(--text); }
+
+.crash-notice {
+  position: fixed;
+  right: 24px;
+  bottom: 300px;
+  z-index: 145;
+  width: min(340px, calc(100vw - 32px));
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-2);
+  box-shadow: 0 14px 34px rgba(0,0,0,.32);
+}
+.crash-notice-head { color: var(--accent); font-size: 10px; margin-bottom: 5px; }
+.crash-notice-text { color: var(--text); font-size: 12px; line-height: 1.6; white-space: pre-wrap; max-height: 190px; overflow: auto; }
+.crash-notice-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+.crash-notice-actions .btn { font-size: 10px; padding: 4px 7px; }
+@media (max-width: 720px) { .crash-notice { left: 12px; right: 12px; width: auto; bottom: 250px; } }
+
+.export-info { font-size: 12px; line-height: 1.7; color: var(--text-2); margin-bottom: 10px; white-space: pre-wrap; }
+.export-options { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 8px 0 12px; font-size: 12px; color: var(--text); }
+.export-options label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.export-dest-line { margin-bottom: 8px; }
+.export-progress { min-height: 18px; font-size: 11px; color: var(--muted); }
+.export-result { max-height: 140px; white-space: pre-wrap; }
+
+.saves-info { font-size: 12px; color: var(--text-2); line-height: 1.7; margin-bottom: 8px; white-space: pre-wrap; }
+.saves-head { margin-bottom: 8px; }
+.saves-progress { min-height: 18px; font-size: 11px; color: var(--muted); margin: 6px 0; }
+.saves-subtitle { margin: 12px 0 6px; font-size: 12px; color: var(--text); }
+.saves-list { display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow: auto; }
+.save-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-2); }
+.save-row-main { min-width: 0; }
+.save-row-name { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.save-row-meta { font-size: 10px; color: var(--muted); margin-top: 2px; }
+.save-row button { flex: 0 0 auto; }
+.saves-empty { font-size: 11px; color: var(--muted); padding: 8px 0; }
+.saves-box { max-width: 640px; }

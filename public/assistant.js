@@ -380,12 +380,45 @@
     await sendChat('分析最近一次启动失败，为什么进不去游戏？', { diagnostic: true });
   }
 
+  async function onCrash(incident) {
+    if (!incident?.id) return;
+    try {
+      const d = await api('/api/assistant/auto', {
+        method: 'POST',
+        body: JSON.stringify({ incidentId: incident.id }),
+      });
+      if (d.already) return;
+      if (d.sessionId) {
+        currentSessionId = d.sessionId;
+        localStorage.setItem('sakura.assistantSession', currentSessionId);
+      }
+      // 崩溃提示直接进入主页对话区，不替换已有消息。
+      const box = el('aiResult');
+      if (box) {
+        const empty = box.querySelector('.empty');
+        if (empty) empty.remove();
+        const div = document.createElement('div');
+        div.className = 'assistant-msg bot';
+        div.innerHTML = '<div class="assistant-msg-role">绘梨衣</div>' +
+          `<div class="assistant-msg-text">${escapeHtml(d.reply || '')}</div>`;
+        box.appendChild(div);
+        box.scrollTop = box.scrollHeight;
+      }
+      const notice = el('crashNotice');
+      if (el('crashNoticeText')) el('crashNoticeText').textContent = d.reply || '游戏异常退出了。';
+      if (notice) notice.hidden = false;
+      showAssistantToast('游戏异常退出，原因已放在对话区。', { timeout: 5500 });
+    } catch (e) {
+      showAssistantToast('自动分析崩溃失败：' + e.message, { timeout: 6500 });
+    }
+  }
   function showBubble() {
     const b = el('assistantBubble');
     if (b) b.hidden = true;
     showAssistantToast('启动失败了。主页的小助手可以看日志。', { timeout: 6000 });
   }
   window.assistantOnFailure = showBubble;
+  window.assistantCrash = onCrash;
 
   function setHomeCollapsed(collapsed, { persist = false } = {}) {
     const home = el('homeAssistant');
@@ -408,6 +441,7 @@
     el('aiChatSend')?.addEventListener('click', () => sendChat(el('aiChatInput')?.value));
     el('aiChatNew')?.addEventListener('click', newSession);
     el('homeDiagBtn')?.addEventListener('click', openDiagnosticPreview);
+    el('crashNoticeDismiss')?.addEventListener('click', () => { el('crashNotice').hidden = true; });
     el('diagPackBtn')?.addEventListener('click', createDiagnosticPackageNow);
     el('diagOpenBtn')?.addEventListener('click', openDiagnosticFolder);
     el('diagCopyPath')?.addEventListener('click', copyDiagnosticPath);
