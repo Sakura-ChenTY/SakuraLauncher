@@ -125,19 +125,76 @@ function localChatReply(message) {
   return '嗯。你说。';
 }
 
-function localDiagnosticReply(session, message, actions, category = 'startup') {
+function extractPreference(text) {
+  const raw = String(text || '').trim();
+  if (!/(我想要的是|我要的是|我想要|我要|想要|不想|不要|别|改成|换成|先看|先弄|先做)/i.test(raw)) return '';
+  return raw.slice(0, 180);
+}
+
+function requestedCategory(text) {
+  const s = String(text || '');
+  if (/联机|frp|隧道|朋友.*连|房间|端口/i.test(s)) return 'online';
+  if (/整合包|modpack|mrpack|server\s*pack|curseforge|modrinth/i.test(s)) return 'modpack';
+  if (/资源.*下载|版本.*下载|下载失败|hash|校验|代理/i.test(s)) return 'download';
+  if (/mod.*冲突|不兼容|missing depend|duplicate/i.test(s)) return 'mod';
+  if (/卡顿|掉帧|性能|lag|tps/i.test(s)) return 'performance';
+  if (/(\d{3,4})\s*M|内存|启动|崩溃|闪退|进不去游戏/i.test(s)) return 'startup';
+  return '';
+}
+
+function requestedMemory(text) {
+  const s = String(text || '');
+  const m = /(?:改成|换成|降到|调到|设为|设置为|想要|要)\s*(\d{3,4})\s*M/i.exec(s) || /(\d{3,4})\s*M/i.exec(s);
+  if (m) return Number(m[1]);
+  const g = /(\d+(?:\.\d+)?)\s*G/i.exec(s);
+  return g ? Math.round(Number(g[1]) * 1024) : 0;
+}
+
+function updatePreferences(session, text) {
+  const p = extractPreference(text);
+  if (!p) return;
+  if (!Array.isArray(session.playerPreferences)) session.playerPreferences = [];
+  session.playerPreferences.push(p);
+  session.playerPreferences = session.playerPreferences.slice(-6);
+}
+
+function preferenceText(session) {
+  return (session.playerPreferences || []).slice(-4).join(' / ');
+}
+
+function isContinuation(session, category) {
+  return Array.isArray(session.explainedCategories) && session.explainedCategories.includes(category);
+}
+
+
+function localDiagnosticReply(session, message, actions, category = 'startup', preference = '', continuation = false) {
   const cmd = String(session.diagnosticContext || session.context || '');
   const mem = maxMemoryIn(cmd);
   const hasInstance = hasInstanceContext(cmd);
+  const reqMem = requestedMemory(preference || message);
   const second = /第二条|第二个|第二个按钮/i.test(String(message));
   if (second && actions[1]) {
     return `第二条是「${actions[1].label}」。它对应上面的问题，点之前会先确认。`;
+  }
+  if (category === 'startup' && reqMem) {
+    const prefix = continuation ? '接着上面说：' : '';
+    if (reqMem === mem) {
+      return `${prefix}你希望的是 ${reqMem}M，现在实例已经是 ${reqMem}M，所以这个按钮不会改变现状。可以继续看 Java、mod 或日志里的下一条错误。`;
+    }
+    return `${prefix}你希望把最大内存改成 ${reqMem}M。依据：当前实例是 ${mem || '未知'}M，日志里有内存压力；目标值可以试。建议：按你的方向改成 ${reqMem}M，再启动一次看结果。`;
+  }
+  if (category === 'startup' && /不要.*内存|不是内存|不想.*内存|别.*内存/.test(preference) && /OutOfMemoryError|insufficient memory|Native memory allocation|malloc failed|页面文件|内存不足/i.test(cmd)) {
+    return '先说明证据：日志里确实有内存分配失败，当前实例也已经有内存压力。你不想先动内存，可以走别的路：先换 Java 运行时、检查 mod 冲突，或把最新日志发我，我按这两条继续查。';
   }
   if (category === 'online') {
     const provider = /当前 provider：([^\n]+)/.exec(cmd)?.[1] || '未选择';
     const room = /房间状态：([^\n]+)/.exec(cmd)?.[1] || '未知';
     const frp = /frpc 最近输出：\n([\s\S]*?)(?:\n\n|$)/.exec(cmd)?.[1]?.split(/\r?\n/).filter(Boolean).slice(-3).join(' / ') || '无输出';
-    return `原因：联机链路没有建立。\n依据：provider=${provider}；房间=${room}；frpc=${frp}。\n建议：先确认选中的隧道 local_port 是 25565、frpc 正在运行；再看房间 error 和防火墙是否放行 java/javaw。`;
+    const conflict = /不要.*内存|不是内存|不想.*内存|别.*内存/.test(preference);
+    const evidence = conflict && session.lastReply
+      ? '先说明证据：上一轮看到的是内存分配失败，不是联机隧道报错。\n'
+      : '';
+    return `${evidence}${continuation ? '接着上面：' : '原因：联机链路没有建立。\n依据：'}provider=${provider}；房间=${room}；frpc=${frp}。\n建议：先确认选中的隧道 local_port 是 25565、frpc 正在运行；再看房间 error 和防火墙是否放行 java/javaw。`;
   }
   if (category === 'modpack') {
     const err = /房间状态：[^\n]*error=([^\n]+)/.exec(cmd)?.[1] || /error=([^\n]+)/.exec(cmd)?.[1] || '未读到明确 error';
@@ -161,10 +218,11 @@ function localDiagnosticReply(session, message, actions, category = 'startup') {
   }
   if (/OutOfMemoryError|insufficient memory|Native memory allocation|malloc failed|页面文件|内存不足/i.test(cmd) || mem >= 3072) {
     const free = availableMemoryIn(cmd);
+    const prefix = continuation ? '接着上面说：' : '';
     if (mem && mem <= 1024) {
-      return `原因：内存不足。\n依据：当前实例已经设置为 ${mem}M，日志里仍有内存分配失败；系统当时可用约 ${free || '很少'}M。\n建议：先关掉浏览器/别的游戏，确认 Windows 页面文件没有关闭；还不行再把最大内存降到 768M 试一次。`;
+      return `${prefix}内存还是不够。依据：当前实例已经是 ${mem}M，日志里仍有分配失败；系统当时可用约 ${free || '很少'}M。建议：先关掉浏览器/别的游戏，确认 Windows 页面文件没有关闭；还不行再把最大内存降到 768M 试一次。`;
     }
-    return `原因：内存不足。\n依据：当前实例最大内存是 ${mem || '较大'}M，系统当时可用约 ${free || '很少'}M，日志里有内存分配失败。\n建议：先把最大内存从 ${mem || '较大'}M 降到 1024M，并关掉占内存的程序。`;
+    return `${prefix}内存还是不够。依据：当前实例最大内存是 ${mem || '较大'}M，系统当时可用约 ${free || '很少'}M，日志里有分配失败。建议：先把最大内存从 ${mem || '较大'}M 降到 1024M，并关掉占内存的程序。`;
   }
   if (/UnsupportedClassVersionError|class file version|Java 版本/i.test(cmd)) {
     return '原因：Java 版本对不上。\n依据：日志里出现 class file version / UnsupportedClassVersionError。\n建议：先换到实例要求的 Java，再启动。';
@@ -274,6 +332,10 @@ export async function chatSession({ id, message, mode, diagnosticsState }) {
   if (!text) throw new Error('消息不能为空');
   if (!Array.isArray(session.messages)) session.messages = [];
   if (!Array.isArray(session.classified)) session.classified = [];
+  updatePreferences(session, text);
+  const preference = preferenceText(session);
+  const currentPreference = extractPreference(text);
+  const preferredCategory = requestedCategory(currentPreference);
 
   if (/收集诊断|打包诊断|诊断包/i.test(text)) {
     const pkg = await createDiagnosticPackage({
@@ -288,13 +350,16 @@ export async function chatSession({ id, message, mode, diagnosticsState }) {
     writeAll(data);
     return { sessionId: id, mode: 'package', category: 'package', reply, package: pkg, actions: [], messages: session.messages };
   }
-  let category = intentCategory(session, text, mode);
+  let category = preferredCategory || intentCategory(session, text, mode);
   let guessed = false;
+  const followUp = /(那|接着|然后|继续|接下来|怎么弄|办)/i.test(text);
+  if ((!category || category === 'unknown') && followUp && session.lastCategory) category = session.lastCategory;
   if (category === 'unknown') {
     category = guessSymptom(text, diagnosticsState);
     guessed = true;
   }
   const diagnostic = Boolean(category);
+  const continuation = diagnostic && session.lastCategory === category && isContinuation(session, category);
   let context = String(session.basicContext || session.context || '');
   let candidates = [];
   if (diagnostic) {
@@ -304,10 +369,13 @@ export async function chatSession({ id, message, mode, diagnosticsState }) {
 
   const cfg = loadAiConfig();
   let reply = '';
-  if (aiHasKey() && cfg.baseURL) {
+  if (aiHasKey() && cfg.baseURL && !currentPreference) {
     const system = diagnostic
       ? `你是《龙族》里的上杉绘梨衣，正在帮 Sakura 排查 Minecraft 问题。说话安静、短，不卖萌。
 当前症状类别：${SYMPTOMS[category] || category}。
+玩家在本会话的诉求（最后一条优先）：${preference || '无'}。
+${continuation ? '这是同一会话的追问/改口：不要从头复述上一轮原因和依据，只补充这次的新信息。' : ''}
+如果玩家改口，按他的新诉求重新排查和换方案，不要固守上一轮；如果诉求和证据冲突，先用一句话说明证据，再给出沿他方向的可行路径，不要只说不行。
 输出必须包含三段：原因：... / 依据：...（引用一到两条当前类别材料里的具体内容）/ 建议：...（一到两步）。
 ${category === 'startup' ? `当前实例最大内存：${maxMemoryIn(context) || '未知'}M；系统可用：${availableMemoryIn(context) || '未知'}M。
 不要建议把内存改成和当前相同的值。若当前已经 ≤1024M 且日志仍报内存不足，优先建议关掉别的程序、检查 Windows 页面文件，再考虑降到 768M。` : '按联机/下载/整合包/mod/性能对应的材料回答，不要把问题一律归因于内存。'}
@@ -331,19 +399,25 @@ ${category === 'startup' ? `当前实例最大内存：${maxMemoryIn(context) ||
     try {
       reply = await callAi({ ...cfg, messages, maxTokens: diagnostic ? 1000 : 500 });
       if (diagnostic && !/原因[:：]/.test(reply)) {
-        reply = localDiagnosticReply(session, text, candidates, category);
+        reply = localDiagnosticReply(session, text, candidates, category, preference, continuation);
       }
     } catch {
-      reply = diagnostic ? localDiagnosticReply(session, text, candidates, category) : localChatReply(text);
+      reply = diagnostic ? localDiagnosticReply(session, text, candidates, category, preference, continuation) : localChatReply(text);
     }
   } else {
-    reply = diagnostic ? localDiagnosticReply(session, text, candidates, category) : localChatReply(text);
+    reply = diagnostic ? localDiagnosticReply(session, text, candidates, category, preference, continuation) : localChatReply(text);
   }
   const actions = diagnostic ? actionsFromReply(reply, session) : [];
   if (guessed) {
     const evidence = evidenceSummary(category, diagnosticsState);
     if (!/我看到的依据是/.test(reply)) reply += `\n\n我看到的依据是：${evidence}。`;
     reply += '\n\n如果不是这个，把报错原文贴给我。';
+  }
+  session.lastReply = reply;
+  if (diagnostic) {
+    if (!Array.isArray(session.explainedCategories)) session.explainedCategories = [];
+    if (!session.explainedCategories.includes(category)) session.explainedCategories.push(category);
+    session.lastCategory = category;
   }
 
   session.messages.push({ role: 'user', content: text, at: Date.now() });
