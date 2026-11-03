@@ -484,11 +484,11 @@
     void home.offsetWidth;
     requestAnimationFrame(() => {
       for (const node of transforms) {
-        node.style.transition = 'transform 220ms cubic-bezier(0,0,.2,1)';
+        node.style.transition = 'transform 220ms cubic-bezier(.2,.8,.2,1)';
         node.style.transform = 'translate(0, 0)';
       }
       if (widthChanged) {
-        input.style.transition = 'width 220ms cubic-bezier(0,0,.2,1)';
+        input.style.transition = 'width 220ms cubic-bezier(.2,.8,.2,1)';
         input.style.width = `${finalInputWidth}px`;
       }
     });
