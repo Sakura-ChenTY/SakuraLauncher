@@ -1803,3 +1803,35 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
     min-width: min(100px, calc(100% - 73px)) !important;
   }
 }
+
+/* 不再隐藏操作按钮：所有按钮常驻，空间不足只压缩输入框 */
+.home-assistant #aiAnalyze,
+.home-assistant #homeDiagBtn {
+  display: inline-flex !important;
+  max-width: none !important;
+  width: auto !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  border-width: 1px !important;
+  padding: 3px 5px !important;
+  flex: 0 0 auto !important;
+}
+.home-assistant.is-collapsed #aiChatInput {
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+}
+.home-assistant.is-collapsed .home-assistant-title {
+  display: flex !important;
+}
+
+/* 极窄窗口：按钮全保留，进一步压缩按钮和内边距 */
+@media (max-width: 419px) {
+  .home-assistant-bar { gap: 0 !important; }
+  .home-assistant #aiChatSend,
+  .home-assistant #aiAnalyze,
+  .home-assistant #homeDiagBtn,
+  .home-assistant #homeAssistantMore {
+    font-size: 8px !important;
+    padding: 2px 3px !important;
+  }
+}
