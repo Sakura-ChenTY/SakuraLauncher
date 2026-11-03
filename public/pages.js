@@ -3,7 +3,7 @@
 
 /* ---------------- 导航 ---------------- */
 
-const TABS = ['home', 'download', 'version', 'online', 'settings', 'theme', 'assistant', 'more'];
+const TABS = ['home', 'download', 'version', 'saves', 'online', 'settings', 'theme', 'assistant', 'more'];
 
 function showPanel(name) {
   if (!TABS.includes(name)) name = 'home';

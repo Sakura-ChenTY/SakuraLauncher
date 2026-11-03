@@ -838,6 +838,166 @@ async function openSavesFolder(kind) {
 }
 
 /** 版本类型的中文名，列表图标上用 */
+/* ---- 左侧导航：存档管理 ---- */
+const savesPageState = { versionId: '', data: null };
+
+function fillSavesPageInstances() {
+  const sel = $('savesPageInstance');
+  if (!sel) return '';
+  const versions = Array.isArray(state.versions) ? state.versions : [];
+  const prev = sel.value || state.selectedVersion || '';
+  sel.innerHTML = versions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+  if (versions.includes(prev)) sel.value = prev;
+  else if (versions.length) sel.value = versions[0];
+  return sel.value || '';
+}
+
+function renderSavesPage(data) {
+  savesPageState.data = data;
+  const list = $('savesPageList');
+  if (!list) return;
+  const saves = data?.saves || [];
+  const backups = data?.backups || [];
+  if (!saves.length) {
+    list.innerHTML = '<div class="empty">这个实例还没有存档。进入游戏创建世界后会出现在这里。</div>';
+    return;
+  }
+  list.innerHTML = saves.map((s) => {
+    const own = backups.filter((b) => b.world === s.name);
+    const options = own.length
+      ? own.map((b) => `<option value="${escapeHtml(b.file)}">${new Date(b.createdAt).toLocaleString()}${b.whileRunning ? ' · 运行中' : ''}</option>`).join('')
+      : '<option value="">没有可用备份</option>';
+    const disabled = state.running || !own.length;
+    const title = state.running ? '游戏还开着，先关掉再恢复' : (!own.length ? '没有可用备份' : '');
+    return `<div class="save-row saves-page-row">
+      <div class="save-row-main">
+        <div class="save-row-name">${escapeHtml(s.name)}</div>
+        <div class="save-row-meta">${fmtSize(s.size)} · ${new Date(s.modifiedAt).toLocaleString()}</div>
+      </div>
+      <div class="saves-page-actions">
+        <select class="select" data-page-backup-pick="${escapeHtml(s.name)}" ${own.length ? '' : 'disabled'}>${options}</select>
+        <button class="btn ghost" type="button" data-page-backup="${escapeHtml(s.name)}">备份</button>
+        <button class="btn ghost" type="button" data-page-restore="${escapeHtml(s.name)}" ${disabled ? 'disabled' : ''} title="${title}">恢复</button>
+        <button class="btn ghost" type="button" data-page-open="${escapeHtml(s.name)}">打开所在目录</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('[data-page-backup]').forEach((btn) => {
+    btn.addEventListener('click', () => backupSavePage(btn.dataset.pageBackup));
+  });
+  list.querySelectorAll('[data-page-restore]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const pick = list.querySelector(`[data-page-backup-pick="${CSS.escape(btn.dataset.pageRestore)}"]`);
+      restoreSavePage(pick?.value || '');
+    });
+  });
+  list.querySelectorAll('[data-page-open]').forEach((btn) => {
+    btn.addEventListener('click', () => openSavesPageFolder());
+  });
+}
+
+async function loadSavesPage() {
+  let versionId = $('savesPageInstance')?.value || '';
+  if (!versionId) versionId = fillSavesPageInstances();
+  savesPageState.versionId = versionId;
+  const progress = $('savesPageProgress');
+  if (!versionId) {
+    if (progress) progress.textContent = '还没有安装任何实例。';
+    renderSavesPage({ saves: [], backups: [] });
+    return;
+  }
+  if (progress) progress.textContent = '读取中…';
+  try {
+    const data = await api('/api/saves?versionId=' + encodeURIComponent(versionId));
+    if (progress) progress.textContent = '';
+    renderSavesPage(data);
+  } catch (e) {
+    if (progress) progress.textContent = '读取失败：' + e.message;
+    toast('读取存档失败：' + e.message, 'err');
+  }
+}
+
+async function backupSavePage(world) {
+  if (!savesPageState.versionId) return;
+  const progress = $('savesPageProgress');
+  if (progress) progress.textContent = `正在备份 ${world}…`;
+  try {
+    await api('/api/saves/backup', {
+      method: 'POST',
+      body: JSON.stringify({ versionId: savesPageState.versionId, world }),
+    });
+    toast(`已备份存档 ${world}`, 'ok');
+    await loadSavesPage();
+  } catch (e) {
+    if (progress) progress.textContent = '备份失败：' + e.message;
+    toast('备份失败：' + e.message, 'err');
+  }
+}
+
+async function backupAllSavesPage() {
+  if (!savesPageState.versionId) return;
+  const btn = $('savesPageBackupAll');
+  const progress = $('savesPageProgress');
+  if (btn) btn.disabled = true;
+  if (progress) progress.textContent = '正在备份全部存档…';
+  try {
+    const r = await api('/api/saves/backup-all', {
+      method: 'POST',
+      body: JSON.stringify({ versionId: savesPageState.versionId }),
+    });
+    toast(`已备份 ${r.results?.length || 0} 个存档`, 'ok');
+    await loadSavesPage();
+  } catch (e) {
+    if (progress) progress.textContent = '备份失败：' + e.message;
+    toast('备份失败：' + e.message, 'err');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function restoreSavePage(file) {
+  if (!savesPageState.versionId) return;
+  if (state.running) {
+    toast('游戏还开着，先关掉再恢复', 'err');
+    return;
+  }
+  if (!file) {
+    toast('没有可用备份', 'err');
+    return;
+  }
+  if (!confirm(`恢复备份「${file}」？\n当前同名存档会先自动备份一次，再覆盖。`)) return;
+  const progress = $('savesPageProgress');
+  if (progress) progress.textContent = '正在恢复…';
+  try {
+    const r = await api('/api/saves/restore', {
+      method: 'POST',
+      body: JSON.stringify({ versionId: savesPageState.versionId, file }),
+    });
+    toast(`已恢复存档 ${r.world}`, 'ok');
+    await loadSavesPage();
+  } catch (e) {
+    if (progress) progress.textContent = '恢复失败：' + e.message;
+    toast('恢复失败：' + e.message, 'err');
+  }
+}
+
+async function openSavesPageFolder() {
+  if (!savesPageState.versionId) return;
+  try {
+    await api('/api/saves/open', {
+      method: 'POST',
+      body: JSON.stringify({ versionId: savesPageState.versionId, kind: 'saves' }),
+    });
+  } catch (e) {
+    toast('打开文件夹失败：' + e.message, 'err');
+  }
+}
+function refreshSavesPageIfVisible() {
+  if (savesPageState.data && $('panel-saves')?.classList.contains('active')) {
+    renderSavesPage(savesPageState.data);
+  }
+}
 const LOADER_LABEL = {
   vanilla: '原版',
   snapshot: '快照',
@@ -2243,6 +2403,7 @@ function connectEvents() {
         const s = msg.state || {};
         state.installing = s.installing;
         state.running = s.running;
+        refreshSavesPageIfVisible();
         state.lastFailure = s.lastFailure ?? null;
         setAppVersion(s.version);
         if (s.installInterrupted) {
@@ -2528,6 +2689,7 @@ function connectEvents() {
         break;
       case 'game-start':
         state.running = { versionId: msg.versionId, pid: msg.pid };
+        refreshSavesPageIfVisible();
         refreshStatus();
         renderInstalled();
         break;
@@ -2539,6 +2701,7 @@ function connectEvents() {
       case 'game-exit': {
         const code = msg.code;
         state.running = null;
+        refreshSavesPageIfVisible();
         renderInstalled();
         appendLog(`<<< 游戏退出 code=${code}`);
         setTimeout(() => {
@@ -4255,8 +4418,13 @@ document.querySelectorAll('.nav-item').forEach((tab) => {
     document.querySelectorAll('.panel').forEach((p) => p.classList.remove('active'));
     tab.classList.add('active');
     $('panel-' + tab.dataset.tab).classList.add('active');
+    if (tab.dataset.tab === 'saves') loadSavesPage();
   });
 });
+
+$('savesPageInstance')?.addEventListener('change', loadSavesPage);
+$('savesPageRefresh')?.addEventListener('click', loadSavesPage);
+$('savesPageBackupAll')?.addEventListener('click', backupAllSavesPage);
 
 /** 切到指定面板（供「管理内容」等按钮调用） */
 function switchTab(name) {
