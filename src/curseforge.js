@@ -20,8 +20,20 @@
  * 绝不能让它变成硬依赖。
  */
 
+import { getToken } from './secure.js';
 const MCIM = 'https://mod.mcimirror.top/curseforge/v1';
+const OFFICIAL = 'https://api.curseforge.com/v1';
 const UA = 'mclauncher/0.1 (local)';
+function cfApiKey() {
+  return String(process.env.CURSEFORGE_API_KEY || process.env.CF_API_KEY || getToken('curseforge') || '').trim();
+}
+function cfBase() { return cfApiKey() ? OFFICIAL : MCIM; }
+export function hasCfKey() { return Boolean(cfApiKey()); }
+export function cfKeyMask() {
+  const k = cfApiKey();
+  if (!k) return '';
+  return k.length <= 8 ? '••••' : `${k.slice(0, 3)}…${k.slice(-4)}`;
+}
 
 /** CurseForge 的 gameId：Minecraft 固定 432 */
 const GAME_ID = 432;
@@ -53,16 +65,24 @@ function loaderName(t) {
   return { 1: 'forge', 2: 'cauldron', 3: 'liteloader', 4: 'fabric', 5: 'quilt', 6: 'neoforge' }[t] ?? null;
 }
 
-/** 所有请求统一的超时包装：镜像挂了不能让界面卡死 */
-async function mcimGet(pathAndQuery, timeout = 20000) {
-  const url = `${MCIM}${pathAndQuery}`;
+/** 所有请求统一走这里：优先官方 API + x-api-key，没 key 才回退镜像 */
+async function cfRequest(pathAndQuery, { timeout = 20000, method = 'GET', body } = {}) {
+  const key = cfApiKey();
+  const url = `${cfBase()}${pathAndQuery}`;
   const res = await fetch(url, {
-    headers: { 'User-Agent': UA, Accept: 'application/json' },
+    headers: {
+      'User-Agent': UA,
+      Accept: 'application/json',
+      ...(key ? { 'x-api-key': key } : {}),
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+    },
+    method,
+    body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(timeout),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`CurseForge 镜像返回 ${res.status}${text ? '：' + text.slice(0, 120) : ''}`);
+    throw new Error(`CurseForge API 返回 ${res.status}${text ? '：' + text.slice(0, 120) : ''}`);
   }
   return res.json();
 }
@@ -134,7 +154,7 @@ export async function searchProjects(opts = {}) {
   const sortKey = { relevance: 2, downloads: 6, newest: 11, updated: 3 }[sortBy];
   if (sortKey) params.set('sortField', String(sortKey));
 
-  const data = await mcimGet(`/mods/search?${params}`);
+  const data = await cfGet(`/mods/search?${params}`);
   const list = data?.data ?? [];
 
   return {
@@ -146,14 +166,14 @@ export async function searchProjects(opts = {}) {
 
 /** 按 slug 精确拿一个项目（用于反查封面、确认存在） */
 export async function getProjectBySlug(slug) {
-  const data = await mcimGet(`/mods/search?gameId=${GAME_ID}&slug=${encodeURIComponent(slug)}`);
+  const data = await cfGet(`/mods/search?gameId=${GAME_ID}&slug=${encodeURIComponent(slug)}`);
   const hit = (data?.data ?? [])[0];
   return hit ? normalizeHit(hit) : null;
 }
 
 /** 按 id 拿项目详情 */
 export async function getProject(id) {
-  const data = await mcimGet(`/mods/${id}`);
+  const data = await cfGet(`/mods/${id}`);
   const m = data?.data;
   if (!m) throw new Error('CurseForge 项目不存在');
   return {
@@ -178,7 +198,7 @@ export async function getProjectFiles(id, opts = {}) {
   const loaderType = LOADER_TYPE[loader];
   if (loaderType) params.set('modLoaderType', String(loaderType));
 
-  const data = await mcimGet(`/mods/${id}/files?${params}`);
+  const data = await cfGet(`/mods/${id}/files?${params}`);
   const files = data?.data ?? [];
 
   return files.map((f) => ({
@@ -218,4 +238,6 @@ export function isCurseForgePack() {
   return true;
 }
 
+export async function cfGet(p, timeout = 20000) { return cfRequest(p, { timeout }); }
+export async function cfPost(p, body, timeout = 30000) { return cfRequest(p, { method: 'POST', body, timeout }); }
 export { MCIM as CF_MIRROR_BASE, GAME_ID as CF_GAME_ID };

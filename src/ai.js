@@ -108,7 +108,12 @@ const SECRET_PATTERNS = [
 
 export function redact(text) {
   let out = String(text ?? '');
-  for (const re of SECRET_PATTERNS) out = out.replace(re, (m) => `${m.split(/[:=]/)[0].trim()}: ***`);
+  // 先处理带具体名字的 key/value，避免把值留在 match 里。
+  out = out.replace(/(access[_-]?token|client[_-]?token|refresh[_-]?token|api[_-]?key|password|passwd|secret)\s*[:=]\s*["']?[^\s"',}]+/gi, (_m, key) => `${key}: ***`);
+  out = out.replace(/--accessToken\s+\S+/gi, '--accessToken ***');
+  out = out.replace(/--uuid\s+\S+/gi, '--uuid ***');
+  out = out.replace(/Authorization\s*:\s*Bearer\s+[^\s]+/gi, 'Authorization: Bearer ***');
+  out = out.replace(/Bearer\s+[A-Za-z0-9._~+/=-]{12,}/g, 'Bearer ***');
   // 邮箱不必给模型；保留错误形状，不保留账号
   out = out.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '<email>');
   out = out.replace(/C:\\Users\\[^\\\s]+/gi, 'C:\\Users\\<user>');
@@ -129,6 +134,50 @@ function tailFile(file, maxBytes = 30000) {
   }
 }
 
+function readJson(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+}
+
+function newestHsErr(gameDir, versionId) {
+  const dirs = [
+    versionId ? path.join(gameDir, 'versions', versionId) : '',
+    gameDir,
+  ].filter(Boolean);
+  let best = null;
+  for (const dir of dirs) {
+    try {
+      for (const name of fs.readdirSync(dir)) {
+        if (!/^hs_err_pid\d+\.log$/i.test(name)) continue;
+        const file = path.join(dir, name);
+        const mtime = fs.statSync(file).mtimeMs;
+        if (!best || mtime > best.mtime) best = { file, mtime };
+      }
+    } catch { /* ignore */ }
+  }
+  return best ? tailFile(best.file, 30000) : '';
+}
+
+function modsList(gameDir, versionId) {
+  if (!versionId) return '';
+  const dir = path.join(gameDir, 'versions', versionId, 'mods');
+  try {
+    const names = fs.readdirSync(dir).filter((n) => /\.jar$/i.test(n)).sort();
+    return names.slice(0, 300).map((n) => n.replace(/\.jar$/i, '')).join('\n');
+  } catch { return ''; }
+}
+
+function instanceConfig(gameDir, versionId) {
+  if (!versionId) return '';
+  const root = path.join(gameDir, 'versions', versionId);
+  const out = [];
+  const versionJson = readJson(path.join(root, `${versionId}.json`));
+  if (versionJson) {
+    out.push(`版本 JSON：id=${versionJson.id ?? versionId} inheritsFrom=${versionJson.inheritsFrom ?? ''} mainClass=${versionJson.mainClass ?? ''} java=${versionJson.javaVersion?.majorVersion ?? '?'}`);
+  }
+  const override = readJson(path.join(root, 'launcher-instance.json'));
+  if (override) out.push(`实例覆盖：${JSON.stringify(override)}`);
+  return out.join('\n');
+}
 function newestCrash(gameDir, versionId) {
   const v = String(versionId || '');
   const dirs = [
@@ -149,15 +198,28 @@ function newestCrash(gameDir, versionId) {
   return best ? tailFile(best.file, 30000) : '';
 }
 
-export function collectContext({ gameDir, versionId, lastFailure, logs }) {
-  const parts = [];
+export function collectContext({ gameDir, versionId, lastFailure, logs, launchCommand }) {
+  const totalMb = Math.round(os.totalmem() / 1024 / 1024);
+  const freeMb = Math.round(os.freemem() / 1024 / 1024);
+  const parts = [`系统内存：共 ${totalMb}M，可用 ${freeMb}M`];
   if (lastFailure) {
-    parts.push(`启动器失败摘要：${lastFailure.reason ?? ''}（code=${lastFailure.code ?? '?'}，实例=${lastFailure.versionId ?? versionId ?? '?'}）`);
+    parts.push(`上次启动：实例=${lastFailure.versionId ?? versionId ?? '?'} 退出码=${lastFailure.code ?? '?'} 原因=${lastFailure.reason ?? ''}`);
   }
+  if (launchCommand) parts.push(`实际启动命令：\n${JSON.stringify(launchCommand, null, 2)}`);
+  const settings = readJson(path.join(HOME_DIR, 'settings.json'));
+  if (settings) parts.push(`启动器设置：Java=${settings.javaPath || '自动'} 默认内存=${settings.memoryMin || '?'}/${settings.memoryMax || '?'}`);
+  const info = instanceConfig(gameDir, versionId);
+  if (info) parts.push(`实例配置：\n${info}`);
+  const mods = modsList(gameDir, versionId);
+  parts.push(`mods 列表（文件名含版本）：\n${mods || '无'}`);
+
   const launcherLog = path.join(HOME_DIR, 'logs', 'launcher.log');
   const launcher = tailFile(launcherLog, 20000);
   if (launcher) parts.push(`启动器日志：\n${launcher}`);
+  const exits = [...launcher.matchAll(/游戏退出[，,]\s*code=([^\s]+)/g)];
+  if (exits.length) parts.push(`上次启动退出码：${exits[exits.length - 1][1]}`);
   if (logs?.length) parts.push(`启动器 stderr：\n${logs.slice(-120).join('\n')}`);
+
   const instanceLog = versionId
     ? path.join(gameDir, 'versions', versionId, 'logs', 'latest.log')
     : '';
@@ -165,11 +227,31 @@ export function collectContext({ gameDir, versionId, lastFailure, logs }) {
     ? tailFile(instanceLog, 30000)
     : tailFile(path.join(gameDir, 'logs', 'latest.log'), 30000);
   if (gameLog) parts.push(`游戏 latest.log：\n${gameLog}`);
-  const crash = newestCrash(gameDir, versionId);
-  if (crash) parts.push(`crash-report：\n${crash}`);
-  return redact(parts.join('\n\n---\n\n')).slice(0, 40000);
-}
 
+  const crash = newestCrash(gameDir, versionId);
+  if (crash) parts.push(`最新 crash-report：\n${crash}`);
+  else parts.push('最新 crash-report：无');
+  const hs = newestHsErr(gameDir, versionId);
+  if (hs) {
+    parts.push(`最新 hs_err：\n${hs}`);
+    const jc = /(?:java_command|Command Line):\s*([^\r\n]+)/.exec(hs);
+    if (jc) parts.push(`实际启动命令（来自 hs_err）：\n${jc[1]}`);
+  }
+
+  let text = redact(parts.join('\n\n---\n\n'));
+  // 账号名不交给模型；命令与日志里可能带用户名。
+  try {
+    const acc = JSON.parse(fs.readFileSync(path.join(HOME_DIR, 'accounts.json'), 'utf8'));
+    for (const a of acc.accounts ?? []) {
+      if (a?.name && String(a.name).length >= 2) {
+        text = text.split(String(a.name)).join('<account>');
+      }
+    }
+  } catch { /* ignore */ }
+  text = text.replace(/--username\s+\S+/gi, '--username <account>');
+  text = text.replace(/--uuid\s+\S+/gi, '--uuid <uuid>');
+  return text.slice(0, 60000);
+}
 /* ---- 规则归类 ---- */
 
 export function classifyLogs(text) {

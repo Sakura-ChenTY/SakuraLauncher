@@ -453,10 +453,14 @@ function applyExclusiveStatus(s) {
 async function refreshOnline() {
   try {
     let s = await api('/api/online/state');
+    onlineStateCache = s;
     renderOnline('sakura', s.sakura);
     renderOnline('openfrp', s.openfrp);
     renderOnline('custom', s.custom);
     applyExclusiveStatus(s);
+    syncFrpProviderView();
+    renderRoom(onlineRoom);
+    renderRoomVersions();
 
     // 首屏拿到 token 但还没有隧道缓存时，自动拉一次，不用用户点刷新
     let fetched = false;
@@ -477,10 +481,14 @@ async function refreshOnline() {
     }
     if (fetched) {
       s = await api('/api/online/state');
+      onlineStateCache = s;
       renderOnline('sakura', s.sakura);
       renderOnline('openfrp', s.openfrp);
       renderOnline('custom', s.custom);
       applyExclusiveStatus(s);
+      syncFrpProviderView();
+      renderRoom(onlineRoom);
+      renderRoomVersions();
     }
   } catch (e) {
     for (const p of ['sakura', 'openfrp']) {
@@ -886,7 +894,24 @@ async function joinFriendRoom() {
   const address = `${m[1]}:${m[2]}`;
   rememberAddress(address);
   hint.textContent = `正在用 ${state.selectedVersion} 加入 ${address}…（版本/mod 不匹配会被服务器踢）`;
-  await doLaunch(state.selectedVersion, address);
+  const detail = (state.versionDetails || []).find((x) => x.id === state.selectedVersion) || {};
+  const remotePort = Number(m[2]) || 0;
+  await doLaunch(state.selectedVersion, address, {
+    recentMeta: {
+      mode: 'multiplayer',
+      role: 'guest',
+      versionId: state.selectedVersion,
+      loader: detail.kind || detail.loader || 'vanilla',
+      gameVersion: detail.gameVersion || state.selectedVersion,
+      gameDir: state.gameDir,
+      joinAddress: address,
+      room: {
+        provider: selectedFrpProvider(),
+        remotePort,
+        address,
+      },
+    },
+  });
 }
 
 let upnpActive = false;
@@ -920,6 +945,423 @@ async function toggleUpnp() {  const btn = document.getElementById('upnpConnect'
   }
 }
 
+/* ---------------- 联机：frp 配置 / 开房间 ---------------- */
+
+let onlineStateCache = null;
+let onlineRoom = { status: 'idle' };
+let roomFallbackError = '';
+let roomWorldSettings = null;
+
+function selectedFrpProvider() {
+  return document.getElementById('onlineProvider')?.value || 'sakura';
+}
+
+function providerConfigured(provider) {
+  return Boolean(onlineStateCache?.[provider]?.configured);
+}
+
+function syncFrpProviderView() {
+  const p = selectedFrpProvider();
+  localStorage.setItem('sakura.onlineProvider', p);
+  for (const id of ['sakura', 'openfrp', 'custom']) {
+    const el = document.getElementById('provider' + (id === 'sakura' ? 'Sakura' : id === 'openfrp' ? 'Openfrp' : 'Custom'));
+    if (el) el.hidden = id !== p;
+  }
+  const configured = providerConfigured(p);
+  const status = document.getElementById('frpConfigStatus');
+  if (status) {
+    status.textContent = configured ? '已配置' : '未配置';
+    status.className = 'online-status' + (configured ? ' on' : '');
+  }
+  const hint = document.getElementById('frpProviderHint');
+  if (hint) hint.textContent = configured
+    ? '凭据已保存；开房时使用当前 provider。'
+    : '选一个服务，填一次凭据。';
+  renderRoom(onlineRoom);
+}
+
+function renderRoomVersions() {
+  const sel = document.getElementById('roomVersion');
+  if (!sel) return;
+  const previous = sel.value || state.selectedVersion || '';
+  const details = state.versionDetails || [];
+  const candidates = (state.versions || []).filter((id) => {
+    const d = details.find((x) => x.id === id) || {};
+    const kind = d.kind || d.loader || 'vanilla';
+    return kind === 'vanilla' || kind === 'snapshot' || !d.loader;
+  });
+  sel.innerHTML = candidates.length
+    ? candidates.map((id) => `<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`).join('')
+    : '<option value="">先安装一个原版实例</option>';
+  if (candidates.includes(previous)) sel.value = previous;
+}
+
+function roomProviderLabel(provider) {
+  return { sakura: 'SakuraFrp', openfrp: 'OpenFrp', custom: '自定义 frps' }[provider] || provider;
+}
+
+async function loadCfApiKey() {
+  try {
+    const d = await api('/api/cf/key');
+    const hint = document.getElementById('cfApiKeyHint');
+    if (!hint) return;
+    if (d.source === 'env') hint.textContent = `已由环境变量提供（${d.keyMask}）`;
+    else if (d.hasKey) hint.textContent = `已保存：${d.keyMask}`;
+    else hint.textContent = '未设置；开 CurseForge 整合包房间需要';
+    const link = document.getElementById('cfApiKeyLink');
+    if (link && d.applyUrl) link.href = d.applyUrl;
+  } catch { /* 旧服务没有这个接口时保持静默 */ }
+}
+
+async function saveCfApiKey() {
+  const input = document.getElementById('cfApiKey');
+  const hint = document.getElementById('cfApiKeyHint');
+  const key = String(input?.value || '').trim();
+  if (!key) { if (hint) hint.textContent = '先粘贴 API Key'; return; }
+  try {
+    const d = await api('/api/cf/key', { method: 'POST', body: JSON.stringify({ apiKey: key }) });
+    if (input) input.value = '';
+    if (hint) hint.textContent = d.source === 'env' ? '环境变量优先，已生效' : `已保存：${d.keyMask}`;
+    if (typeof toast === 'function') toast('CurseForge API Key 已保存');
+  } catch (e) {
+    if (hint) hint.textContent = '保存失败：' + e.message;
+  }
+}
+
+async function clearCfApiKey() {
+  try {
+    await api('/api/cf/key', { method: 'POST', body: JSON.stringify({ apiKey: '' }) });
+    const input = document.getElementById('cfApiKey');
+    if (input) input.value = '';
+    await loadCfApiKey();
+    if (typeof toast === 'function') toast('CurseForge API Key 已清除');
+  } catch (e) {
+    if (typeof toast === 'function') toast('清除失败：' + e.message, 'err');
+  }
+}
+
+function openCurseForgeKeySettings() {
+  if (typeof showPanel === 'function') showPanel('settings');
+  setTimeout(() => document.getElementById('cfApiKey')?.focus(), 80);
+}
+function renderRoom(room) {
+  onlineRoom = room || { status: 'idle' };
+  const card = document.getElementById('roomCard');
+  if (!card) return;
+  const status = onlineRoom.status || 'idle';
+  const p = selectedFrpProvider();
+  const configured = providerConfigured(p);
+  const btn = document.getElementById('roomToggle');
+  const statusEl = document.getElementById('roomStatus');
+  const fields = document.getElementById('roomFields');
+  const hint = document.getElementById('roomHint');
+  const running = status === 'running';
+
+  if (statusEl) {
+    statusEl.textContent = running
+      ? '运行中'
+      : status === 'starting' ? '启动中'
+        : status === 'stopping' ? '停止中'
+          : status === 'error' ? '启动失败' : '未开房';
+    statusEl.className = 'online-status' + (running ? ' on' : status === 'error' ? ' err' : '');
+  }
+  if (btn) {
+    btn.disabled = !running && !configured;
+    btn.classList.toggle('running', running);
+    btn.textContent = running
+      ? '停止房间'
+      : status === 'starting' ? '正在启动…'
+        : status === 'stopping' ? '正在停止…'
+          : configured ? '开房间' : '先配置 frp';
+  }
+  if (fields) fields.hidden = status === 'idle';
+  if (hint) {
+    hint.textContent = status === 'error'
+      ? (onlineRoom.error || roomFallbackError || '开房失败')
+      : running
+        ? `server 已在 25565 监听；world 会保留在 ${onlineRoom.worldDir || '服务端目录'}`
+        : configured
+          ? '勾选 EULA 后点击开房间；固定端口 25565，停服不删 world。'
+          : '先在顶部配置 frp，再开房间。';
+  }
+  const fallbackBtn = document.getElementById('roomFallbackBtn');
+  if (fallbackBtn) {
+    const failedPack = Boolean(onlineRoom.pack) && status === 'error';
+    fallbackBtn.hidden = !(status === 'error' || failedPack || roomFallbackError);
+  }
+  const cfKeyBtn = document.getElementById('roomCfKeyBtn');
+  if (cfKeyBtn) {
+    const errorText = String(onlineRoom.error || roomFallbackError || '');
+    cfKeyBtn.hidden = !(status === 'error' && /CurseForge API Key/i.test(errorText));
+  }
+  if (running) roomFallbackError = '';
+  const shownVersion = onlineRoom.pack?.gameVersion || onlineRoom.gameVersion || onlineRoom.versionId;
+  if (shownVersion) {
+    const v = document.getElementById('roomVersionValue');
+    if (v) v.textContent = shownVersion;
+  }
+  const portEl = document.getElementById('roomPortValue');
+  if (portEl) portEl.textContent = String(onlineRoom.port || 25565);
+  const providerEl = document.getElementById('roomProviderValue');
+  if (providerEl) providerEl.textContent = roomProviderLabel(p);
+  const tunnelEl = document.getElementById('roomTunnelValue');
+  if (tunnelEl) {
+    const tunnel = document.getElementById(p + 'Tunnel');
+    tunnelEl.textContent = tunnel?.selectedOptions?.[0]?.textContent || '未选择';
+  }
+  const addressEl = document.getElementById('roomAddressValue');
+  const roomAddress = onlineRoom.frp?.address || onlineStateCache?.[p]?.address || '';
+  if (addressEl) addressEl.textContent = roomAddress || '—';
+  const copyBtn = document.getElementById('roomAddressCopy');
+  if (copyBtn) copyBtn.hidden = !roomAddress;
+  const worldEl = document.getElementById('roomWorldValue');
+  if (worldEl) worldEl.textContent = onlineRoom.worldDir || '—';
+}
+
+function showRoomFallback(message) {
+  roomFallbackError = String(message || '');
+  const btn = document.getElementById('roomFallbackBtn');
+  if (btn) btn.hidden = false;
+}
+
+function openRoomFallback() {
+  const details = document.querySelector('.online-advanced');
+  if (details) {
+    details.open = true;
+    details.classList.add('attention');
+    details.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  const lan = document.getElementById('lanPort');
+  lan?.focus();
+  const detect = document.getElementById('lanDetect');
+  if (detect) {
+    detect.classList.add('attention');
+    setTimeout(() => detect.classList.remove('attention'), 2600);
+  }
+  if (typeof toast === 'function') {
+    toast('已打开高级联机：先让游戏对局域网开放，再点「读游戏端口」');
+  }
+}
+
+async function loadRoomState() {
+  try {
+    const r = await api('/api/online/room/state');
+    renderRoom(r.room);
+  } catch { /* 房间接口不可用时保持禁用状态 */ }
+}
+
+function fillWorldSettings(s = {}) {
+  const set = (id, value) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (el.type === 'checkbox') el.checked = Boolean(value);
+    else el.value = String(value ?? '');
+  };
+  set('wpKeepInventory', s.keepInventory);
+  set('wpDifficulty', s.difficulty || 'normal');
+  set('wpOnlineMode', s.onlineMode !== false);
+  set('wpMaxPlayers', s.maxPlayers ?? 20);
+  set('wpViewDistance', s.viewDistance ?? 10);
+  set('wpPvp', s.pvp !== false);
+  set('wpSpawnProtection', s.spawnProtection ?? 16);
+}
+
+function readWorldSettings() {
+  return {
+    keepInventory: Boolean(document.getElementById('wpKeepInventory')?.checked),
+    difficulty: document.getElementById('wpDifficulty')?.value || 'normal',
+    onlineMode: Boolean(document.getElementById('wpOnlineMode')?.checked),
+    maxPlayers: Number(document.getElementById('wpMaxPlayers')?.value) || 20,
+    viewDistance: Number(document.getElementById('wpViewDistance')?.value) || 10,
+    pvp: Boolean(document.getElementById('wpPvp')?.checked),
+    spawnProtection: Number(document.getElementById('wpSpawnProtection')?.value) || 0,
+  };
+}
+
+async function loadWorldSettings(force = false) {
+  const versionId = document.getElementById('roomVersion')?.value;
+  if (!versionId) { fillWorldSettings(); return; }
+  if (roomWorldSettings && !force) { fillWorldSettings(roomWorldSettings); return; }
+  try {
+    const r = await api('/api/online/room/settings?versionId=' + encodeURIComponent(versionId));
+    roomWorldSettings = r.settings || null;
+    fillWorldSettings(roomWorldSettings || {});
+  } catch {
+    fillWorldSettings();
+  }
+}
+
+async function openWorldParams() {
+  await loadWorldSettings(true);
+  const note = document.getElementById('worldParamsNote');
+  if (note) note.textContent = '';
+  const modal = document.getElementById('worldParamsModal');
+  if (modal) modal.hidden = false;
+}
+
+async function saveWorldParams() {
+  const versionId = document.getElementById('roomVersion')?.value;
+  if (!versionId) return;
+  const btn = document.getElementById('worldParamsSave');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await api('/api/online/room/settings', {
+      method: 'POST',
+      body: JSON.stringify({ versionId, settings: readWorldSettings() }),
+    });
+    roomWorldSettings = r.settings;
+    fillWorldSettings(roomWorldSettings);
+    const labels = {
+      onlineMode: '正版验证', maxPlayers: '最大人数', viewDistance: '视距',
+      pvp: 'PvP', spawnProtection: '出生点保护',
+    };
+    const note = document.getElementById('worldParamsNote');
+    if (note) {
+      if (r.restartRequired?.length) {
+        note.textContent = `已保存；${r.restartRequired.map((k) => labels[k] || k).join('、')}：重开房间生效。`;
+      } else if (r.applied?.length) {
+        note.textContent = '已保存，难度和死亡不掉落已立即下发。';
+      } else {
+        note.textContent = '已保存，下次开房生效。';
+      }
+    }
+    if (typeof toast === 'function') toast('世界参数已保存');
+  } catch (e) {
+    if (typeof toast === 'function') toast('保存世界参数失败：' + e.message, 'err');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+async function toggleRoom() {
+  const btn = document.getElementById('roomToggle');
+  if (btn?.disabled && onlineRoom.status !== 'running') return;
+  if (onlineRoom.status === 'running' || onlineRoom.status === 'starting') {
+    if (btn) { btn.disabled = true; btn.textContent = '正在停止…'; }
+    try {
+      const r = await api('/api/online/room/stop', { method: 'POST', body: '{}' });
+      renderRoom(r.room);
+      if (typeof toast === 'function') toast('房间已停止，world 保留');
+    } catch (e) {
+      if (typeof toast === 'function') toast('停止失败：' + e.message, 'err');
+      await loadRoomState();
+    }
+    return;
+  }
+  if (!providerConfigured(selectedFrpProvider())) {
+    if (typeof toast === 'function') toast('先配置 frp', 'err');
+    return;
+  }
+  if (!document.getElementById('roomEula')?.checked) {
+    if (typeof toast === 'function') toast('先勾选同意 Minecraft EULA', 'err');
+    return;
+  }
+  const versionId = document.getElementById('roomVersion')?.value;
+  if (!versionId) {
+    if (typeof toast === 'function') toast('先安装一个原版实例', 'err');
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = '正在准备 server…'; }
+  const hint = document.getElementById('roomHint');
+  if (hint) hint.textContent = '正在下载/启动官方 server.jar…';
+  const p = selectedFrpProvider();
+  const tunnelSel = document.getElementById(p + 'Tunnel');
+  const tunnelId = tunnelSel?.value || '';
+  const tunnel = (onlineStateCache?.[p]?.tunnels || []).find((t) => String(t.id) === String(tunnelId));
+  let remotePort = 0;
+  if (p === 'custom') remotePort = Number(document.getElementById('customRemote')?.value) || 0;
+  else {
+    const m = /:(\d{1,5})\s*$/.exec(String(tunnel?.address || ''));
+    remotePort = m ? Number(m[1]) : Number(tunnel?.remotePort) || 0;
+  }
+  const detail = (state.versionDetails || []).find((x) => x.id === versionId) || {};
+  try {
+    const r = await api('/api/online/room/start', {
+      method: 'POST',
+      body: JSON.stringify({
+        versionId,
+        eulaAccepted: true,
+        autoStopOnExit: Boolean(document.getElementById('roomAutoStop')?.checked),
+        joinGame: Boolean(document.getElementById('roomJoinGame')?.checked),
+        provider: p,
+        tunnelId,
+        remotePort,
+        address: onlineStateCache?.[p]?.address || '',
+        loader: detail.kind || detail.loader || 'vanilla',
+        gameVersion: detail.gameVersion || versionId,
+        settings: readWorldSettings(),
+      }),
+    });
+    renderRoom(r.room);
+    if (r.gameError && typeof toast === 'function') toast('服务端已开，但进入游戏失败：' + r.gameError, 'err');
+    else if (typeof toast === 'function') toast('房间已开，端口 25565');
+    await loadRecentPlay();
+  } catch (e) {
+    if (typeof toast === 'function') toast('开房失败：' + e.message, 'err');
+    await loadRoomState();
+    showRoomFallback(e.message);
+    const hint = document.getElementById('roomHint');
+    if (hint) hint.textContent = String(e.message || '开房失败');
+  }
+}
+
+async function loadOnlineConfig() {
+  try {
+    const s = await api('/api/online/state');
+    onlineStateCache = s;
+    renderOnline('sakura', s.sakura);
+    renderOnline('openfrp', s.openfrp);
+    renderOnline('custom', s.custom);
+    syncFrpProviderView();
+  } catch { /* 保持禁用 */ }
+}
+async function loadRecentPlay() {
+  const btn = document.getElementById('recentPlayBtn');
+  if (!btn) return;
+  try {
+    const r = await api('/api/recent');
+    const rec = r?.recent;
+    if (!rec) {
+      btn.hidden = true;
+      return;
+    }
+    const detail = (state.versionDetails || []).find((x) => x.id === rec.versionId) || {};
+    const modeText = rec.mode === 'single'
+      ? '单人'
+      : rec.role === 'host' ? '联机房主' : '联机';
+    const extra = rec.mode === 'single'
+      ? (rec.saveName ? ` · ${rec.saveName}` : '')
+      : (rec.role === 'host'
+        ? ` · ${rec.room?.provider || 'frp'}${rec.room?.remotePort ? `:${rec.room.remotePort}` : ''}`
+        : ` · ${rec.joinAddress || ''}`);
+    btn.hidden = false;
+    const hint = document.getElementById('recentPlayHint');
+    if (hint) hint.textContent = `${modeText} · ${rec.versionId}${extra}`;
+    btn.dataset.version = rec.versionId;
+    btn.dataset.mode = rec.mode;
+  } catch {
+    btn.hidden = true;
+  }
+}
+
+async function runRecentPlay() {
+  const btn = document.getElementById('recentPlayBtn');
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  const hint = document.getElementById('recentPlayHint');
+  if (hint) hint.textContent = '正在恢复…';
+  try {
+    const r = await api('/api/recent/launch', { method: 'POST', body: '{}' });
+    if (typeof toast === 'function') toast(`已恢复 ${r.recent?.versionId || ''}`);
+    await loadRecentPlay();
+    await loadRoomState();
+    await refreshOnline();
+  } catch (e) {
+    if (typeof toast === 'function') toast('最近游玩失败：' + e.message, 'err');
+    await loadRecentPlay();
+  } finally {
+    btn.disabled = false;
+  }
+}
 function initOnline() {
   const port = document.getElementById('lanPort');
   port?.addEventListener('input', loadLanInfo);
@@ -934,6 +1376,33 @@ function initOnline() {
     if (e.target.value) document.getElementById('joinAddress').value = e.target.value;
   });
   renderRecentAddresses();
+  const providerSel = document.getElementById('onlineProvider');
+  if (providerSel) {
+    providerSel.value = localStorage.getItem('sakura.onlineProvider') || 'sakura';
+    providerSel.addEventListener('change', syncFrpProviderView);
+  }
+  document.getElementById('roomToggle')?.addEventListener('click', toggleRoom);
+  document.getElementById('roomFallbackBtn')?.addEventListener('click', openRoomFallback);
+  document.getElementById('roomCfKeyBtn')?.addEventListener('click', openCurseForgeKeySettings);
+  document.getElementById('cfApiKeySave')?.addEventListener('click', saveCfApiKey);
+  document.getElementById('cfApiKeyClear')?.addEventListener('click', clearCfApiKey);
+  loadCfApiKey();
+  document.getElementById('worldParamsBtn')?.addEventListener('click', openWorldParams);
+  document.getElementById('roomAddressCopy')?.addEventListener('click', async () => {
+    const text = document.getElementById('roomAddressValue')?.textContent || '';
+    if (!text || text === '—') return;
+    try { await navigator.clipboard.writeText(text); if (typeof toast === 'function') toast('地址已复制'); } catch { if (typeof toast === 'function') toast('复制失败', 'err'); }
+  });
+  document.getElementById('worldParamsClose')?.addEventListener('click', () => { const m = document.getElementById('worldParamsModal'); if (m) m.hidden = true; });
+  document.getElementById('worldParamsCancel')?.addEventListener('click', () => { const m = document.getElementById('worldParamsModal'); if (m) m.hidden = true; });
+  document.getElementById('worldParamsSave')?.addEventListener('click', saveWorldParams);
+  document.getElementById('recentPlayBtn')?.addEventListener('click', runRecentPlay);
+  document.getElementById('roomEula')?.addEventListener('change', () => renderRoom(onlineRoom));
+  document.getElementById('roomVersion')?.addEventListener('change', () => { roomWorldSettings = null; renderRoom(onlineRoom); loadWorldSettings(true); });
+  renderRoomVersions();
+  loadRoomState();
+  loadRecentPlay();
+  setTimeout(() => { renderRoomVersions(); loadWorldSettings(true); }, 1200);
   document.getElementById('customSave')?.addEventListener('click', saveCustomFrps);
   document.getElementById('customStart')?.addEventListener('click', startCustomFrps);
   document.getElementById('customStop')?.addEventListener('click', () => stopProviderTunnel('custom'));

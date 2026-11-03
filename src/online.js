@@ -712,7 +712,8 @@ export async function startTunnel(provider, tunnelId, localPort) {
   if (provider === 'sakura') {
     env.NATFRP_TOKEN = token;
     env.NATFRP_TARGET = String(tunnel.id);
-    args = ['--disable_log_color'];
+    // Sakura frpc 新版对纯环境变量启动存在兼容问题，显式 -f 更稳。
+    args = ['-f', `${token}:${tunnel.id}`, '--disable_log_color'];
   } else {
     // OpenFrp 的简易启动参数
     args = ['-u', token, '-p', String(tunnel.id)];
@@ -758,6 +759,35 @@ export async function startTunnel(provider, tunnelId, localPort) {
   return { ok: true, address: s.address, ipAddress: s.ipAddress, pid: proc.pid };
 }
 
+/** 只改指定 Sakura 隧道的 local_port，并等列表回读确认。 */
+export async function setSakuraTunnelLocalPort(tunnelId, localPort) {
+  const token = getToken('sakura');
+  if (!token) throw new Error('还没有保存 SakuraFrp token');
+  const wanted = Number(localPort);
+  if (!(wanted > 0 && wanted < 65536)) throw new Error('本地端口不合法');
+  let tunnels = await listTunnels('sakura');
+  let tunnel = tunnels.find((t) => String(t.id) === String(tunnelId));
+  if (!tunnel) throw new Error('找不到这条 SakuraFrp 隧道');
+  const previousLocalPort = Number(tunnel.localPort) || null;
+  if (previousLocalPort === wanted) {
+    return { previousLocalPort, changed: false, address: tunnel.address || '', tunnel };
+  }
+  await fetchJson(`${SAKURA}/tunnel/edit`, {
+    token,
+    method: 'POST',
+    form: { id: String(tunnelId), local_port: wanted },
+  });
+  // Sakura API 是异步落库，轮询到隧道列表真的回读为新端口。
+  for (let i = 0; i < 12; i += 1) {
+    await new Promise((r) => setTimeout(r, 400));
+    tunnels = await listTunnels('sakura');
+    tunnel = tunnels.find((t) => String(t.id) === String(tunnelId));
+    if (tunnel && Number(tunnel.localPort) === wanted) {
+      return { previousLocalPort, changed: true, address: tunnel.address || '', tunnel };
+    }
+  }
+  throw new Error('SakuraFrp 已提交修改，但隧道列表没有回读为新端口');
+}
 export function stopTunnel(provider) {
   return { ok: stopSession(provider) };
 }

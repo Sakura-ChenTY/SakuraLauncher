@@ -31,6 +31,7 @@ export const HOME_DIR =
 
 export const SETTINGS_FILE = path.join(HOME_DIR, 'settings.json');
 export const TRACK_FILE = path.join(HOME_DIR, 'tracked.json');
+export const RECENT_FILE = path.join(HOME_DIR, 'recent-play.json');
 export const RUNTIME_DIR = path.join(HOME_DIR, 'runtimes');
 export const CACHE_DIR = path.join(HOME_DIR, 'cache');
 export const JAVA_SCAN_CACHE = path.join(CACHE_DIR, 'java-scan.json');

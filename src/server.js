@@ -14,6 +14,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
+import yaml from 'js-yaml';
 import net from 'node:net';
 import dns from 'node:dns/promises';
 import { EventEmitter } from 'node:events';
@@ -26,7 +27,7 @@ import { installVersion, getVersionManifest, latestReleases, findVersionInManife
 import { searchProjects, getProjectVersions, getProject, detectLoaderFromVersionJson, PROJECT_TYPES } from './modrinth.js';
 import { installFabric, listLoaders } from './fabric.js';
 import { installForge, installNeoForge } from './forge.js';
-import { initSecureStore } from './secure.js';
+import { initSecureStore, setToken, clearToken, hasToken } from './secure.js';
 import {
   loadAiConfig,
   saveAiConfig,
@@ -50,7 +51,10 @@ import {
   prepareFrpc,
   onlineSnapshot,
   detectLanPort,
+  setSakuraTunnelLocalPort,
 } from './online.js';
+import { startRoom, stopRoom, getRoomState, setRoomFrp, failRoom, attachHostGame, onHostGameExit, getWorldSettings, saveWorldSettings } from './gameserver.js';
+import { readRecent, saveRecent, clearRecent, validateRecent } from './recent-play.js';
 import { openPort as openUpnp, closePort as closeUpnp, mappingState as upnpState } from './upnp.js';
 import { installContent, listInstalled, removeContent, toggleContent } from './content.js';
 import { checkModUpdates, applyModUpdates } from './modupdate.js';
@@ -61,8 +65,11 @@ import {
   getProjectBySlug as cfGetProjectBySlug,
   getProject as cfGetProject,
   getProjectFiles as cfGetProjectFiles,
+  hasCfKey,
+  cfKeyMask,
 } from './curseforge.js';
 import { installCurseForgePack, previewCurseForgePack } from './cfpack.js';
+import { createSession, getSession, chatSession } from './assistant-session.js';
 import {
   addTracked,
   removeTracked,
@@ -279,6 +286,64 @@ function isNewerVersion(current, latest) {
     if ((b[i] ?? 0) < (a[i] ?? 0)) return false;
   }
   return false;
+}
+
+/** latest.yml 旁边通常没有 latest.json；旧配置写 latest.json 时自动改试 yml。 */
+function updateFileCandidates(urls) {
+  const out = [];
+  for (const u of urls) {
+    out.push(u);
+    if (/latest\.json(?:[?#].*)?$/i.test(u)) out.push(u.replace(/latest\.json/i, 'latest.yml'));
+    else if (/latest\.yml(?:[?#].*)?$/i.test(u)) out.push(u.replace(/latest\.yml/i, 'latest.json'));
+  }
+  return [...new Set(out)];
+}
+
+/** electron-builder 的 latest.yml -> 启动器当前需要的更新对象。 */
+function updateFromLatestYml(text, sourceUrl) {
+  let doc;
+  try {
+    doc = yaml.load(text);
+  } catch (e) {
+    throw new Error('latest.yml 解析失败：' + e.message);
+  }
+  if (!doc || typeof doc !== 'object') throw new Error('latest.yml 内容为空');
+  const version = String(doc.version ?? '').trim().replace(/^v/i, '');
+  const files = Array.isArray(doc.files) ? doc.files : [];
+  const file = files.find((f) => f && f.url) || (doc.path ? {
+    url: doc.path,
+    sha512: doc.sha512,
+    size: doc.size,
+  } : null);
+  if (!version || !file?.url) throw new Error('latest.yml 缺 version/文件地址');
+  let url;
+  try {
+    url = new URL(String(file.url), sourceUrl).toString();
+  } catch {
+    throw new Error('latest.yml 文件地址不合法');
+  }
+  return {
+    version,
+    url,
+    notes: String(doc.releaseNotes ?? doc.notes ?? ''),
+    // electron-builder 默认只写 sha512；保留空 sha256，前端不依赖它做一键更新。
+    sha256: String(file.sha256 ?? doc.sha256 ?? '').trim().toLowerCase(),
+  };
+}
+
+function updateFromResponse(text, sourceUrl) {
+  try {
+    const data = JSON.parse(text);
+    if (data?.version && data?.url) {
+      return {
+        version: String(data.version).replace(/^v/i, ''),
+        url: String(data.url),
+        notes: String(data.notes ?? ''),
+        sha256: String(data.sha256 ?? '').trim().toLowerCase(),
+      };
+    }
+  } catch { /* 不是 JSON，继续按 latest.yml 解析 */ }
+  return updateFromLatestYml(text, sourceUrl);
 }
 
 /* ---- options.txt：只改认识的键，保留其它行 ---- */
@@ -532,6 +597,7 @@ export const state = {
   running: null,      // { versionId, pid, startedAt }
   lanPort: null,      // 从游戏 stdout 抓到的「对局域网开放」端口
   lastFailure: null,  // 最近一次非 0 退出的摘要
+  lastLaunch: null,   // 最近一次实际启动命令与进程信息
   logs: [],           // 最近日志行（环形，最多 500）
   installInterrupted: null, // 上次安装被中断的信息（启动时取一次）
   forceFirstRun: false, // --first-run：强制显示引导，不删数据
@@ -831,7 +897,17 @@ function parseLanPortLine(line) {
   return null;
 }
 
-async function handleLaunch({ versionId, joinAddress }) {
+async function restoreRoomSakuraPort(frp) {
+  if (!frp || frp.provider !== 'sakura') return '';
+  if (!frp.originalLocalPort || Number(frp.originalLocalPort) === Number(frp.localPort)) return '';
+  try {
+    await setSakuraTunnelLocalPort(frp.tunnelId, frp.originalLocalPort);
+    return '';
+  } catch (e) {
+    return e.message || String(e);
+  }
+}
+async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta }) {
   if (state.installing) throw new Error('正在安装，稍后再启动');
   if (state.running) throw new Error(`已有游戏在运行（PID ${state.running.pid}）`);
 
@@ -841,7 +917,15 @@ async function handleLaunch({ versionId, joinAddress }) {
     if (!m) throw new Error('加入地址格式应为 host:port');
     const port = Number(m[2]);
     if (!(port > 0 && port < 65536)) throw new Error('加入端口不合法');
-    extraGame = ['--server', m[1], '--port', String(port)];
+    // 1.20.1 起客户端不再识别旧的 --server/--port，Quick Play 才是可用入口。
+    const info = readInstanceInfo(versionId) || {};
+    const mcVersion = String(info.gameVersion || versionId).match(/(\d+\.\d+(?:\.\d+)?)/)?.[1] || '';
+    const [maj, min = 0, patch = 0] = mcVersion.split('.').map((x) => Number(x) || 0);
+    const quickPlay = maj > 1 || (maj === 1 && (min > 20 || (min === 20 && patch >= 1)));
+    if (quickPlay) extraGame = ['--quickPlayMultiplayer', `${m[1]}:${port}`];
+    else extraGame = ['--server', m[1], '--port', String(port)];
+  } else if (quickPlaySave) {
+    extraGame = ['--quickPlaySingleplayer', String(quickPlaySave)];
   }
 
   const override = readInstanceOverride(versionId) ?? {};
@@ -861,12 +945,45 @@ async function handleLaunch({ versionId, joinAddress }) {
     memory: Object.keys(memory).length ? memory : undefined,
   });
 
+  state.lastLaunch = {
+    versionId,
+    command: r.command,
+    pid: r.child.pid,
+    at: Date.now(),
+  };
   state.running = {
     versionId,
     pid: r.child.pid,
     startedAt: Date.now(),
     nativesDir: r.nativesDir,
   };
+  const roomNow = getRoomState();
+  const isHostGame = roomNow.status === 'running' || roomNow.status === 'starting';
+  if (isHostGame) attachHostGame(r.child.pid);
+  try {
+    const mode = (joinAddress || isHostGame) ? 'multiplayer' : 'single';
+    const role = isHostGame ? 'host' : (joinAddress ? 'guest' : 'single');
+    saveRecent({
+      ...(recentMeta && typeof recentMeta === 'object' ? recentMeta : {}),
+      versionId,
+      loader: recentMeta?.loader || '',
+      gameVersion: recentMeta?.gameVersion || versionId,
+      gameDir: state.gameDir,
+      mode,
+      role,
+      joinAddress: joinAddress || '',
+      saveName: quickPlaySave || recentMeta?.saveName || '',
+      serverWorldPath: recentMeta?.serverWorldPath || roomNow.worldDir || '',
+      worldSettings: recentMeta?.worldSettings || roomNow.settings,
+      hostJoined: isHostGame ? true : Boolean(recentMeta?.hostJoined),
+      room: recentMeta?.room || (isHostGame ? {
+        provider: roomNow.frp?.provider || '',
+        tunnelId: roomNow.frp?.tunnelId || '',
+        remotePort: Number(String(roomNow.frp?.address || '').split(':').pop()) || 0,
+        address: roomNow.frp?.address || '',
+      } : null),
+    });
+  } catch { /* 最近游玩失败不阻断启动 */ }
   state.lanPort = null;
   // 每次启动都是新会话：日志面板先清空，避免把上一次的启动行续在前面
   state.logs = [];
@@ -886,6 +1003,15 @@ async function handleLaunch({ versionId, joinAddress }) {
   let forcedExit = false;
   const noteGameLine = (line) => {
     pushLog(line);
+    const levelMatch = /(?:Loading level|Preparing level)\s+['"](.+?)['"]/i.exec(String(line));
+    if (levelMatch) {
+      const rec = readRecent();
+      if (rec?.mode === 'single') {
+        try {
+          saveRecent({ ...rec, saveName: levelMatch[1], savePath: rec.savePath || '' });
+        } catch { /* ignore */ }
+      }
+    }
     const lanPort = parseLanPortLine(line);
     if (lanPort) {
       state.lanPort = { port: lanPort, at: Date.now(), versionId };
@@ -926,6 +1052,16 @@ async function handleLaunch({ versionId, joinAddress }) {
     }
     emit('game-exit', { versionId, code: uiCode, forced: forcedExit, reason: reasonLine.slice(0, 500) });
     pushLog(forcedExit ? '游戏已强制结束，状态回到空闲' : `游戏退出，code=${code}`);
+    const roomBefore = getRoomState();
+    void onHostGameExit(r.child.pid).then(async (stopped) => {
+      if (stopped) {
+        if (roomBefore.frp?.provider && !roomBefore.frp.external) {
+          try { stopTunnel(roomBefore.frp.provider); } catch { /* ignore */ }
+        }
+        await restoreRoomSakuraPort(roomBefore.frp);
+        pushLog('房主退出，已自动关服；world 保留');
+      }
+    }).catch(() => {});
     // 清掉本次 natives 临时目录
     try {
       fs.rmSync(r.nativesDir, { recursive: true, force: true });
@@ -1734,6 +1870,32 @@ const server = http.createServer(async (req, res) => {
 
     /* ---- CurseForge（经 MCIM 镜像）---- */
 
+    if (p === '/api/cf/key' && req.method === 'GET') {
+      const env = String(process.env.CURSEFORGE_API_KEY || process.env.CF_API_KEY || '').trim();
+      return json(res, 200, {
+        hasKey: hasCfKey(),
+        keyMask: cfKeyMask(),
+        source: env ? 'env' : (hasToken('curseforge') ? 'secure' : 'none'),
+        applyUrl: 'https://forms.monday.com/forms/dce5ccb7afda9a1c21dab1a1aa1d84eb?r=use1',
+      });
+    }
+
+    if (p === '/api/cf/key' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const env = String(process.env.CURSEFORGE_API_KEY || process.env.CF_API_KEY || '').trim();
+        if (env) throw new Error('环境变量已提供 CurseForge API Key，优先使用环境变量');
+        const key = String(body.apiKey ?? '').trim();
+        if (!key) {
+          await clearToken('curseforge');
+          return json(res, 200, { hasKey: false, keyMask: '', source: 'none' });
+        }
+        await setToken('curseforge', key, { requireEncryption: true });
+        return json(res, 200, { hasKey: true, keyMask: cfKeyMask(), source: 'secure' });
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
     if (p === '/api/cf/search') {
       const type = url.searchParams.get('type') || 'mod';
       const q = url.searchParams.get('q') || '';
@@ -2350,6 +2512,306 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ...onlineSnapshot(), upnp: upnpState() });
     }
 
+    if (p === '/api/online/room/state' && req.method === 'GET') {
+      return json(res, 200, { room: getRoomState() });
+    }
+
+    if (p === '/api/online/room/settings' && req.method === 'GET') {
+      const versionId = url.searchParams.get('versionId') || '';
+      return json(res, 200, { settings: getWorldSettings({ gameDir: state.gameDir, versionId }) });
+    }
+
+    if (p === '/api/online/room/settings' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const result = saveWorldSettings({
+          gameDir: state.gameDir,
+          versionId: body.versionId,
+          settings: body.settings,
+          onLog: (line) => emit('room-log', { line }),
+        });
+        emit('room-settings', result);
+        return json(res, 200, { ok: true, ...result });
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
+    if (p === '/api/online/room/start' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const room = await startRoom({
+          versionId: body.versionId,
+          gameDir: state.gameDir,
+          eulaAccepted: body.eulaAccepted === true,
+          memoryMb: body.memoryMb,
+          autoStopOnExit: body.autoStopOnExit !== false,
+          settings: body.settings,
+          pack: body.pack || null,
+          onStage: (message) => {
+            emit('room-stage', { message });
+            pushLog(`[room] ${message}`);
+          },
+          onLog: (line) => emit('room-log', { line }),
+        });
+
+        let frp = null;
+        let sakuraPortInfo = null;
+        try {
+          if (!body.provider) throw new Error('没有选择 frp provider');
+          if (!body.tunnelId && body.provider !== 'custom') throw new Error('没有选择隧道');
+          if (body.provider === 'sakura') {
+            sakuraPortInfo = await setSakuraTunnelLocalPort(body.tunnelId, 25565);
+            pushLog(`Sakura 隧道 ${body.tunnelId} local_port → 25565${sakuraPortInfo.changed ? `（原 ${sakuraPortInfo.previousLocalPort}）` : ''}`);
+          }
+          const r = await startTunnel(body.provider, body.tunnelId, 25565);
+          if (!r?.address) throw new Error('frpc 已启动但没有拿到公网地址');
+          frp = {
+            provider: body.provider,
+            tunnelId: body.tunnelId || '',
+            address: r.address,
+            ipAddress: r.ipAddress || '',
+            pid: r.pid || null,
+            localPort: 25565,
+            originalLocalPort: sakuraPortInfo?.previousLocalPort ?? null,
+          };
+          setRoomFrp(frp);
+          room.frp = frp;
+          pushLog(`frpc 已启动：${frp.address}`);
+        } catch (e) {
+          // SakuraFrp 发行版 frpc 拒绝第三方直接启动；若本机服务已把这条
+          // 隧道挂到 25565，则复用它的真实地址，否则必须报错。
+          const external = onlineSnapshot()[body.provider]?.tunnels
+            ?.find((t) => String(t.id) === String(body.tunnelId));
+          if (external?.online && external.address && Number(external.localPort) === 25565) {
+            frp = {
+              provider: body.provider,
+              tunnelId: body.tunnelId || '',
+              address: external.address,
+              ipAddress: external.ipAddress || '',
+              pid: null,
+              external: true,
+              localPort: 25565,
+              originalLocalPort: sakuraPortInfo?.previousLocalPort ?? null,
+            };
+            setRoomFrp(frp);
+            room.frp = frp;
+            pushLog(`复用已运行的 frp 隧道：${frp.address}`);
+          } else {
+            try { stopTunnel(body.provider); } catch { /* ignore */ }
+            const restoreError = await restoreRoomSakuraPort({
+              provider: body.provider,
+              tunnelId: body.tunnelId,
+              originalLocalPort: sakuraPortInfo?.previousLocalPort,
+              localPort: 25565,
+            });
+            await stopRoom({ keepWorld: true, onLog: (line) => emit('room-log', { line }) });
+            const failed = failRoom(`frpc 启动失败：${e.message}${restoreError ? `；还原隧道端口失败：${restoreError}` : ''}`);
+            emit('room-state', { room: failed });
+            return json(res, 400, { error: failed.error, room: failed });
+          }
+        }
+
+        try {
+          saveRecent({
+            mode: 'multiplayer',
+            role: 'host',
+            versionId: body.versionId,
+            loader: body.loader || '',
+            gameVersion: body.gameVersion || body.versionId,
+            gameDir: state.gameDir,
+            serverWorldPath: room.worldDir,
+            hostJoined: Boolean(body.joinGame),
+            eulaAccepted: body.eulaAccepted === true,
+            autoStopOnExit: body.autoStopOnExit !== false,
+            worldSettings: room.settings,
+            pack: body.pack || null,
+            room: {
+              provider: body.provider || '',
+              tunnelId: body.tunnelId || '',
+              remotePort: Number(body.remotePort) || 0,
+              address: frp?.address || body.address || '',
+            },
+          });
+        } catch { /* recent 失败不影响开房 */ }
+
+        let gameError = '';
+        if (body.joinGame) {
+          try {
+            await handleLaunch({
+              versionId: body.versionId,
+              joinAddress: '127.0.0.1:25565',
+              recentMeta: {
+                mode: 'multiplayer',
+                role: 'host',
+                versionId: body.versionId,
+                loader: body.loader || '',
+                gameVersion: body.gameVersion || body.versionId,
+                gameDir: state.gameDir,
+                serverWorldPath: room.worldDir,
+                worldSettings: room.settings,
+                hostJoined: true,
+                eulaAccepted: body.eulaAccepted === true,
+                autoStopOnExit: body.autoStopOnExit !== false,
+                room: {
+                  provider: body.provider || '',
+                  tunnelId: body.tunnelId || '',
+                  remotePort: Number(body.remotePort) || 0,
+                  address: frp?.address || body.address || '',
+                },
+              },
+            });
+          } catch (e) {
+            gameError = e.message;
+            pushLog(`开房后启动游戏失败：${e.message}`);
+          }
+        }
+        emit('room-state', { room });
+        return json(res, 200, { ok: true, room, gameError });
+      } catch (e) {
+        emit('room-state', { room: getRoomState() });
+        return json(res, 400, { error: e.message, room: getRoomState() });
+      }
+    }
+    if (p === '/api/online/room/stop' && req.method === 'POST') {
+      try {
+        const current = getRoomState();
+        if (current.frp?.provider && !current.frp.external) {
+          try { stopTunnel(current.frp.provider); } catch { /* frpc 可能已退出 */ }
+        }
+        const room = await stopRoom({
+          keepWorld: true,
+          onLog: (line) => emit('room-log', { line }),
+        });
+        const restoreError = await restoreRoomSakuraPort(current.frp);
+        emit('room-state', { room });
+        return json(res, 200, { ok: true, room, restoreError });
+      } catch (e) {
+        return json(res, 500, { error: e.message, room: getRoomState() });
+      }
+    }
+
+    if (p === '/api/recent' && req.method === 'GET') {
+      const recent = readRecent();
+      if (!recent) return json(res, 200, { recent: null });
+      const check = validateRecent(recent, state.gameDir);
+      if (!check.valid) {
+        clearRecent();
+        return json(res, 200, { recent: null, cleared: check.reason });
+      }
+      return json(res, 200, { recent });
+    }
+
+    if (p === '/api/recent/launch' && req.method === 'POST') {
+      const recent = readRecent();
+      if (!recent) return json(res, 404, { error: '没有最近游玩记录' });
+      const check = validateRecent(recent, state.gameDir);
+      if (!check.valid) {
+        clearRecent();
+        return json(res, 400, { error: check.reason });
+      }
+      try {
+        if (recent.mode === 'single') {
+          const launch = await handleLaunch({
+            versionId: recent.versionId,
+            quickPlaySave: recent.saveName || '',
+            recentMeta: recent,
+          });
+          return json(res, 200, { ok: true, launch, recent });
+        }
+        if (recent.mode === 'multiplayer' && recent.role === 'guest') {
+          const launch = await handleLaunch({
+            versionId: recent.versionId,
+            joinAddress: recent.joinAddress,
+            recentMeta: recent,
+          });
+          return json(res, 200, { ok: true, launch, recent });
+        }
+        if (recent.mode === 'multiplayer' && recent.role === 'host') {
+          if (getRoomState().status !== 'idle') throw new Error('当前已有房间在运行');
+          const provider = recent.room?.provider;
+          const configured = provider ? onlineSnapshot()[provider]?.configured : false;
+          if (!configured) throw new Error('原来的 frp 配置不可用，请重新配置');
+          const room = await startRoom({
+            versionId: recent.versionId,
+            gameDir: state.gameDir,
+            eulaAccepted: true,
+            autoStopOnExit: recent.autoStopOnExit !== false,
+            settings: recent.worldSettings,
+            onStage: (message) => {
+              emit('room-stage', { message });
+              pushLog(`[room] ${message}`);
+            },
+            onLog: (line) => emit('room-log', { line }),
+          });
+          let frp = null;
+          try {
+            let sakuraPortInfo = null;
+            if (provider === 'sakura') {
+              sakuraPortInfo = await setSakuraTunnelLocalPort(recent.room?.tunnelId || '', 25565);
+            }
+            const r = await startTunnel(provider, recent.room?.tunnelId || '', 25565);
+            if (!r?.address) throw new Error('frpc 已启动但没有拿到公网地址');
+            frp = {
+              provider,
+              tunnelId: recent.room?.tunnelId || '',
+              address: r.address,
+              ipAddress: r.ipAddress || '',
+              pid: r.pid || null,
+              localPort: 25565,
+              originalLocalPort: sakuraPortInfo?.previousLocalPort ?? null,
+            };
+            setRoomFrp(frp);
+            room.frp = frp;
+          } catch (e) {
+            const external = onlineSnapshot()[provider]?.tunnels
+              ?.find((t) => String(t.id) === String(recent.room?.tunnelId));
+            if (external?.online && external.address && Number(external.localPort) === 25565) {
+              frp = {
+                provider,
+                tunnelId: recent.room?.tunnelId || '',
+                address: external.address,
+                ipAddress: external.ipAddress || '',
+                pid: null,
+                external: true,
+                localPort: 25565,
+                originalLocalPort: null,
+              };
+              setRoomFrp(frp);
+              room.frp = frp;
+            } else {
+              try { stopTunnel(provider); } catch { /* ignore */ }
+              await stopRoom({ keepWorld: true, onLog: (line) => emit('room-log', { line }) });
+              const failed = failRoom(`frpc 启动失败：${e.message}`);
+              emit('room-state', { room: failed });
+              return json(res, 400, { error: failed.error, room: failed });
+            }
+          }
+          const roomMeta = { ...recent.room, address: frp.address };
+          saveRecent({
+            ...recent,
+            serverWorldPath: room.worldDir,
+            hostJoined: Boolean(recent.hostJoined),
+            room: roomMeta,
+          });
+          room.frp = frp;
+          let launch = null;
+          if (recent.hostJoined) {
+            launch = await handleLaunch({
+              versionId: recent.versionId,
+              joinAddress: '127.0.0.1:25565',
+              recentMeta: { ...recent, room: roomMeta },
+            });
+          }
+          emit('room-state', { room });
+          return json(res, 200, { ok: true, room, launch, recent });
+        }
+        throw new Error('未知的最近游玩模式');
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
     if (p === '/api/online/detect') {
       try {
         const frpc = await detectFrpc();
@@ -2549,19 +3011,19 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/update/check' && req.method === 'GET') {
       const configured = String(getSettings().updateUrl ?? '').trim() ||
-        'https://gh-proxy.com/https://github.com/Sakura-ChenTY/SakuraLauncher/releases/latest/download/latest.json';
-      const candidates = updateUrlCandidates(configured);
+        'https://gh-proxy.com/https://github.com/Sakura-ChenTY/SakuraLauncher/releases/latest/download/latest.yml';
+      const candidates = updateFileCandidates(updateUrlCandidates(configured));
       const errors = [];
       for (const candidate of candidates) {
         try {
           if (!/^https?:\/\//i.test(candidate)) throw new Error('更新地址不是 http(s)');
           const r = await fetch(candidate, {
-            headers: { Accept: 'application/json' },
+            headers: { Accept: 'application/json, text/yaml, text/plain, */*' },
             signal: AbortSignal.timeout(8000),
           });
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          const data = JSON.parse(await r.text());
-          if (!data?.version || !data?.url) throw new Error('latest.json 缺 version/url');
+          const data = updateFromResponse(await r.text(), candidate);
+          if (!data?.version || !data?.url) throw new Error('更新清单缺 version/url');
           return json(res, 200, {
             current: APP_VERSION,
             update: isNewerVersion(APP_VERSION, data.version) ? {
@@ -2569,6 +3031,7 @@ const server = http.createServer(async (req, res) => {
               url: String(data.url),
               notes: String(data.notes ?? ''),
               sha256: String(data.sha256 ?? ''),
+              feedUrl: new URL('.', candidate).toString(),
             } : null,
           });
         } catch (e) {
@@ -2696,6 +3159,37 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    if (p === '/api/assistant/session' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const versionId = String(body.versionId || state.running?.versionId || state.lastFailure?.versionId || '').trim();
+        const session = createSession({
+          gameDir: state.gameDir,
+          versionId,
+          lastFailure: state.lastFailure,
+          logs: state.logs.map((x) => x.line ?? x),
+          launchCommand: state.lastLaunch?.command ?? null,
+        });
+        return json(res, 200, { session });
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
+    if (p === '/api/assistant/chat' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const result = await chatSession({ id: body.sessionId, message: body.message });
+        return json(res, 200, result);
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
+    if (p === '/api/assistant/session' && req.method === 'GET') {
+      const session = getSession(url.searchParams.get('id') || '');
+      return json(res, session ? 200 : 404, session ? { session } : { error: '会话不存在' });
+    }
     if (p === '/api/assistant/analyze' && req.method === 'POST') {
       const body = await readBody(req);
       try {
@@ -2713,16 +3207,60 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/assistant/action' && req.method === 'POST') {
       const body = await readBody(req);
+      if (!body.action && body.id) body.action = body.id;
       try {
+        const versionId = String(body.payload?.versionId ?? body.versionId ?? '').trim();
+        const needVersion = () => { if (!versionId) throw new Error('没有目标实例'); };
         if (body.action === 'memory.set') {
-          const versionId = String(body.payload?.versionId ?? '').trim();
           const memoryMax = String(body.payload?.memoryMax ?? '6144M').trim();
-          if (!versionId) throw new Error('没有目标实例');
+          const memoryMin = String(body.payload?.memoryMin ?? '').trim();
+          needVersion();
           if (memoryToMb(memoryMax) > memoryCapMb()) {
             throw new Error(`建议内存 ${memoryMax} 超过物理内存 80% 上限（${memoryCapMb()}M）`);
           }
-          writeInstanceOverride(versionId, { memoryMax });
-          return json(res, 200, { ok: true, message: `已把 ${versionId} 最大内存改为 ${memoryMax}` });
+          const patch = { memoryMax };
+          if (memoryMin) patch.memoryMin = memoryMin;
+          writeInstanceOverride(versionId, patch);
+          return json(res, 200, { ok: true, message: `已把 ${versionId} 内存改为 ${memoryMin || '原值'} / ${memoryMax}` });
+        }
+        if (body.action === 'java.set') {
+          needVersion();
+          const javaPath = String(body.payload?.javaPath ?? '').trim();
+          if (!javaPath) throw new Error('没有选择 Java 路径');
+          writeInstanceOverride(versionId, { javaPath });
+          return json(res, 200, { ok: true, message: `已为 ${versionId} 指定 Java：${javaPath}` });
+        }
+        if (body.action === 'open.instance') {
+          needVersion();
+          const dir = resolveInstanceDir(versionId);
+          if (!dir) throw new Error('实例不存在');
+          spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore' }).unref();
+          return json(res, 200, { ok: true, message: '已打开实例目录' });
+        }
+        if (body.action === 'redownload.version' || body.action === 'redownload.resources') {
+          needVersion();
+          const source = (await resolveSource(getSettings().downloadSource)).source;
+          await installVersion({ gameDir: state.gameDir, versionId, source, onStage: () => {}, onProgress: () => {} });
+          return json(res, 200, { ok: true, message: '版本/资源文件已重新检查并补齐' });
+        }
+        if (body.action === 'mod.disable') {
+          needVersion();
+          const file = String(body.payload?.file ?? '').trim();
+          if (!file || /[\\/]/.test(file) || !/\.jar$/i.test(file)) throw new Error('mod 文件名不合法');
+          const dir = path.join(state.gameDir, 'versions', versionId, 'mods');
+          const src = path.join(dir, file);
+          if (!fs.existsSync(src)) throw new Error('mod 文件不存在');
+          await fsp.rename(src, `${src}.disabled`);
+          return json(res, 200, { ok: true, message: `已停用 ${file}（没有删除）` });
+        }
+        if (body.action === 'serverpack.redownload') {
+          const room = getRoomState();
+          const cache = room?.serverDir ? path.join(room.serverDir, '.cache', 'cf-server.zip') : '';
+          if (cache && fs.existsSync(cache)) {
+            await fsp.rm(cache, { force: true });
+            return json(res, 200, { ok: true, message: '已清理 server pack 缓存，请重新开房' });
+          }
+          return json(res, 200, { ok: true, message: '没有缓存可清理，请重新开房' });
         }
         throw new Error('这个动作不在白名单里');
       } catch (e) {

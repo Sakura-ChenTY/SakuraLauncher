@@ -1248,7 +1248,7 @@ async function doInstall(versionId) {
   }
 }
 
-async function doLaunch(versionId, joinAddress) {
+async function doLaunch(versionId, joinAddress, opts = {}) {
   if (state.running) {
     alert(`游戏正在运行：${state.running.versionId}\n先关掉正在跑的游戏，再${joinAddress ? '点「加入并启动」' : '重新启动'}。`);
     return;
@@ -1264,11 +1264,18 @@ async function doLaunch(versionId, joinAddress) {
   try {
     const r = await api('/api/launch', {
       method: 'POST',
-      body: JSON.stringify({ versionId, username: state.username || 'Player', joinAddress }),
+      body: JSON.stringify({
+        versionId,
+        username: state.username || 'Player',
+        joinAddress,
+        quickPlaySave: opts.quickPlaySave || '',
+        recentMeta: opts.recentMeta || null,
+      }),
     });
     setStatus('running', `运行 ${versionId}`);
     appendLog(`>>> 启动 ${versionId}，PID ${r.pid}`);
     syncLogs();
+    if (typeof loadRecentPlay === 'function') loadRecentPlay();
   } catch (e) {
     setStatus('error', '启动失败');
     appendLog(`启动失败：${e.message}`);
@@ -2187,6 +2194,10 @@ function connectEvents() {
         state.running = null;
         renderInstalled();
         appendLog(`<<< 游戏退出 code=${code}`);
+        setTimeout(() => {
+          if (typeof loadRoomState === 'function') loadRoomState();
+          if (typeof loadRecentPlay === 'function') loadRecentPlay();
+        }, 1200);
         if (code !== 0 && code !== null && code !== undefined) {
           const reason = String(msg.reason || '').replace(/\s+/g, ' ').trim();
           setStatus('error', reason ? `启动失败：${reason.slice(0, 180)}` : `启动失败：code=${code}`);
