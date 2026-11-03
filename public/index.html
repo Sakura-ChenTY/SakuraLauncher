@@ -1141,6 +1141,15 @@
       </div>
       <div class="modal-body">
         <div id="exportInfo" class="export-info"></div>
+        <div class="field-line export-format-line">
+          <label for="exportFormat">格式</label>
+          <select class="select" id="exportFormat">
+            <option value="sakura">自家格式（.zip）</option>
+            <option value="mrpack">Modrinth 整合包（.mrpack）</option>
+          </select>
+          <label for="exportVersion">版本</label>
+          <input id="exportVersion" class="input narrow" type="text" placeholder="整合包版本号" autocomplete="off">
+        </div>
         <div class="export-options">
           <label><input type="checkbox" id="exportMods" checked> Mod</label>
           <label><input type="checkbox" id="exportConfig" checked> 配置</label>

@@ -577,6 +577,15 @@ function showVerMenu(x, y, versionId) {
 /* ---- 实例导出 ---- */
 const exportState = { versionId: '', preview: null, zipPath: '' };
 
+function syncExportFormat() {
+  const mrpack = $('exportFormat')?.value === 'mrpack';
+  const saves = $('exportSaves');
+  if (saves) {
+    saves.disabled = mrpack;
+    if (mrpack) saves.checked = false;
+  }
+}
+
 function blockIfGameRunning() {
   if (!state.running) return false;
   toast('游戏还开着，先关掉再恢复', 'err');
@@ -610,6 +619,9 @@ async function openExport(versionId) {
     for (const id of ['exportShaderpacks', 'exportSaves', 'exportScreenshots']) {
       if ($(id)) $(id).checked = false;
     }
+    if ($('exportFormat')) $('exportFormat').value = 'sakura';
+    if ($('exportVersion')) $('exportVersion').value = p.meta?.packVersion || '';
+    syncExportFormat();
     if ($('exportProgress')) $('exportProgress').textContent = state.running ? '游戏开着，存档没带' : '';
     if ($('exportResult')) $('exportResult').textContent = '';
     if ($('exportCopyPath')) $('exportCopyPath').hidden = true;
@@ -632,12 +644,21 @@ async function pickExportDestination() {
 
 async function startExport() {
   if (!exportState.versionId) return;
+  const format = $('exportFormat')?.value === 'mrpack' ? 'mrpack' : 'sakura';
+  let packVersion = String($('exportVersion')?.value || '').trim();
+  if (format === 'mrpack' && !packVersion) {
+    packVersion = String(prompt('请输入整合包版本号（用于 .mrpack 文件名和 index.json）') || '').trim();
+    if (!packVersion) return;
+    if ($('exportVersion')) $('exportVersion').value = packVersion;
+  }
   const options = {
+    format,
+    version: packVersion,
     mods: Boolean($('exportMods')?.checked),
     config: Boolean($('exportConfig')?.checked),
     resourcepacks: Boolean($('exportResourcepacks')?.checked),
     shaderpacks: Boolean($('exportShaderpacks')?.checked),
-    saves: Boolean($('exportSaves')?.checked),
+    saves: format === 'mrpack' ? false : Boolean($('exportSaves')?.checked),
     screenshots: Boolean($('exportScreenshots')?.checked),
   };
   const destination = String($('exportDest')?.value || '').trim();
@@ -673,24 +694,36 @@ async function startExport() {
     });
     exportState.zipPath = r.zipPath;
     if ($('exportProgress')) $('exportProgress').textContent = r.warnings?.length ? `导出完成：${r.warnings.join('；')}` : '导出完成';
-    const label = {
-      mods: 'Mod',
-      config: '配置',
-      resourcepacks: '资源包',
-      shaderpacks: '光影',
-      saves: '存档',
-      screenshots: '截图',
-    };
-    const included = (r.included || []).map((k) => label[k] || k);
-    const skipped = (r.skipped || []).map((k) => label[k] || k);
-    if ($('exportResult')) {
-      $('exportResult').textContent = [
-        `路径：${r.zipPath}`,
-        `大小：${(r.bytes / 1024 / 1024).toFixed(1)} MB`,
-        `文件：${r.files?.length || 0} 个`,
-        `本次带：${included.length ? included.join('、') : '无'}；跳过：${skipped.length ? skipped.join('、') : '无'}`,
-        r.errors?.length ? `读取失败：${r.errors.length} 个文件` : '',
-      ].filter(Boolean).join('\n');
+    if (r.format === 'mrpack') {
+      if ($('exportResult')) {
+        $('exportResult').textContent = [
+          `路径：${r.zipPath}`,
+          `大小：${(r.bytes / 1024 / 1024).toFixed(1)} MB`,
+          `index.json：${r.files?.length || 0} 个文件`,
+          `overrides：${r.overridesCount || 0} 个文件`,
+          r.summary || '',
+        ].filter(Boolean).join('\n');
+      }
+    } else {
+      const label = {
+        mods: 'Mod',
+        config: '配置',
+        resourcepacks: '资源包',
+        shaderpacks: '光影',
+        saves: '存档',
+        screenshots: '截图',
+      };
+      const included = (r.included || []).map((k) => label[k] || k);
+      const skipped = (r.skipped || []).map((k) => label[k] || k);
+      if ($('exportResult')) {
+        $('exportResult').textContent = [
+          `路径：${r.zipPath}`,
+          `大小：${(r.bytes / 1024 / 1024).toFixed(1)} MB`,
+          `文件：${r.files?.length || 0} 个`,
+          `本次带：${included.length ? included.join('、') : '无'}；跳过：${skipped.length ? skipped.join('、') : '无'}`,
+          r.errors?.length ? `读取失败：${r.errors.length} 个文件` : '',
+        ].filter(Boolean).join('\n');
+      }
     }
     if ($('exportCopyPath')) $('exportCopyPath').hidden = false;
     if ($('exportOpenFolder')) $('exportOpenFolder').hidden = false;
@@ -4738,6 +4771,7 @@ $('savesOpenFolder')?.addEventListener('click', () => openSavesFolder('saves'));
 $('savesOpenBackups')?.addEventListener('click', () => openSavesFolder('backups'));
 
 $('exportClose')?.addEventListener('click', () => { $('exportModal').hidden = true; });
+$('exportFormat')?.addEventListener('change', syncExportFormat);
 $('exportPickDest')?.addEventListener('click', pickExportDestination);
 $('exportStart')?.addEventListener('click', startExport);
 $('exportCopyPath')?.addEventListener('click', copyExportPath);

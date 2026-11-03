@@ -8,6 +8,7 @@ import os from 'node:os';
 
 import { writeZipStream } from './zipstream.js';
 import { getSettings } from './settings.js';
+import { exportMrpack } from './mrpack-export.js';
 
 const CATEGORY_DIRS = ['mods', 'config', 'resourcepacks', 'shaderpacks', 'saves', 'screenshots'];
 const DEFAULT_SELECTED = new Set(['mods', 'config', 'resourcepacks']);
@@ -79,6 +80,8 @@ function instanceMeta(gameDir, versionId) {
     loader,
     loaderVersion,
     gameVersion: version.inheritsFrom || version.id || versionId,
+    packVersion: override.packVersion || override.version || '',
+    packName: override.packName || override.name || version.name || versionId,
     memory: {
       min: override.memoryMin || settings.memoryMin || '',
       max: override.memoryMax || settings.memoryMax || '',
@@ -120,6 +123,9 @@ export function previewExport({ gameDir, versionId, options = {} }) {
 }
 
 export async function exportInstance({ gameDir, versionId, destination, options = {}, onProgress = () => {} }) {
+  if (options.format === 'mrpack') {
+    return exportMrpack({ gameDir, versionId, destination, options, onProgress });
+  }
   const whileRunning = Boolean(options.whileRunning);
   const preview = previewExport({ gameDir, versionId, options: { ...options, whileRunning } });
   const root = path.join(gameDir, 'versions', versionId);

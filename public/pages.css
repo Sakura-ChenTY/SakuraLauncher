@@ -1918,3 +1918,7 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .pack-update-groups { font-size: 13px; color: var(--text); line-height: 1.7; margin-bottom: 6px; }
 .pack-update-config { display: block; margin: 10px 0 4px; font-size: 12px; color: var(--text-dim); }
 .pack-update-result { margin-top: 10px; white-space: pre-wrap; font-size: 11px; color: var(--text-dim); line-height: 1.7; }
+
+.export-format-line { align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.export-format-line label { font-size: 12px; color: var(--text-dim); }
+.export-format-line #exportVersion { width: 140px; }

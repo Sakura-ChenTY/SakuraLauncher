@@ -140,6 +140,36 @@ export async function getProjectVersions(slugOrId, { gameVersion, loader } = {})
 }
 
 /** 项目详情（含正文描述，用于详情面板） */
+export async function getVersionFileByHash(hash, { algorithm = 'sha1' } = {}) {
+  const h = String(hash || '').trim().toLowerCase();
+  if (!h) return null;
+  const v = await fetchJson(`${BASE}/version_file/${encodeURIComponent(h)}?algorithm=${encodeURIComponent(algorithm)}`, {
+    timeout: 20000,
+  });
+  return {
+    id: v.id,
+    projectId: v.project_id,
+    versionNumber: v.version_number,
+    gameVersions: v.game_versions ?? [],
+    loaders: v.loaders ?? [],
+    clientSide: v.client_side || '',
+    serverSide: v.server_side || '',
+    files: (v.files ?? []).map((f) => ({
+      filename: f.filename,
+      url: f.url,
+      size: f.size,
+      sha1: f.hashes?.sha1 ?? null,
+      sha512: f.hashes?.sha512 ?? null,
+      primary: Boolean(f.primary),
+    })),
+    dependencies: (v.dependencies ?? []).map((d) => ({
+      projectId: d.project_id,
+      versionId: d.version_id,
+      dependencyType: d.dependency_type,
+    })),
+  };
+}
+
 export async function getProject(slugOrId) {
   const p = await fetchJson(`${BASE}/project/${encodeURIComponent(slugOrId)}`, { timeout: 25000 });
   return {
