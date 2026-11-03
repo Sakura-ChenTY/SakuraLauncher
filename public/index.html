@@ -438,6 +438,7 @@
               <select class="select" id="savesPageInstance"></select>
               <button class="btn ghost" id="savesPageRefresh" type="button">刷新</button>
               <button class="btn ghost" id="savesPageBackupAll" type="button">备份全部</button>
+              <button class="btn ghost" id="savesPageImport" type="button">导入存档</button>
             </div>
             <div class="saves-progress" id="savesPageProgress"></div>
             <div class="saves-list" id="savesPageList"></div>
@@ -1158,6 +1159,22 @@
           <button class="btn ghost" id="exportCopyPath" type="button" hidden>复制路径</button>
           <button class="btn ghost" id="exportOpenFolder" type="button" hidden>打开所在文件夹</button>
           <button class="btn" id="exportStart" type="button">开始导出</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- 导入存档来源 -->
+  <div class="modal" id="saveImportChoiceModal" hidden>
+    <div class="modal-box save-import-choice-box">
+      <div class="modal-head">
+        <h3>导入存档</h3>
+        <button class="btn ghost" id="saveImportChoiceCancel" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="hint">选择一个含 level.dat 的世界文件夹，或一个世界 zip。</div>
+        <div class="field-line" style="margin-top:14px;justify-content:flex-end;flex-wrap:wrap">
+          <button class="btn ghost" id="saveImportFolder" type="button">选择世界文件夹</button>
+          <button class="btn" id="saveImportZip" type="button">选择 .zip</button>
         </div>
       </div>
     </div>

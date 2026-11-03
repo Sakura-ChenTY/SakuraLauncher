@@ -875,7 +875,58 @@ async function openSavesFolder(kind) {
 
 /** 版本类型的中文名，列表图标上用 */
 /* ---- 左侧导航：存档管理 ---- */
-const savesPageState = { versionId: '', data: null };
+const savesPageState = { versionId: '', data: null, selectedWorld: '' };
+
+function pickSaveImportPath(kind) {
+  if (kind === 'folder' && globalThis.mcWin?.pickFolder) return globalThis.mcWin.pickFolder();
+  if (kind === 'zip' && globalThis.mcWin?.pickFile) {
+    return globalThis.mcWin.pickFile([{ name: 'Minecraft 世界', extensions: ['zip'] }]);
+  }
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    if (kind === 'folder') input.webkitdirectory = true;
+    else input.accept = '.zip,application/zip';
+    input.addEventListener('change', () => resolve(input.files?.[0]?.path || ''));
+    input.click();
+  });
+}
+
+async function previewSaveImportPath(path) {
+  const versionId = savesPageState.versionId || $('savesPageInstance')?.value || '';
+  if (!versionId) {
+    toast('先选一个目标实例', 'err');
+    return;
+  }
+  try {
+    const info = await api('/api/saves/import/preview', {
+      method: 'POST',
+      body: JSON.stringify({ versionId, path }),
+    });
+    const message = info.mismatch
+      ? `这个存档是 ${info.saveGameVersion} 版本的，可能打不开，仍然导入？`
+      : `导入世界「${info.world}」？\n存档版本：${info.saveGameVersion} · 目标：${info.targetGameVersion}`;
+    if (!confirm(message)) return;
+    const r = await api('/api/saves/import', {
+      method: 'POST',
+      body: JSON.stringify({ versionId, path }),
+    });
+    toast(`已导入存档 ${r.world}`);
+    await loadSavesPage();
+    savesPageState.selectedWorld = r.world;
+    renderSavesPage(savesPageState.data);
+  } catch (e) {
+    toast('导入存档失败：' + e.message, 'err');
+  }
+}
+
+async function chooseSaveImport(kind) {
+  if ($('saveImportChoiceModal')) $('saveImportChoiceModal').hidden = true;
+  let path = '';
+  try { path = await pickSaveImportPath(kind); } catch { /* ignore */ }
+  if (!path) return;
+  await previewSaveImportPath(path);
+}
 
 function fillSavesPageInstances() {
   const sel = $('savesPageInstance');
@@ -908,7 +959,7 @@ function renderSavesPage(data) {
       : '<option value="">没有可用备份</option>';
     const disabled = state.running || !own.length;
     const title = state.running ? '游戏还开着，先关掉再恢复' : (!own.length ? '没有可用备份' : '');
-    return `<div class="save-row saves-page-row">
+    return `<div class="save-row saves-page-row${savesPageState.selectedWorld === s.name ? ' selected' : ''}" data-page-world="${escapeHtml(s.name)}">
       <div class="save-row-main">
         <div class="save-row-name">${escapeHtml(s.name)}</div>
         <div class="save-row-meta">${fmtSize(s.size)} · ${new Date(s.modifiedAt).toLocaleString()}</div>
@@ -933,6 +984,13 @@ function renderSavesPage(data) {
   });
   list.querySelectorAll('[data-page-open]').forEach((btn) => {
     btn.addEventListener('click', () => openSavesPageFolder());
+  });
+  list.querySelectorAll('.saves-page-row').forEach((row) => {
+    row.addEventListener('click', (ev) => {
+      if (ev.target.closest('button, select')) return;
+      savesPageState.selectedWorld = row.dataset.pageWorld || '';
+      list.querySelectorAll('.saves-page-row').forEach((x) => x.classList.toggle('selected', x === row));
+    });
   });
 }
 
@@ -4584,6 +4642,14 @@ document.querySelectorAll('.nav-item').forEach((tab) => {
 $('savesPageInstance')?.addEventListener('change', loadSavesPage);
 $('savesPageRefresh')?.addEventListener('click', loadSavesPage);
 $('savesPageBackupAll')?.addEventListener('click', backupAllSavesPage);
+$('savesPageImport')?.addEventListener('click', () => {
+  if ($('saveImportChoiceModal')) $('saveImportChoiceModal').hidden = false;
+});
+$('saveImportChoiceCancel')?.addEventListener('click', () => {
+  if ($('saveImportChoiceModal')) $('saveImportChoiceModal').hidden = true;
+});
+$('saveImportFolder')?.addEventListener('click', () => chooseSaveImport('folder'));
+$('saveImportZip')?.addEventListener('click', () => chooseSaveImport('zip'));
 
 /** 切到指定面板（供「管理内容」等按钮调用） */
 function switchTab(name) {
@@ -5077,6 +5143,10 @@ async function importDroppedFile(file) {
   }
   if (ext === 'jar') {
     await performImport(p, state.selectedVersion, false);
+    return;
+  }
+  if (ext === 'zip' && $('panel-saves')?.classList.contains('active')) {
+    await previewSaveImportPath(p);
     return;
   }
   try {

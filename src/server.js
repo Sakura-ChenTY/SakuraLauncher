@@ -75,6 +75,7 @@ import { previewDiagnosticPackage, createDiagnosticPackage, sanitizeDiagnostic }
 import { snapshotCrashArtifacts, newCrashArtifacts } from './crash-watch.js';
 import { previewExport, exportInstance } from './modpack-export.js';
 import { listSaves, backupWorld, backupAll, restoreBackup, autoBackupAll } from './saves.js';
+import { previewSaveImport, importSave } from './saveimport.js';
 import {
   addTracked,
   removeTracked,
@@ -3475,6 +3476,45 @@ const server = http.createServer(async (req, res) => {
           onProgress: (p) => emit('save-progress', p),
         });
         return json(res, 200, { results });
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      } finally { state.saving = false; }
+    }
+
+    if (p === '/api/saves/import/preview' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const versionId = String(body.versionId || '').trim();
+        if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
+        const info = readInstanceInfo(versionId) || {};
+        return json(res, 200, previewSaveImport({
+          gameDir: state.gameDir,
+          versionId,
+          source: String(body.path || ''),
+          targetGameVersion: info.gameVersion || versionId,
+        }));
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
+    if (p === '/api/saves/import' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (state.running) return json(res, 409, { error: '游戏还开着，先关掉再导入' });
+      try {
+        const versionId = String(body.versionId || '').trim();
+        if (!resolveInstanceDir(versionId)) throw new Error('实例不存在');
+        if (state.saving) throw new Error('正在处理存档，请稍候');
+        state.saving = true;
+        const info = readInstanceInfo(versionId) || {};
+        const result = await importSave({
+          gameDir: state.gameDir,
+          versionId,
+          source: String(body.path || ''),
+          targetGameVersion: info.gameVersion || versionId,
+        });
+        pushLog(`导入外部存档：${result.world}`);
+        return json(res, 200, result);
       } catch (e) {
         return json(res, 400, { error: e.message });
       } finally { state.saving = false; }
