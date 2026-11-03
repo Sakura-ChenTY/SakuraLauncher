@@ -450,9 +450,9 @@
     }
     const analyze = el('aiAnalyze');
     const diag = el('homeDiagBtn');
-    if (analyze) analyze.textContent = collapsed ? '分析失败' : '分析最近失败';
-    if (diag) diag.textContent = collapsed ? '诊断' : '收集诊断信息';
-    if (more) more.hidden = !collapsed;
+    if (analyze) analyze.textContent = '分析失败';
+    if (diag) diag.textContent = '诊断';
+    if (more) more.hidden = false;
     if (!collapsed && el('homeAssistantMoreMenu')) el('homeAssistantMoreMenu').hidden = true;
     if (persist) localStorage.setItem('sakura.homeAssistantCollapsed', collapsed ? '1' : '0');
     scheduleAssistantBarHeight();

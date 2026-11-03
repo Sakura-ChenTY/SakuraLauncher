@@ -197,16 +197,31 @@
 
           <!-- 主页常驻小助手：输入 + 最近几条回复；窄窗口可收起 -->
           <aside class="home-assistant" id="homeAssistant">
-            <div class="home-assistant-head">
-              <div class="home-assistant-title">
-                <b>绘梨衣小助手</b>
-                <span class="hint" id="aiTarget"></span>
+            <div class="assistant-expand" id="assistantExpand">
+              <div class="assistant-expand-inner">
+                <div class="assistant-result home-assistant-log" id="aiResult">
+                  <div class="empty">问吧。我会带着这次启动的上下文回答。</div>
+                </div>
+                <div class="hint home-assistant-hint">同一会话保留上下文。</div>
               </div>
-              <div class="home-assistant-actions">
-                <button class="btn ghost" id="aiAnalyze" type="button">分析最近失败</button>
-                <button class="btn ghost" id="homeDiagBtn" type="button">收集诊断信息</button>
-                <button class="btn ghost" id="homeAssistantMore" type="button" hidden>更多</button>
-                <button class="btn ghost" id="homeAssistantToggle" type="button" aria-expanded="true">收起</button>
+            </div>
+            <div class="home-assistant-bar" id="homeAssistantBar">
+              <div class="home-assistant-head">
+                <div class="home-assistant-title">
+                  <b>绘梨衣小助手</b>
+                  <span class="hint" id="aiTarget"></span>
+                </div>
+                <div class="home-assistant-actions">
+                  <button class="btn ghost" id="aiAnalyze" type="button">分析最近失败</button>
+                  <button class="btn ghost" id="homeDiagBtn" type="button">收集诊断信息</button>
+                  <button class="btn ghost" id="homeAssistantMore" type="button" hidden>更多</button>
+                  <button class="btn ghost" id="homeAssistantToggle" type="button" aria-expanded="true">收起</button>
+                </div>
+              </div>
+              <div class="field-line assistant-chat-line">
+                <input id="aiChatInput" class="input grow" type="text" placeholder="问：为什么进不去游戏？" autocomplete="off">
+                <button class="btn" id="aiChatSend" type="button">发送</button>
+                <button class="btn ghost" id="aiChatNew" type="button">新会话</button>
               </div>
             </div>
             <div class="home-assistant-more-menu" id="homeAssistantMoreMenu" hidden>
@@ -214,15 +229,6 @@
               <button class="btn ghost" type="button" data-more-action="diag">收集诊断信息</button>
               <button class="btn ghost" type="button" data-more-action="new">新会话</button>
             </div>
-            <div class="assistant-result home-assistant-log" id="aiResult">
-              <div class="empty">问吧。我会带着这次启动的上下文回答。</div>
-            </div>
-            <div class="field-line assistant-chat-line">
-              <input id="aiChatInput" class="input grow" type="text" placeholder="问：为什么进不去游戏？" autocomplete="off">
-              <button class="btn" id="aiChatSend" type="button">发送</button>
-              <button class="btn ghost" id="aiChatNew" type="button">新会话</button>
-            </div>
-            <div class="hint home-assistant-hint">同一会话保留上下文；回复也会在右下角弹出。</div>
           </aside>
         </section>
 

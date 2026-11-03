@@ -1273,23 +1273,50 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
   width: auto;
   max-width: none;
   max-height: 280px;
-  padding: 11px 12px;
+  padding: 6px 8px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: color-mix(in srgb, var(--bg-2) 92%, transparent);
   box-shadow: 0 12px 30px rgba(0,0,0,.22);
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 0;
   backdrop-filter: blur(10px);
-  transition: max-height 150ms ease, opacity 150ms ease, padding 150ms ease;
 }
-.home-assistant-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.assistant-expand {
+  display: grid;
+  grid-template-rows: 1fr;
+  margin-bottom: 7px;
+  transition: grid-template-rows 240ms cubic-bezier(.2,.8,.2,1);
+}
+.assistant-expand-inner {
+  min-height: 0;
+  overflow: hidden;
+  opacity: 1;
+  transition: opacity 100ms ease 90ms;
+}
+.home-assistant-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+}
+.home-assistant-bar .home-assistant-head { display: contents; }
+.home-assistant-bar .home-assistant-actions { display: contents; }
+.home-assistant-bar .home-assistant-title { order: 1; flex: 0 0 auto; min-width: 0; }
+.home-assistant-bar .assistant-chat-line { order: 2; flex: 1 1 0; min-width: 0; }
+.home-assistant-bar #aiAnalyze { order: 3; }
+.home-assistant-bar #homeDiagBtn { order: 4; }
+.home-assistant-bar #homeAssistantMore { order: 5; }
+.home-assistant-bar #homeAssistantToggle { order: 6; }
+.home-assistant:not(.is-collapsed) #homeAssistantMore[hidden] { display: inline-flex; visibility: hidden; pointer-events: none; }.home-assistant-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .home-assistant-title { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
 .home-assistant-title b { font-size: 12px; color: var(--text); white-space: nowrap; }
-.home-assistant-title .hint { font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.home-assistant-title .hint { display: none; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .home-assistant-actions { display: flex; gap: 5px; flex: 0 0 auto; flex-wrap: nowrap; }
-.home-assistant-actions .btn { padding: 4px 7px; font-size: 10px; white-space: nowrap; }
+.home-assistant-actions .btn { padding: 3px 5px; font-size: 10px; white-space: nowrap; }
 .home-assistant-log { min-height: 54px; max-height: 146px; overflow-y: auto; margin: 0; white-space: normal; font-size: 11px; line-height: 1.55; }
 .home-assistant-log .assistant-msg { margin: 5px 0; padding: 6px 8px; border-radius: 7px; }
 .home-assistant-log .assistant-msg-role { font-size: 9px; margin-bottom: 2px; }
@@ -1300,8 +1327,6 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .home-assistant .assistant-chat-line .input { min-width: 0; padding: 6px 8px; font-size: 11px; }
 .home-assistant .assistant-chat-line .btn { padding: 5px 8px; font-size: 10px; }
 .home-assistant-hint { font-size: 10px; margin: 0; }
-.home-assistant.is-collapsed .home-assistant-log,
-.home-assistant.is-collapsed .home-assistant-hint { display: none; }
 .home-assistant.is-collapsed {
   width: auto;
   max-width: none;
@@ -1311,9 +1336,17 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
   box-sizing: border-box;
   overflow-x: hidden;
   padding: 6px 8px;
-  flex-direction: row;
-  align-items: center;
-  gap: 7px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+}
+.home-assistant.is-collapsed .assistant-expand {
+  grid-template-rows: 0fr;
+  margin-bottom: 0;
+}
+.home-assistant.is-collapsed .assistant-expand-inner {
+  opacity: 0;
+  transition-delay: 0ms;
 }
 .home-assistant.is-collapsed .home-assistant-head {
   display: contents;
@@ -1360,7 +1393,7 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
   flex: 1 1 0;
   min-width: 0;
 }
-.home-assistant.is-collapsed .assistant-chat-line #aiChatNew { display: none; }
+.home-assistant .assistant-chat-line #aiChatNew { display: none; }
 
 @media (max-width: 760px) {
   .home-assistant.is-collapsed #aiAnalyze,
