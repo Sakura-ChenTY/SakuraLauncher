@@ -484,11 +484,11 @@
     void home.offsetWidth;
     requestAnimationFrame(() => {
       for (const node of transforms) {
-        node.style.transition = 'transform 240ms cubic-bezier(.2,.8,.2,1)';
+        node.style.transition = 'transform 240ms cubic-bezier(.4,0,.2,1)';
         node.style.transform = 'translate(0, 0)';
       }
       if (widthChanged) {
-        input.style.transition = 'width 240ms cubic-bezier(.2,.8,.2,1)';
+        input.style.transition = 'width 240ms cubic-bezier(.4,0,.2,1)';
         input.style.width = `${finalInputWidth}px`;
       }
     });
@@ -537,8 +537,8 @@
       updateChrome();
       // 让浏览器先记录 1fr/1 的起始状态，下一帧再切 0fr，避免过渡被同帧合并。
       void home.offsetWidth;
-      if (assistantPhaseTimer) clearTimeout(assistantPhaseTimer);
-      assistantPhaseTimer = setTimeout(() => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
           home.classList.toggle('is-collapsed', Boolean(collapsed));
           home.classList.remove('is-collapsing');
           if (firstLayout) animateBarReflow(home, firstLayout);
@@ -554,7 +554,8 @@
               if (box) box.scrollTop = box.scrollHeight;
             }
           }, collapsed ? 360 : 260);
-      }, 20);
+        });
+      });
     } else {
       updateChrome();
       if (collapsed) home.classList.add('is-collapse-done');
