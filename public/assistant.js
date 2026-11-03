@@ -421,6 +421,7 @@
 
   let assistantBarFrame = 0;
   let assistantExpandTimer = 0;
+  let assistantPhaseTimer = 0;
   function syncAssistantBarHeight() {
     const panel = el('panel-home');
     const home = el('homeAssistant');
@@ -516,33 +517,52 @@
     const wasCollapsed = home.classList.contains('is-collapsed');
     const changed = wasCollapsed !== Boolean(collapsed);
     const firstLayout = changed ? captureBarReflow(home) : null;
+
+    const updateChrome = () => {
+      if (btn) {
+        btn.textContent = collapsed ? '展开' : '收起';
+        btn.setAttribute('aria-expanded', String(!collapsed));
+      }
+      const analyze = el('aiAnalyze');
+      const diag = el('homeDiagBtn');
+      if (analyze) analyze.textContent = '分析失败';
+      if (diag) diag.textContent = '诊断';
+      if (more) more.hidden = false;
+      if (!collapsed && el('homeAssistantMoreMenu')) el('homeAssistantMoreMenu').hidden = true;
+    };
+
     if (changed) {
       if (assistantExpandTimer) clearTimeout(assistantExpandTimer);
       home.classList.add('is-animating');
-      // 收起先让内容淡出 100ms，再花 240ms 收高度；总时长留 360ms。
-      assistantExpandTimer = setTimeout(() => {
-        assistantExpandTimer = 0;
-        home.classList.remove('is-animating');
-        if (!home.classList.contains('is-collapsed')) {
-          const box = el('aiResult');
-          if (box) box.scrollTop = box.scrollHeight;
-        }
-      }, collapsed ? 360 : 260);
+      home.classList.remove('is-collapse-done');
+      void home.offsetWidth;
+      updateChrome();
+      // 让浏览器先记录 1fr/1 的起始状态，下一帧再切 0fr，避免过渡被同帧合并。
+      void home.offsetWidth;
+      if (assistantPhaseTimer) clearTimeout(assistantPhaseTimer);
+      assistantPhaseTimer = setTimeout(() => {
+          home.classList.toggle('is-collapsed', Boolean(collapsed));
+          home.classList.remove('is-collapsing');
+          if (firstLayout) animateBarReflow(home, firstLayout);
+          scheduleAssistantBarHeight();
+          assistantExpandTimer = setTimeout(() => {
+            assistantExpandTimer = 0;
+            home.classList.remove('is-animating');
+            if (collapsed) {
+              home.classList.add('is-collapse-done');
+            } else {
+              home.classList.remove('is-collapse-done');
+              const box = el('aiResult');
+              if (box) box.scrollTop = box.scrollHeight;
+            }
+          }, collapsed ? 360 : 260);
+      }, 20);
+    } else {
+      updateChrome();
+      if (collapsed) home.classList.add('is-collapse-done');
+      scheduleAssistantBarHeight();
     }
-    home.classList.toggle('is-collapsed', Boolean(collapsed));
-    if (btn) {
-      btn.textContent = collapsed ? '展开' : '收起';
-      btn.setAttribute('aria-expanded', String(!collapsed));
-    }
-    const analyze = el('aiAnalyze');
-    const diag = el('homeDiagBtn');
-    if (analyze) analyze.textContent = '分析失败';
-    if (diag) diag.textContent = '诊断';
-    if (more) more.hidden = false;
-    if (!collapsed && el('homeAssistantMoreMenu')) el('homeAssistantMoreMenu').hidden = true;
-    if (firstLayout) animateBarReflow(home, firstLayout);
     if (persist) localStorage.setItem('sakura.homeAssistantCollapsed', collapsed ? '1' : '0');
-    scheduleAssistantBarHeight();
   }
   function init() {
     if (!el('aiBase')) return;
