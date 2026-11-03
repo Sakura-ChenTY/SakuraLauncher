@@ -1922,3 +1922,12 @@ body.mascot-assistant #panel-assistant .assistant-result { padding-right: 124px;
 .export-format-line { align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
 .export-format-line label { font-size: 12px; color: var(--text-dim); }
 .export-format-line #exportVersion { width: 140px; }
+
+.mod-update-preview-box { max-width: 720px; }
+.mod-update-preview-groups { max-height: 420px; overflow: auto; }
+.mod-update-preview-group { margin-bottom: 12px; }
+.mod-update-preview-head { font-size: 12px; color: var(--text); margin-bottom: 5px; }
+.mod-update-preview-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 7px; border-bottom: 1px solid var(--line); font-size: 11px; color: var(--text-dim); }
+.mod-update-preview-row .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mod-update-preview-row .ver { flex: 0 0 auto; color: var(--text); }
+.mod-update-preview-more { padding: 5px 7px; font-size: 11px; color: var(--muted); }

@@ -2617,27 +2617,66 @@ function renderModUpdates(r) {
     checks.forEach((c) => { c.checked = !allOn; });
     $('muSelectAll').textContent = allOn ? '全选' : '全不选';
   });
-  $('muApply')?.addEventListener('click', () => applyModUpdates(ups));
+  $('muApply')?.addEventListener('click', () => openModUpdatePreview(ups));
 }
 
-async function applyModUpdates(ups) {
+const MOD_UPDATE_TYPES = [
+  ['mod', 'mods'],
+  ['resourcepack', 'resourcepacks'],
+  ['shader', 'shaderpacks'],
+];
+
+function modUpdateVersion(u, key) {
+  if (u[key]) return u[key];
+  if (key === 'to' && u.datePublished) return `有新版（${String(u.datePublished).slice(0, 10)}）`;
+  return '有新版';
+}
+
+function openModUpdatePreview(ups) {
   const box = $('modUpdates');
   const picked = [...box.querySelectorAll('.mu-check')]
     .filter((c) => c.checked)
     .map((c) => ups[Number(c.dataset.idx)])
     .filter(Boolean);
-
   if (!picked.length) {
-    alert('先选要更新的模组');
+    alert('先选要更新的文件');
     return;
   }
+  const groups = MOD_UPDATE_TYPES
+    .map(([type, folder]) => ({
+      type,
+      folder,
+      items: picked.filter((u) => (u.type || 'mod') === type),
+    }))
+    .filter((g) => g.items.length);
+  const root = $('modUpdatePreviewGroups');
+  if (root) {
+    root.innerHTML = groups.map((g) => {
+      const shown = g.items.slice(0, 10).map((u) => `
+        <div class="mod-update-preview-row">
+          <span class="name">${escapeHtml(u.title || u.oldName)}</span>
+          <span class="ver">${escapeHtml(modUpdateVersion(u, 'from'))} → ${escapeHtml(modUpdateVersion(u, 'to'))}</span>
+        </div>`).join('');
+      const more = g.items.length > 10
+        ? `<div class="mod-update-preview-more">等 ${g.items.length} 个</div>`
+        : '';
+      return `<div class="mod-update-preview-group">
+        <div class="mod-update-preview-head">${escapeHtml(g.folder)} · ${g.items.length} 个</div>
+        ${shown}${more}
+      </div>`;
+    }).join('');
+  }
+  if ($('modUpdatePreviewConfirm')) {
+    $('modUpdatePreviewConfirm').textContent = `更新 ${picked.length} 个文件`;
+    $('modUpdatePreviewConfirm').dataset.count = String(picked.length);
+  }
+  const modal = $('modUpdatePreviewModal');
+  if (modal) modal.hidden = false;
+  window.__pendingModUpdates = picked;
+}
 
-  const beta = picked.filter((u) => u.releaseType && u.releaseType !== 'release').length;
-  const msg = beta
-    ? `要更新 ${picked.length} 个模组，其中 ${beta} 个不是正式版（beta/alpha）。\n旧的会备份到 mods/.backup，确定吗？`
-    : `要更新 ${picked.length} 个模组？\n旧的会备份到 mods/.backup。`;
-  if (!confirm(msg)) return;
-
+async function applyModUpdates(picked) {
+  if (!Array.isArray(picked) || !picked.length) return;
   try {
     await api('/api/mods/apply-updates', {
       method: 'POST',
@@ -5025,6 +5064,14 @@ $('trackCheck').addEventListener('click', checkTrackNow);
 
 $('closeContent').addEventListener('click', () => { $('contentPanel').hidden = true; });
 $('checkModUpdates').addEventListener('click', checkModUpdates);
+$('modUpdatePreviewClose')?.addEventListener('click', () => { $('modUpdatePreviewModal').hidden = true; window.__pendingModUpdates = null; });
+$('modUpdatePreviewCancel')?.addEventListener('click', () => { $('modUpdatePreviewModal').hidden = true; window.__pendingModUpdates = null; });
+$('modUpdatePreviewConfirm')?.addEventListener('click', () => {
+  const picked = window.__pendingModUpdates || [];
+  $('modUpdatePreviewModal').hidden = true;
+  window.__pendingModUpdates = null;
+  applyModUpdates(picked);
+});
 $('exportContentPack').addEventListener('click', () => {
   openExport(state.contentVersion || state.selectedVersion);
 });

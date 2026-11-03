@@ -203,6 +203,23 @@
             <div class="content-groups" id="contentGroups"></div>
           </div>
 
+          <!-- 更新预览 -->
+          <div class="modal" id="modUpdatePreviewModal" hidden>
+            <div class="modal-box mod-update-preview-box">
+              <div class="modal-head">
+                <h3>更新预览</h3>
+                <button class="btn ghost" id="modUpdatePreviewClose" type="button">✕</button>
+              </div>
+              <div class="modal-body">
+                <div id="modUpdatePreviewGroups" class="mod-update-preview-groups"></div>
+                <div class="field-line" style="margin-top:12px;justify-content:flex-end">
+                  <button class="btn ghost" id="modUpdatePreviewCancel" type="button">取消</button>
+                  <button class="btn" id="modUpdatePreviewConfirm" type="button">更新 N 个文件</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- 主页常驻小助手：输入 + 最近几条回复；窄窗口可收起 -->
           <aside class="home-assistant" id="homeAssistant">
             <div class="assistant-expand" id="assistantExpand">
