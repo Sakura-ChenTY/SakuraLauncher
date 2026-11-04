@@ -101,14 +101,17 @@ export function candidateUrls(url, opts = {}) {
   const { preferMirror = false, source, fallback = true } = opts;
   const primaryId = source ?? (preferMirror ? 'bmclapi' : 'official');
 
+  // CurseForge mod/文件：实测 edge 大量 404/aborted。
+  // 固定顺序 mediafilez 第一，MCIM 第二，edge 最后，不再按全局主源决定顺序。
+  if (/^https?:\/\/(edge|media|mediafilez)\.forgecdn\.net\//.test(url)) {
+    const mediafilez = url.replace(/^https?:\/\/(edge|media|mediafilez)\.forgecdn\.net\//, 'https://mediafilez.forgecdn.net/');
+    const mirror = toMirror(url, 'bmclapi');
+    const edge = url.replace(/^https?:\/\/(edge|media|mediafilez)\.forgecdn\.net\//, 'https://edge.forgecdn.net/');
+    return [...new Set([mediafilez, mirror, edge].filter(Boolean))];
+  }
+
   const primary = primaryId === 'official' ? url : toMirror(url, primaryId);
   const list = [primary ?? url];
-
-  // CurseForge: edge 已知可能 404，官方首选先补同路径的 mediafilez。
-  if (primaryId === 'official' && /^https?:\/\/(edge|media)\.forgecdn\.net\//.test(url)) {
-    const direct = url.replace(/^https?:\/\/(edge|media)\.forgecdn\.net\//, 'https://mediafilez.forgecdn.net/');
-    if (!list.includes(direct)) list.push(direct);
-  }
 
   if (fallback) {
     // 另一侧兜底

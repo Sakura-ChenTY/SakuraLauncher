@@ -100,9 +100,20 @@ let sourceChangeListener = null;
 // 404 是“这个候选地址不存在”，不是网络抖动：记住后不要再反复撞。
 const invalidCandidates = new Set();
 const invalidMirrorPrefixes = new Set();
+const badDomains = new Set();
+
+function hostOf(url) {
+  try { return new URL(url).hostname; } catch { return ''; }
+}
+
+function markDomainBad(target) {
+  const host = hostOf(target);
+  if (host) badDomains.add(host);
+}
 
 function markCandidateInvalid(target) {
   invalidCandidates.add(target);
+  markDomainBad(target);
   try {
     const u = new URL(target);
     if (u.hostname === 'mod.mcimirror.top') {
@@ -117,6 +128,7 @@ function markCandidateInvalid(target) {
 function availableCandidates(url, opts) {
   return candidateUrls(url, opts).filter((candidate) => {
     if (invalidCandidates.has(candidate)) return false;
+    if (badDomains.has(hostOf(candidate))) return false;
     for (const prefix of invalidMirrorPrefixes) {
       if (candidate.startsWith(prefix)) return false;
     }
@@ -630,7 +642,7 @@ async function downloadRanged(url, destPath, size, sha1, source) {
   const partPath = `${destPath}.part`;
   let completed = false;
   const segs = [];
-  const count = 4;
+  const count = 8;
   const chunk = Math.ceil(size / count);
   for (let i = 0; i < count; i++) {
     const start = i * chunk;
@@ -785,6 +797,7 @@ export async function downloadFile(url, destPath, opts = {}) {
   let lastErr = null;
   let previousTarget = null;
   let attempt = 0;
+  let domainRetryUsed = false;
 
   try {
     while (attempt < retries) {
@@ -792,7 +805,14 @@ export async function downloadFile(url, destPath, opts = {}) {
       ensureNotCancelled();
 
       const effectiveSource = sourceState?.active ?? (source === 'bmclapi' ? 'bmclapi' : 'official');
-      const urls = availableCandidates(url, { preferMirror, source: effectiveSource });
+      let urls = availableCandidates(url, { preferMirror, source: effectiveSource });
+      if (!urls.length && badDomains.size && !domainRetryUsed) {
+        // 域名负缓存不能把整个候选集永久锁死；清零后给一次重试机会。
+        badDomains.clear();
+        domainRetryUsed = true;
+        logDownload(`[域名负缓存] 候选全部被跳过，清零重试一次：${path.basename(destPath)}`);
+        urls = availableCandidates(url, { preferMirror, source: effectiveSource });
+      }
       if (!urls.length) throw new Error(`没有可用的下载候选：${path.basename(destPath)}`);
       const target = urls[Math.min(attempt, urls.length - 1)];
       if (attempt > 0 && target !== previousTarget) {
@@ -928,7 +948,11 @@ export async function downloadFile(url, destPath, opts = {}) {
         const stalled = String(e?.message ?? '').includes('STALL_TIMEOUT');
         if (stalled) {
           if (sourceState) sourceState.lastTimeoutAt = Date.now();
+          markDomainBad(target);
           logDownload(`[下载停滞] ${hostLabel(target)} 30 秒无字节增长，断开并换候选`);
+        } else if (/aborted|ECONNRESET|socket hang up/i.test(String(e?.message ?? ''))) {
+          markDomainBad(target);
+          logDownload(`[域名负缓存] ${hostLabel(target)} 本轮出现 aborted/ECONNRESET，后续跳过`);
         }
         const status = Number(e?.statusCode || /^HTTP\s+(\d{3})\b/i.exec(String(e?.message ?? ''))?.[1] || 0);
         // 404 不是可重试错误：标记候选（镜像按前缀）并立刻换下一个候选。
@@ -988,6 +1012,8 @@ export async function downloadMany(items, {
   const errors = [];
   const n = Math.max(1, Math.min(128, Math.max(1, Number(concurrency) || 64), items.length));
   configureAgents(n);
+  // 域名负缓存只作用于当前这一轮；下一轮再给这些域名一次机会。
+  badDomains.clear();
 
   // 只创建 n 个 worker，按 index 排队取任务；不会给 4000 个文件各建一个 Promise。
   // activeLimit 遇到 429/5xx 会下调，已开始的请求继续，后续排队请求等水位。
@@ -1066,5 +1092,6 @@ export async function downloadMany(items, {
   // 取消了就不要装成“全部跑完”：上层据此决定是收尾还是报错
   if (isCancelled()) throw new CancelledError();
 
+  badDomains.clear();
   return { total: items.length, skipped, downloaded, errors };
 }

@@ -41,8 +41,13 @@ export function curseForgePackUrls(file) {
   const name = String(file?.fileName || '');
   if (!id || !name) return [];
   const rel = `files/${id.slice(0, 4)}/${id.slice(4)}/${encodeURIComponent(name)}`;
-  const hosts = ['edge.forgecdn.net', 'mediafilez.forgecdn.net', 'media.forgecdn.net'];
-  const urls = [file.downloadUrl, ...hosts.map((h) => `https://${h}/${rel}`)].filter(Boolean);
+  // 这轮实测 edge 大量 404/aborted；mediafilez 放第一，edge 最后。
+  const urls = [
+    `https://mediafilez.forgecdn.net/${rel}`,
+    `https://media.forgecdn.net/${rel}`,
+    file.downloadUrl,
+    `https://edge.forgecdn.net/${rel}`,
+  ].filter(Boolean);
   return [...new Set(urls)];
 }
 
