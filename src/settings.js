@@ -36,8 +36,7 @@ export const DEFAULTS = {
   //   auto     = 缺了就自动下载对应版本的 JRE（开箱即用，但多占 ~180MB/版本）
   javaMode: 'auto',
   concurrency: 64,
-  downloadSource: 'split', // auto | official | bmclapi | split
-  mirrorShare: 50, // split 模式下分给 BMCLAPI 的百分比
+  downloadSource: 'official', // official | bmclapi —— 优先源，下载中会自动降级
   preferMirror: false, // 旧字段，仅为兼容老 settings.json，保存时与 downloadSource 同步
   isolated: 'on', // auto | on | off —— 默认总是隔离，每个实例独立存档与 mod
   extraJvm: '',
@@ -124,20 +123,20 @@ export function normalize(raw = {}, base = DEFAULTS) {
   else if (raw.concurrency !== undefined) notes.push('并发数需在 1-256，已保留原值');
 
   // ---- 下载源 ----
-  // 新字段 downloadSource 为准；旧字段 preferMirror 仅在未提供新字段时用来推断
-  if (VALID_SOURCE_SETTINGS.includes(raw.downloadSource)) {
+  // 新字段 downloadSource 为准；旧的 auto / split 统一迁移到官方优先。
+  const legacySource = raw.downloadSource === 'auto' || raw.downloadSource === 'split';
+  if (legacySource) {
+    out.downloadSource = 'official';
+    notes.push('旧的自动/分流下载源已迁移为优先官方');
+  } else if (VALID_SOURCE_SETTINGS.includes(raw.downloadSource)) {
     out.downloadSource = raw.downloadSource;
   } else if (typeof raw.preferMirror === 'boolean') {
-    out.downloadSource = raw.preferMirror ? 'bmclapi' : 'auto';
+    out.downloadSource = raw.preferMirror ? 'bmclapi' : 'official';
   } else if (raw.downloadSource !== undefined) {
-    notes.push('下载源只能是 auto / official / bmclapi，已保留原值');
+    notes.push('下载源只能是 official / bmclapi，已保留原值');
   }
   // 旧字段始终与主字段同步，避免两处不一致造成误解
   out.preferMirror = out.downloadSource === 'bmclapi';
-
-  const mirrorShare = Number(raw.mirrorShare);
-  if (Number.isFinite(mirrorShare) && mirrorShare >= 0 && mirrorShare <= 100) out.mirrorShare = Math.round(mirrorShare);
-  else if (raw.mirrorShare !== undefined) notes.push('分流比例需在 0-100，已保留原值');
 
   if (['auto', 'on', 'off'].includes(raw.isolated)) out.isolated = raw.isolated;
 

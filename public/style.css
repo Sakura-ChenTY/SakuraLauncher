@@ -2185,6 +2185,47 @@ main {
 }
 .install-pct.show { opacity: 1; }
 
+/* 下载中的源切换：默认自动，用户点一下会立即中断并续传 */
+.install-source {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: -4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.install-source-label { flex: none; }
+.install-source-switch {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-3);
+}
+.install-source-switch button {
+  border: none;
+  border-radius: 6px;
+  padding: 3px 10px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+.install-source-switch button:hover { color: var(--text); }
+.install-source-switch button.active {
+  background: var(--accent);
+  color: #06231f;
+  font-weight: 600;
+}
+.install-source-switch button:disabled {
+  opacity: .45;
+  cursor: default;
+}
+.install-source-state { min-width: 4em; text-align: left; }
+.install-source-state.manual { color: var(--accent); }
+
 /* 完成 / 失败时给个一眼能认的颜色 */
 .install-card[data-state="done"] .install-title  { color: #35d07f; }
 .install-card[data-state="error"] .install-title { color: var(--err); }

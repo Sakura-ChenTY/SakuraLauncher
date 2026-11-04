@@ -12,8 +12,10 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import https from 'node:https';
 import http from 'node:http';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
-import { candidateUrls } from './sources.js';
+import { candidateUrls, toMirror } from './sources.js';
 import { getSettings } from './settings.js';
 
 const agents = {
@@ -47,19 +49,235 @@ function hostLabel(value) {
   }
 }
 
-/**
- * split 模式：用目标路径做稳定哈希，同一个文件每次落到同一个主源。
- * mirrorShare 是分给 BMCLAPI 的百分比；0 = 全官方，100 = 全镜像。
+/* ---------------- 自动切源 ----------------
+ * 速度优先：下载一开始走用户选的优先源，不预测试。
+ * 运行中按真实吞吐/超时/失败判断，发现另一边明显更快就中断全部在飞
+ * 请求，保留 .part，用 Range 从已下载字节继续。
+ *
+ * 防抖只做两件事：
+ *   - 必须有 1.25x + 128KB/s 的收益才切，避免 0.9/0.95 这种空切
+ *   - 最多 4 次、两次间隔 8 秒，避免极端网络下无限抖动
  */
-function splitSourceFor(url, destPath) {
-  const raw = Number(getSettings().mirrorShare);
-  const share = Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : 50;
-  if (share <= 0) return 'official';
-  if (share >= 100) return 'bmclapi';
-  const key = `${url}\0${path.resolve(destPath).toLowerCase()}`;
-  const digest = crypto.createHash('sha1').update(key).digest();
-  const bucket = ((digest[0] << 8) | digest[1]) % 100;
-  return bucket < share ? 'bmclapi' : 'official';
+const AUTO_START_DELAY_MS = 1500;
+const AUTO_CHECK_MS = 1000;
+const AUTO_LOW_KBPS = 256;
+const AUTO_MIN_GAIN_KBPS = 128;
+const AUTO_GAIN_RATIO = 1.25;
+const AUTO_MAX_SWITCHES = 4;
+const AUTO_DWELL_MS = 8000;
+const AUTO_STALL_MS = 3000;
+const PROBE_BYTES = 1024 * 1024;
+const PROBE_TIMEOUT_MS = 3000;
+
+let sourceState = null;
+let sourceChangeListener = null;
+
+/** 安装页/服务端可以订阅活动源变化 */
+export function setSourceChangeListener(fn) {
+  sourceChangeListener = typeof fn === 'function' ? fn : null;
+}
+
+function notifySourceChanged(reason) {
+  if (!sourceChangeListener || !sourceState) return;
+  try {
+    sourceChangeListener({
+      source: sourceState.active,
+      preferred: sourceState.preferred,
+      reason,
+      manualOverride: sourceState.manualOverride,
+      switches: sourceState.switches,
+    });
+  } catch {
+    /* 诊断/UI 回调不能影响下载 */
+  }
+}
+
+function sourceLabel(id) {
+  return id === 'bmclapi' ? '镜像' : '官方';
+}
+
+function sourceSnapshot() {
+  if (!sourceState) return null;
+  return {
+    source: sourceState.active,
+    preferred: sourceState.preferred,
+    manualOverride: sourceState.manualOverride,
+    switches: sourceState.switches,
+    switching: sourceState.switching,
+  };
+}
+
+export function getSourceSnapshot() {
+  return sourceSnapshot();
+}
+
+/** 安装开始时设定优先源；startJob 也会按设置自动调用 */
+export function setSourcePolicy(preferred) {
+  if (!sourceState) return;
+  sourceState.preferred = preferred === 'bmclapi' ? 'bmclapi' : 'official';
+  sourceState.active = sourceState.preferred;
+  sourceState.generation += 1;
+  sourceState.manualOverride = false;
+  sourceState.autoSwitchUsed = false;
+  sourceState.switches = 0;
+}
+
+export class SourceSwitchError extends Error {
+  constructor(message = '切换下载源') {
+    super(message);
+    this.name = 'SourceSwitchError';
+    this.sourceSwitch = true;
+  }
+}
+
+function abortActiveTransfers(reason = 'source-switch') {
+  if (!sourceState) return;
+  for (const t of sourceState.transfers) {
+    try {
+      t.controller.abort(reason === 'source-switch' ? new SourceSwitchError() : new Error(reason));
+    } catch {
+      /* 已经结束的 transfer 忽略 */
+    }
+  }
+}
+
+function chooseAlternate() {
+  if (!sourceState) return null;
+  return sourceState.active === 'official' ? 'bmclapi' : 'official';
+}
+
+/** 以 1MB Range 探测某个源的即时吞吐；不会占用 .part，也不写盘 */
+async function probeSource(rawUrl, sourceId) {
+  const target = sourceId === 'official' ? rawUrl : toMirror(rawUrl, sourceId);
+  if (!target) return null;
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(new Error('PROBE_TIMEOUT')), PROBE_TIMEOUT_MS);
+  const started = Date.now();
+  let bytes = 0;
+  try {
+    const { res } = await requestOnce(target, {
+      timeout: PROBE_TIMEOUT_MS,
+      headers: { Range: `bytes=0-${PROBE_BYTES - 1}` },
+      signal: ctrl.signal,
+    });
+    if (res.statusCode !== 200 && res.statusCode !== 206) {
+      res.resume();
+      return null;
+    }
+    for await (const chunk of res) {
+      bytes += chunk.length;
+      if (bytes >= PROBE_BYTES) {
+        res.destroy();
+        break;
+      }
+    }
+    const ms = Math.max(1, Date.now() - started);
+    return { source: sourceId, bytes, ms, kbps: Math.round(bytes / 1024 / (ms / 1000)) };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+    ctrl.abort();
+  }
+}
+
+async function maybeAutoSwitch() {
+  const s = sourceState;
+  if (!s || s.switching || s.manualOverride) return;
+  if (s.switches >= AUTO_MAX_SWITCHES) return;
+  if (!s.transfers.size) return;
+  if (Date.now() - s.startedAt < AUTO_START_DELAY_MS) return;
+  if (Date.now() - s.lastSwitchAt < AUTO_DWELL_MS) return;
+  if (Date.now() - s.lastProbeAt < 1500) return;
+
+  const elapsed = Math.max(1, Date.now() - s.windowStart);
+  const kbps = Math.round(s.windowBytes / 1024 / (elapsed / 1000));
+  const stalled = Date.now() - s.lastByteAt > AUTO_STALL_MS;
+  const failed = s.consecutiveFailures >= 2;
+  const timedOut = !!s.lastTimeoutAt && Date.now() - s.lastTimeoutAt < AUTO_CHECK_MS * 2;
+  if (!stalled && !failed && !timedOut && kbps >= AUTO_LOW_KBPS) {
+    s.windowStart = Date.now();
+    s.windowBytes = 0;
+    return;
+  }
+
+  const sample = s.transfers.values().next().value;
+  if (!sample?.url) return;
+  const alt = chooseAlternate();
+  if (!alt) return;
+
+  s.lastProbeAt = Date.now();
+  const probe = await probeSource(sample.url, alt);
+  if (!probe || probe.kbps <= 0) {
+    logDownload(`[自动切源] ${sourceLabel(alt)} 探测失败，继续用 ${sourceLabel(s.active)}`);
+    return;
+  }
+  const gain = probe.kbps - kbps;
+  if (probe.kbps < kbps * AUTO_GAIN_RATIO || gain < AUTO_MIN_GAIN_KBPS) {
+    logDownload(
+      `[自动切源] ${sourceLabel(alt)} 探测 ${probe.kbps} KB/s，较当前 ${kbps} KB/s 收益不足，不切换`
+    );
+    return;
+  }
+
+  s.switching = true;
+  try {
+    logDownload(
+      `[自动切源] 当前 ${sourceLabel(s.active)} ${kbps} KB/s，${sourceLabel(alt)} ${probe.kbps} KB/s，切换`
+    );
+    s.active = alt;
+    s.generation += 1;
+    s.switches += 1;
+    s.autoSwitchUsed = true;
+    s.lastSwitchAt = Date.now();
+    s.windowStart = Date.now();
+    s.windowBytes = 0;
+    s.lastTimeoutAt = 0;
+    s.consecutiveFailures = 0;
+    s.lastByteAt = Date.now();
+    abortActiveTransfers('source-switch');
+    logDownload(`[自动切源] 已切到 ${sourceLabel(alt)}，${s.transfers.size} 个活动下载重新 Range 续传`);
+    notifySourceChanged('auto');
+  } finally {
+    s.switching = false;
+  }
+}
+
+function startSourceMonitor() {
+  if (!sourceState || sourceState.monitor) return;
+  sourceState.monitor = setInterval(() => {
+    maybeAutoSwitch().catch((e) => logDownload(`[自动切源] 判断失败：${e.message}`));
+  }, AUTO_CHECK_MS);
+  sourceState.monitor.unref?.();
+}
+
+function stopSourceMonitor() {
+  if (sourceState?.monitor) clearInterval(sourceState.monitor);
+  if (sourceState) sourceState.monitor = null;
+}
+
+/** 手动切源：立即中断正在下载的文件，保留 .part 用新源续传 */
+export function manualSwitchSource(source) {
+  if (!sourceState) return null;
+  if (source !== 'official' && source !== 'bmclapi') throw new Error('下载源只能是 official 或 bmclapi');
+  if (source === sourceState.active) return sourceSnapshot();
+
+  sourceState.manualOverride = true;
+  sourceState.autoSwitchUsed = true;
+  sourceState.active = source;
+  sourceState.generation += 1;
+  sourceState.lastSwitchAt = Date.now();
+  sourceState.windowStart = Date.now();
+  sourceState.windowBytes = 0;
+  sourceState.lastTimeoutAt = 0;
+  sourceState.consecutiveFailures = 0;
+  abortActiveTransfers('source-switch');
+  logDownload(
+    `[手动切源] 已切到 ${sourceLabel(source)}，${sourceState.transfers.size} 个活动下载重新 Range 续传`
+  );
+  notifySourceChanged('manual');
+  return sourceSnapshot();
 }
 
 /* ---------------- 取消 ----------------
@@ -82,49 +300,32 @@ export class CancelledError extends Error {
 
 let currentJob = null; // { ctrl, reason, files:Set, dirs:[] }
 
-/*
- * split 模式的源健康状态。
- * BMCLAPI 的 assets 偶尔会一直慢或连续断连；连续失败后暂时把它降级到
- * 官方源，避免每个文件都等满一次超时。只在 split 模式生效。
- */
-const splitHealth = new Map(); // source -> { failures, cooldownUntil }
-const SPLIT_FAILURES_BEFORE_COOLDOWN = 2;
-const SPLIT_COOLDOWN_MS = 5 * 60_000;
-const SPLIT_MIRROR_TIMEOUT_MS = 20_000;
-
-function sourceHealth(id) {
-  if (!splitHealth.has(id)) splitHealth.set(id, { failures: 0, cooldownUntil: 0 });
-  return splitHealth.get(id);
-}
-
-function sourceAvailable(id) {
-  const h = sourceHealth(id);
-  if (h.cooldownUntil && Date.now() >= h.cooldownUntil) {
-    h.cooldownUntil = 0;
-    h.failures = 0;
-  }
-  return !h.cooldownUntil;
-}
-
-function noteSourceFailure(id) {
-  const h = sourceHealth(id);
-  h.failures += 1;
-  if (h.failures >= SPLIT_FAILURES_BEFORE_COOLDOWN && !h.cooldownUntil) {
-    h.cooldownUntil = Date.now() + SPLIT_COOLDOWN_MS;
-    logDownload(`[源降级] ${id} 连续失败 ${h.failures} 次，接下来 5 分钟改用另一源`);
-  }
-}
-
-function noteSourceSuccess(id) {
-  const h = sourceHealth(id);
-  if (!h.cooldownUntil) h.failures = 0;
-}
-
 /** 开一个新任务，返回前一个若存在则先收尾 */
 export function startJob() {
   endJob();
-  splitHealth.clear();
+  const preferred = getSettings().downloadSource === 'bmclapi' ? 'bmclapi' : 'official';
+  sourceState = {
+    preferred,
+    active: preferred,
+    generation: 0,
+    manualOverride: false,
+    autoSwitchUsed: false,
+    switches: 0,
+    startedAt: Date.now(),
+    lastSwitchAt: 0,
+    windowStart: Date.now(),
+    windowBytes: 0,
+    lastByteAt: Date.now(),
+    lastTimeoutAt: 0,
+    consecutiveFailures: 0,
+    transfers: new Set(),
+    destinations: new Set(),
+    switching: false,
+    monitor: null,
+  };
   currentJob = { ctrl: new AbortController(), reason: '', files: new Set(), dirs: [] };
+  startSourceMonitor();
+  notifySourceChanged('start');
   return currentJob.ctrl.signal;
 }
 
@@ -161,6 +362,13 @@ async function mkdirTracked(dir) {
 export { mkdirTracked };
 
 export function endJob() {
+  stopSourceMonitor();
+  if (sourceState) {
+    abortActiveTransfers('job-end');
+    sourceState.transfers.clear();
+    sourceState.destinations.clear();
+  }
+  sourceState = null;
   currentJob = null;
 }
 
@@ -224,8 +432,8 @@ export function cancelJob(reason = '用户取消') {
   return true;
 }
 
-/** 单次 GET，跟随重定向。取消信号来自模块级当前任务，自动生效 */
-function requestOnce(url, { timeout = 30000, headers = {}, redirects = 0, deadlineMs = 0 } = {}) {
+/** 单次 GET，跟随重定向。全局取消和单个 transfer 的切源中断都能生效 */
+function requestOnce(url, { timeout = 30000, headers = {}, redirects = 0, deadlineMs = 0, signal: extraSignal = null } = {}) {
   if (isCancelled()) return Promise.reject(new CancelledError());
 
   return new Promise((resolve, reject) => {
@@ -253,7 +461,7 @@ function requestOnce(url, { timeout = 30000, headers = {}, redirects = 0, deadli
           res.resume();
           if (redirects >= 5) return reject(new Error('重定向次数过多'));
           const next = new URL(h.location, url).toString();
-          return requestOnce(next, { timeout, headers, redirects: redirects + 1, deadlineMs })
+          return requestOnce(next, { timeout, headers, redirects: redirects + 1, deadlineMs, signal: extraSignal })
             .then(resolve)
             .catch(reject);
         }
@@ -261,20 +469,23 @@ function requestOnce(url, { timeout = 30000, headers = {}, redirects = 0, deadli
       }
     );
 
-    // 总时限：用于 split 时防止某个源虽然不断流但持续拖慢整个 assets 阶段
+    // 可选总时限：防止某个源虽然不断流但持续拖慢整个阶段
     const deadline = deadlineMs > 0
       ? setTimeout(() => req.destroy(new Error('下载超过总时限')), deadlineMs)
       : null;
 
-    // 取消：把在飞的请求直接掐断，而不是等它下完再看标志位
-    const signal = currentJob?.ctrl.signal;
-    const onAbort = () => {
-      req.destroy(new CancelledError(currentJob?.reason || '已取消'));
+    // 取消：把在飞的请求直接掐断，而不是等它下完再看标志位。
+    // extraSignal 是单个 transfer 的切源中断，不能和全局取消混用。
+    const signals = [currentJob?.ctrl.signal, extraSignal].filter(Boolean);
+    const onAbort = (event) => {
+      const reason = event?.target?.reason;
+      if (reason instanceof SourceSwitchError) req.destroy(reason);
+      else req.destroy(new CancelledError(currentJob?.reason || '已取消'));
     };
-    if (signal) signal.addEventListener('abort', onAbort, { once: true });
+    for (const signal of signals) signal.addEventListener('abort', onAbort, { once: true });
     req.on('close', () => {
       if (deadline) clearTimeout(deadline);
-      if (signal) signal.removeEventListener('abort', onAbort);
+      for (const signal of signals) signal.removeEventListener('abort', onAbort);
     });
 
     req.on('timeout', () => {
@@ -331,7 +542,7 @@ async function isComplete(filePath, expectedSha1, expectedSize) {
 /**
  * 下载单个文件。
  * opts: { sha1, size, retries, timeout, preferMirror, source, gameDir, reuseRoots, onSkip, onDone }
- *   source: 'official' | 'bmclapi' | 'split' —— 主选源；split 按文件稳定分流
+ *   source: 'official' | 'bmclapi' —— 优先源；运行中由 sourceState 自动降级
  *   preferMirror: 旧参数，等价于 source='bmclapi'
  *   reuseRoots: 其他 .minecraft 根目录，按相对路径找同文件后直接复制
  * 返回 'skipped' | 'downloaded'
@@ -381,91 +592,147 @@ export async function downloadFile(url, destPath, opts = {}) {
     }
   }
 
-  let effectiveSource = source === 'split' ? splitSourceFor(url, destPath) : source;
-  if (source === 'split' && !sourceAvailable(effectiveSource)) {
-    effectiveSource = effectiveSource === 'bmclapi' ? 'official' : 'bmclapi';
+  const destKey = path.resolve(destPath);
+  if (sourceState?.destinations.has(destKey)) {
+    throw new Error(`重复的下载目标：${destPath}`);
   }
-  const urls = candidateUrls(url, { preferMirror, source: effectiveSource });
+  sourceState?.destinations.add(destKey);
+
   let lastErr = null;
   let previousTarget = null;
+  let attempt = 0;
 
-  for (let attempt = 0; attempt < retries; attempt++) {
-    // 每轮开头先看有没有被取消，别在取消后还开新连接
-    ensureNotCancelled();
-    const target = urls[Math.min(attempt, urls.length - 1)];
-    if (attempt > 0 && target !== previousTarget) {
-      logDownload(
-        `[下载降级] ${hostLabel(previousTarget)} 请求失败，改用备用源 ${hostLabel(target)}；` +
-        `原因：${lastErr?.message ?? '未知错误'}`
-      );
-    }
-    previousTarget = target;
-    const partPath = `${destPath}.part`;
+  try {
+    while (attempt < retries) {
+      // 每轮开头先看有没有被取消，别在取消后还开新连接
+      ensureNotCancelled();
 
-    try {
-      let startAt = 0;
+      const effectiveSource = sourceState?.active ?? (source === 'bmclapi' ? 'bmclapi' : 'official');
+      const urls = candidateUrls(url, { preferMirror, source: effectiveSource });
+      const target = urls[Math.min(attempt, urls.length - 1)];
+      if (attempt > 0 && target !== previousTarget) {
+        logDownload(
+          `[下载降级] ${hostLabel(previousTarget)} 请求失败，改用备用源 ${hostLabel(target)}；` +
+          `原因：${lastErr?.message ?? '未知错误'}`
+        );
+      }
+      previousTarget = target;
+
+      const partPath = `${destPath}.part`;
+      const ctrl = new AbortController();
+      const transfer = {
+        controller: ctrl,
+        url,
+        dest: destKey,
+        source: effectiveSource,
+        generation: sourceState?.generation ?? 0,
+      };
+      sourceState?.transfers.add(transfer);
+
       try {
-        const st = await fsp.stat(partPath);
-        startAt = st.size;
-      } catch {
-        startAt = 0;
-      }
-
-      const headers = {};
-      if (startAt > 0) headers.Range = `bytes=${startAt}-`;
-
-      const requestTimeout = source === 'split' && attempt === 0 && effectiveSource === 'bmclapi'
-        ? Math.min(timeout, SPLIT_MIRROR_TIMEOUT_MS)
-        : timeout;
-      const deadlineMs = source === 'split' ? 30000 : 0;
-      const { res } = await requestOnce(target, { headers, timeout: requestTimeout, deadlineMs });
-
-      if (res.statusCode === 416) {
-        // Range 越界，说明 .part 已经完整或过大，重来
-        res.resume();
-        await fsp.rm(partPath, { force: true });
-        throw new Error('HTTP 416 range not satisfiable');
-      }
-      if (res.statusCode !== 200 && res.statusCode !== 206) {
-        res.resume();
-        throw new Error(`HTTP ${res.statusCode}`);
-      }
-
-      const append = res.statusCode === 206 && startAt > 0;
-      const out = fs.createWriteStream(partPath, { flags: append ? 'a' : 'w' });
-
-      await new Promise((resolve, reject) => {
-        res.pipe(out);
-        res.on('error', reject);
-        out.on('error', reject);
-        out.on('finish', resolve);
-      });
-
-      // 校验
-      if (sha1) {
-        const actual = await sha1File(partPath);
-        if (actual.toLowerCase() !== sha1.toLowerCase()) {
-          await fsp.rm(partPath, { force: true });
-          throw new Error(`SHA1 不匹配（期望 ${sha1.slice(0, 8)}… 实际 ${actual.slice(0, 8)}…）`);
+        let startAt = 0;
+        try {
+          const st = await fsp.stat(partPath);
+          startAt = st.size;
+        } catch {
+          startAt = 0;
         }
-      }
 
-      await fsp.rename(partPath, destPath);
-      if (source === 'split') noteSourceSuccess(effectiveSource);
-      return 'downloaded';
-    } catch (e) {
-      // 取消不是「下载出错」，不该进重试，也不该把 .part 删掉
-      //（保留才能下次 Range 续传）。直接向上抛，让上层干净收尾。
-      if (e?.cancelled || isCancelled()) {
-        throw new CancelledError(e?.message || '已取消');
+        const headers = {};
+        if (startAt > 0) headers.Range = `bytes=${startAt}-`;
+
+        const { res } = await requestOnce(target, {
+          headers,
+          timeout,
+          signal: ctrl.signal,
+        });
+
+        if (res.statusCode === 416) {
+          // Range 越界：.part 已经完整或过大。交给下一轮从头校验。
+          res.resume();
+          await fsp.rm(partPath, { force: true });
+          throw new Error('HTTP 416 range not satisfiable');
+        }
+        if (res.statusCode !== 200 && res.statusCode !== 206) {
+          res.resume();
+          throw new Error(`HTTP ${res.statusCode}`);
+        }
+
+        // 旧源在响应途中被切走：不要写盘，直接让 worker 用新源重来。
+        if (sourceState && sourceState.generation !== transfer.generation) {
+          res.resume();
+          throw new SourceSwitchError();
+        }
+
+        let append = false;
+        if (res.statusCode === 206 && startAt > 0) {
+          const contentRange = String(res.headers['content-range'] ?? '');
+          const m = /^bytes\s+(\d+)-/i.exec(contentRange);
+          if (!m || Number(m[1]) !== startAt) {
+            res.resume();
+            await fsp.rm(partPath, { force: true });
+            throw new Error(`Range 起点不匹配（期望 ${startAt}，收到 ${m?.[1] ?? '无'}）`);
+          }
+          append = true;
+        } else if (res.statusCode === 200 && startAt > 0) {
+          // 新源不支持 Range：覆盖同一个 .part，绝不能追加。
+          append = false;
+        }
+
+        const out = fs.createWriteStream(partPath, { flags: append ? 'a' : 'w' });
+        const meter = new Transform({
+          transform(chunk, _enc, cb) {
+            if (sourceState) {
+              sourceState.windowBytes += chunk.length;
+              sourceState.lastByteAt = Date.now();
+            }
+            cb(null, chunk);
+          },
+        });
+
+        await pipeline(res, meter, out, { signal: ctrl.signal });
+
+        // 校验
+        if (sha1) {
+          const actual = await sha1File(partPath);
+          if (actual.toLowerCase() !== sha1.toLowerCase()) {
+            await fsp.rm(partPath, { force: true });
+            throw new Error(`SHA1 不匹配（期望 ${sha1.slice(0, 8)}… 实际 ${actual.slice(0, 8)}…）`);
+          }
+        }
+
+        await fsp.rename(partPath, destPath);
+        if (sourceState) sourceState.consecutiveFailures = 0;
+        return 'downloaded';
+      } catch (e) {
+        // 取消不是「下载出错」，不该进重试，也不该把 .part 删掉
+        //（保留才能下次 Range 续传）。直接向上抛，让上层干净收尾。
+        if (e?.cancelled || isCancelled()) {
+          throw new CancelledError(e?.message || '已取消');
+        }
+
+        const switched = e?.sourceSwitch || ctrl.signal.reason instanceof SourceSwitchError;
+        if (switched) {
+          // 切源中断不计失败、不增加 attempt；同一文件换新源接着 Range。
+          if (sourceState) sourceState.lastByteAt = Date.now();
+          continue;
+        }
+
+        lastErr = e;
+        if (sourceState) {
+          sourceState.consecutiveFailures += 1;
+          if (String(e?.message ?? '').includes('TIMEOUT')) sourceState.lastTimeoutAt = Date.now();
+        }
+        attempt += 1;
+        await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+      } finally {
+        sourceState?.transfers.delete(transfer);
       }
-      lastErr = e;
-      if (source === 'split' && attempt === 0) noteSourceFailure(effectiveSource);
-      await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
     }
+  } finally {
+    sourceState?.destinations.delete(destKey);
   }
 
-  if (source === 'split') noteSourceFailure(effectiveSource);
   throw new Error(`下载失败 ${path.basename(destPath)}: ${lastErr?.message ?? '未知错误'}`);
 }
 

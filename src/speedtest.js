@@ -175,56 +175,21 @@ export async function measureSources({ concurrency = PROBE_CONCURRENCY } = {}) {
   return results;
 }
 
-/** 缓存：auto 模式没必要每次安装都测一遍 */
-let cache = null;
-const CACHE_MS = 10 * 60 * 1000;
-
-/** 清空测速缓存（用户手动点测速后调用，让下次安装重新决策） */
+/** 清空测速样本缓存（用户手动点测速后调用） */
 export function clearSourceCache() {
-  cache = null;
   sampleCache = null;
 }
 
 /**
- * 决定本次安装用哪个源。
- * setting: 'auto' | 'official' | 'bmclapi'
- * 返回 { source, reason, measured? }
+ * 决定本次安装的优先源。
+ * 不做安装前测速：一开始先走用户选的源，下载过程中由下载引擎
+ * 根据真实吞吐自动切换到更快的另一边。
+ * setting: 'official' | 'bmclapi'
  */
 export async function resolveSource(setting) {
-  if (setting === 'split') {
-    return { source: 'split', reason: '官方与 BMCLAPI 双源分流' };
-  }
-  if (SOURCE_IDS.includes(setting)) {
-    return { source: setting, reason: '手动指定' };
-  }
-
-  // auto
-  if (cache && Date.now() - cache.at < CACHE_MS) {
-    const age = Math.round((Date.now() - cache.at) / 1000);
-    return {
-      source: cache.pick,
-      reason: `自动测速（${age} 秒前的结果，${cache.kbps} KB/s）`,
-      measured: cache.results,
-    };
-  }
-
-  let results;
-  try {
-    results = await measureSources();
-  } catch (e) {
-    // 测速本身失败（比如索引拉不到）不该挡住安装，退回官方并说明
-    return { source: 'official', reason: `测速失败（${e.message.slice(0, 40)}），退回官方` };
-  }
-
-  const usable = results.filter((r) => r.ok > 0 && r.badContent === 0);
-  const best = usable[0] ?? results[0];
-  const pick = best?.id ?? 'official';
-
-  cache = { at: Date.now(), pick, results, kbps: best?.kbps ?? 0 };
-
-  const reason = best?.ok
-    ? `自动测速选中 ${best.name}（${best.kbps} KB/s，${best.ok}/${best.total} 成功）`
-    : '所有源都不可用，退回官方重试';
-
-  return { source: pick, reason, measured: results };
+  const source = SOURCE_IDS.includes(setting) ? setting : 'official';
+  return {
+    source,
+    reason: source === 'bmclapi' ? '优先镜像' : '优先官方',
+  };
 }

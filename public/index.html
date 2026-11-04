@@ -794,28 +794,17 @@
               <div class="group-title">下载设置</div>
 
               <div class="field">
-                <label for="setDownloadSource">下载源（镜像源）</label>
+                <label for="setDownloadSource">下载源</label>
                 <div class="field-line">
                   <select id="setDownloadSource" class="select grow">
-                    <option value="split">官方 + BMCLAPI 分流（默认）</option>
-                    <option value="auto">自动测速（推荐）</option>
-                    <option value="official">官方源（Mojang）</option>
-                    <option value="bmclapi">BMCLAPI 国内镜像</option>
+                    <option value="official">优先官方（默认）</option>
+                    <option value="bmclapi">优先镜像（BMCLAPI）</option>
                   </select>
                   <button class="btn ghost" id="btnTestSource">测速</button>
                 </div>
                 <div class="field-note" id="sourceNote">
-                  分流模式按文件稳定分配到官方和 BMCLAPI；任一源失败会自动切到另一源并记录降级原因
+                  先走所选源；下载过程中如果持续偏慢或连续超时，会自动测速并切换到当时更快的一边，正在下载的文件也会立即续传。
                 </div>
-              </div>
-
-              <div class="field">
-                <label for="setMirrorShare">BMCLAPI 分流比例</label>
-                <div class="field-line">
-                  <input id="setMirrorShare" class="input narrow mono" type="number" min="0" max="100" step="1">
-                  <span class="field-note">%</span>
-                </div>
-                <div class="field-note">0 = 全官方，100 = 全 BMCLAPI，默认 50；仅在分流模式下生效</div>
               </div>
 
               <div class="field">
@@ -1105,6 +1094,15 @@
             <div class="install-foot">
               <span class="install-meta" id="installMeta"></span>
               <span class="install-pct" id="installPct"></span>
+            </div>
+
+            <div class="install-source" id="installSource">
+              <span class="install-source-label">下载源</span>
+              <div class="install-source-switch" role="group" aria-label="下载源">
+                <button type="button" data-install-source="official">官方</button>
+                <button type="button" data-install-source="bmclapi">镜像</button>
+              </div>
+              <span class="install-source-state" id="installSourceState">自动</span>
             </div>
           </div>
         </div>

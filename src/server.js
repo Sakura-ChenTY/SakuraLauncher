@@ -22,7 +22,18 @@ import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { launch, listVersions, DEFAULT_GAME_DIR } from './launch.js';
-import { startJob, endJob, cancelJob, isCancelled, CancelledError, rollbackJob, setDownloadLogger } from './download.js';
+import {
+  startJob,
+  endJob,
+  cancelJob,
+  isCancelled,
+  CancelledError,
+  rollbackJob,
+  setDownloadLogger,
+  setSourceChangeListener,
+  manualSwitchSource,
+  getSourceSnapshot,
+} from './download.js';
 import { installVersion, getVersionManifest, latestReleases, findVersionInManifest } from './installer.js';
 import { searchProjects, getProjectVersions, getProject, detectLoaderFromVersionJson, PROJECT_TYPES } from './modrinth.js';
 import { installFabric, listLoaders } from './fabric.js';
@@ -993,7 +1004,7 @@ async function handleInstall(versionId) {
   markInstallStart({ versionId, stage: 'start' });
   // 开一个新任务：把取消句柄重置掉，下载层才能被这一次中断
   startJob();
-  emit('install-start', { versionId });
+  emit('install-start', { versionId, source: getSourceSnapshot()?.source });
   pushLog(`开始安装 ${versionId}`);
 
   // 后台跑，立刻返回，进度走 SSE
@@ -1736,6 +1747,25 @@ const server = http.createServer(async (req, res) => {
       if (!ok) return json(res, 409, { error: '任务已经在收尾了' });
       pushLog('用户取消安装，正在停止…');
       return json(res, 200, { cancelled: true, versionId: state.installing?.versionId ?? null });
+    }
+
+    // 下载中手动切源：会和自动降级一样中断在飞请求，保留 .part 续传。
+    // 手动操作优先，之后本次安装不再自动切换。
+    if (p === '/api/install/source' && req.method === 'POST') {
+      if (!state.installing) return json(res, 409, { error: '当前没有进行中的下载' });
+      const body = await readBody(req);
+      try {
+        const snapshot = manualSwitchSource(String(body.source ?? ''));
+        if (!snapshot) return json(res, 409, { error: '当前没有进行中的下载' });
+        return json(res, 200, { ok: true, ...snapshot });
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
+    if (p === '/api/install/source' && req.method === 'GET') {
+      const snapshot = getSourceSnapshot();
+      return json(res, 200, snapshot ?? { source: null, active: false });
     }
 
     if (p === '/api/launch' && req.method === 'POST') {
@@ -4210,6 +4240,7 @@ function snapshot() {
     installInterrupted: state.installInterrupted,
     lastFailure: state.lastFailure,
     running: state.running,
+    source: getSourceSnapshot(),
     logs: state.logs.slice(-50),
     version: APP_VERSION,
   };
@@ -4610,6 +4641,12 @@ export async function startServer({ port = 7801, host = '127.0.0.1', gameDir, fi
   if (firstRun) state.forceFirstRun = true;
 
   setDownloadLogger((line) => pushLog(line));
+  setSourceChangeListener((snapshot) => {
+    emit('source-changed', {
+      ...snapshot,
+      versionId: state.installing?.versionId ?? null,
+    });
+  });
 
   await initSecureStore();
   const interrupted = takeInterruptedInstall();

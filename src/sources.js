@@ -62,8 +62,8 @@ export const SOURCES = {
 
 export const SOURCE_IDS = Object.keys(SOURCES);
 
-/** auto = 安装前测速挑最快的；split = 按文件稳定分流；其余为锁定该源 */
-export const VALID_SOURCE_SETTINGS = ['auto', ...SOURCE_IDS, 'split'];
+/** 两个优先源；下载过程中会根据实测速度自动降级 */
+export const VALID_SOURCE_SETTINGS = [...SOURCE_IDS];
 
 /**
  * 判定某个 URL 是「官方域名」还是别处。

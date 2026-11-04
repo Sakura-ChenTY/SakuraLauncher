@@ -2914,6 +2914,20 @@ async function loadLatestLog() {
 
 /* ---------------- SSE ---------------- */
 
+function setInstallSourceUI(msg = {}) {
+  if (msg.source) state.installSource = msg.source === 'bmclapi' ? 'bmclapi' : 'official';
+  const source = state.installSource === 'bmclapi' ? 'bmclapi' : 'official';
+  document.querySelectorAll('[data-install-source]').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.installSource === source);
+    btn.disabled = !state.installing;
+  });
+  const label = $('installSourceState');
+  if (label) {
+    label.textContent = msg.manualOverride ? '手动' : '自动';
+    label.classList.toggle('manual', Boolean(msg.manualOverride));
+  }
+}
+
 function connectEvents() {
   const es = new EventSource('/api/events');
 
@@ -2939,6 +2953,7 @@ function connectEvents() {
         if (s.installing) {
           showProgress(true);
           updateProgress(s.installing);
+          setInstallSourceUI(s.source || {});
         }
         break;
       }
@@ -2955,7 +2970,13 @@ function connectEvents() {
         resetCancelButton();
         showProgress(true);
         updateProgress({ stage: 'start', message: `开始安装 ${msg.versionId}` });
+        setInstallSourceUI({ source: msg.source || state.installSource || 'official' });
         refreshStatus();
+        break;
+
+      case 'source-changed':
+        setInstallSourceUI(msg);
+        appendLog(`[下载源] ${msg.source === 'bmclapi' ? '镜像' : '官方'}${msg.manualOverride ? '（手动）' : '（自动）'}`);
         break;
 
       case 'install-stage':
@@ -2977,6 +2998,7 @@ function connectEvents() {
         $('progressFill').style.width = '100%';
         state.installing = null;
         disableCancelButton();
+        setInstallSourceUI({ source: msg.source || 'official' });
         refreshStatus();
         setTimeout(() => showProgress(false), 3000);
         reloadInstalledSoon();
@@ -2989,6 +3011,7 @@ function connectEvents() {
         $('progressFill').style.width = '0%';
         state.installing = null;
         disableCancelButton();
+        setInstallSourceUI({ source: msg.source || 'official' });
         refreshStatus();
         setTimeout(() => showProgress(false), 5000);
         break;
@@ -2999,6 +3022,7 @@ function connectEvents() {
         updateProgress({ stage: 'error', message: cancelText(msg.message) });
         state.installing = null;
         disableCancelButton();
+        setInstallSourceUI({ source: msg.source || 'official' });
         refreshStatus();
         setTimeout(() => showProgress(false), 1800);
         break;
@@ -3757,8 +3781,7 @@ function applySettingsToForm(s) {
   if ($('roomMemory')) $('roomMemory').value = String(Number(s.roomMemoryMb) > 0 ? s.roomMemoryMb : 2048);
   syncMemoryMode(false);
   $('setConcurrency').value = s.concurrency ?? 64;
-  $('setDownloadSource').value = s.downloadSource ?? (s.preferMirror ? 'bmclapi' : 'split');
-  if ($('setMirrorShare')) $('setMirrorShare').value = String(s.mirrorShare ?? 50);
+  $('setDownloadSource').value = s.downloadSource === 'bmclapi' ? 'bmclapi' : 'official';
   $('setJavaMode').value = s.javaMode === 'auto' ? 'auto' : 'external';
   $('setIsolated').value = s.isolated ?? 'auto';
   if ($('setUpdateUrl')) $('setUpdateUrl').value = s.updateUrl ?? '';
@@ -3791,8 +3814,7 @@ function readSettingsForm() {
     autoBackupKeep: Number($('setAutoBackupKeep')?.value || 5),
     autoDiagnostic: Boolean($('setAutoDiagnostic')?.checked),
     concurrency: Number($('setConcurrency').value),
-    downloadSource: $('setDownloadSource').value,
-    mirrorShare: Number($('setMirrorShare')?.value ?? 50),
+    downloadSource: $('setDownloadSource').value === 'bmclapi' ? 'bmclapi' : 'official',
     isolated: $('setIsolated').value,
     javaPath: $('setJavaPath').value,
     javaMode: $('setJavaMode').value,
@@ -5319,6 +5341,33 @@ $('installCancel').addEventListener('click', async (ev) => {
     }
   }
 });
+
+// 下载中手动换源：立即中断在飞文件，保留 .part 用新源续传。
+// 手动选择优先，之后本次安装不再自动切换。
+document.querySelectorAll('[data-install-source]').forEach((btn) => {
+  btn.addEventListener('click', async () => {
+    if (!state.installing || btn.disabled) return;
+    const source = btn.dataset.installSource;
+    document.querySelectorAll('[data-install-source]').forEach((b) => { b.disabled = true; });
+    try {
+      const r = await api('/api/install/source', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source }),
+      });
+      setInstallSourceUI(r);
+      toast(`已切换到${source === 'bmclapi' ? '镜像' : '官方'}，正在续传`);
+    } catch (e) {
+      toast(`切换失败：${e.message}`, 'err');
+      setInstallSourceUI({ source: btn.dataset.installSource });
+    } finally {
+      document.querySelectorAll('[data-install-source]').forEach((b) => {
+        b.disabled = !state.installing;
+      });
+    }
+  });
+});
+
 $('progressBar').addEventListener('click', (e) => {
   // 只处理“收起状态下点底部条”；有条在跑才展开
   if (!installCollapsed) return;
