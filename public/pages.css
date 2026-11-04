@@ -69,9 +69,9 @@ html[data-theme="violet"], body[data-theme="violet"] {
 
 html[data-theme="light"], body[data-theme="light"] {
   color-scheme: light;
-  --bg: #f5f5f5;
-  --bg-2: #ffffff;
-  --bg-2-rgb: 255, 255, 255;
+  --bg: #ffffff;
+  --bg-2: #f5f5f5;
+  --bg-2-rgb: 245, 245, 245;
   --bg-3: #eaf2fe;
   --line: #cccccc;
   --text: #343d4a;
@@ -107,7 +107,7 @@ body.theme-light {
 
 /* 浅色主题下把深色玻璃换成 PCL 的蓝白层级，否则白底会被一层灰雾压暗。 */
 body[data-theme="light"] .wallpaper, body.theme-light .wallpaper {
-  background-color: #f5f5f5;
+  background-color: #ffffff;
   filter: blur(13px) saturate(105%) brightness(1.04);
   opacity: .18;
 }
@@ -128,7 +128,7 @@ body[data-theme="light"] .content-panel,
 body.theme-light .glass,
 body.theme-light .panel,
 body.theme-light .content-panel {
-  background: rgba(255, 255, 255, .94);
+  background: rgba(245, 245, 245, .96);
   border-color: #cccccc;
 }
 body[data-theme="light"] .btn:not(.ghost),
