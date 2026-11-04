@@ -184,7 +184,7 @@ async function probeSource(rawUrl, sourceId) {
 
 async function maybeAutoSwitch() {
   const s = sourceState;
-  if (!s || s.switching || s.manualOverride) return;
+  if (!s || sourceState !== s || s.switching || s.manualOverride) return;
   if (s.switches >= AUTO_MAX_SWITCHES) return;
   if (!s.transfers.size) return;
   if (Date.now() - s.startedAt < AUTO_START_DELAY_MS) return;
@@ -211,6 +211,8 @@ async function maybeAutoSwitch() {
   const beforeSource = s.active;
   const beforeGeneration = s.generation;
   const probe = await probeSource(sample.url, alt);
+  // 探测期间任务可能已经结束并开始了下一单；旧任务的结果绝不能作用到新任务。
+  if (sourceState !== s) return;
   // 探测期间可能被用户手动切源了；手动优先，丢弃这次自动判断。
   if (s.manualOverride || s.active !== beforeSource || s.generation !== beforeGeneration) return;
   if (!probe || probe.kbps <= 0) {
