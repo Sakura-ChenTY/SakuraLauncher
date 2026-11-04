@@ -106,6 +106,8 @@
       lastSkinUrl = url;
       if (seq !== skinSeq) return;
       setCanvasVisible();
+      // 左上角头像和 3D 共用同一张 skin；3D 这张加载好后再让头像对齐一次。
+      window.dispatchEvent(new CustomEvent('skin3d:skin-updated'));
     } catch (e) {
       console.warn('[skin3d] 皮肤加载失败，保持 Steve', e);
     }

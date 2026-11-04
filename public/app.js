@@ -5365,6 +5365,11 @@ $('setMemMaxRange').addEventListener('input', (e) => {
 // 透明度滑块：拖的时候实时预览，不用等点保存。
 $('setGlass').addEventListener('input', (e) => applyGlassAlpha(Number(e.target.value)));
 
+/* 3D 皮肤加载完成后再对齐一次左上头像，避免两边请求时序不同。 */
+window.addEventListener('skin3d:skin-updated', () => {
+  paintAccountAvatar(state.accounts.find((a) => a.key === state.selectedAccount) ?? null);
+});
+
 /* ---------------- 账号自定义头像 ---------------- */
 let avatarCropImage = null;
 let avatarCropShape = 'circle';
