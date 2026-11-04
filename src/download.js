@@ -208,7 +208,11 @@ async function maybeAutoSwitch() {
   if (!alt) return;
 
   s.lastProbeAt = Date.now();
+  const beforeSource = s.active;
+  const beforeGeneration = s.generation;
   const probe = await probeSource(sample.url, alt);
+  // 探测期间可能被用户手动切源了；手动优先，丢弃这次自动判断。
+  if (s.manualOverride || s.active !== beforeSource || s.generation !== beforeGeneration) return;
   if (!probe || probe.kbps <= 0) {
     logDownload(`[自动切源] ${sourceLabel(alt)} 探测失败，继续用 ${sourceLabel(s.active)}`);
     return;
@@ -713,7 +717,9 @@ export async function downloadFile(url, destPath, opts = {}) {
 
         const switched = e?.sourceSwitch || ctrl.signal.reason instanceof SourceSwitchError;
         if (switched) {
-          // 切源中断不计失败、不增加 attempt；同一文件换新源接着 Range。
+          // 切源中断不计失败、不增加 attempt；回到新源的主选，接着 Range。
+          attempt = 0;
+          previousTarget = null;
           if (sourceState) sourceState.lastByteAt = Date.now();
           continue;
         }
