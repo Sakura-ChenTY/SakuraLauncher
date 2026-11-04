@@ -769,6 +769,7 @@ export async function downloadFile(url, destPath, opts = {}) {
     gameDir,
     reuseRoots = [],
     onThrottle,
+    ranged = true,
   } = opts;
 
   await mkdirTracked(path.dirname(destPath));
@@ -863,7 +864,7 @@ export async function downloadFile(url, destPath, opts = {}) {
         if (startAt > 0) headers.Range = `bytes=${startAt}-`;
 
         // 全新大文件先尝试 4 段 Range；镜像/服务器不支持时自动回退单流。
-        if (startAt === 0 && Number(size) > 8 * 1024 * 1024) {
+        if (ranged && startAt === 0 && Number(size) > 8 * 1024 * 1024) {
           try {
             if (await downloadRanged(url, destPath, Number(size), sha1, effectiveSource)) {
               return 'downloaded';

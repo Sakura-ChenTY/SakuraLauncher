@@ -64,6 +64,8 @@ export async function downloadCurseForgePackZip(file, zipPath) {
         size: file.fileLength,
         retries: 1,
         timeout: 900000,
+        // 196MB zip 的 8 段 Range 在部分 CDN 会只回部分段；整包改用单流，mod 仍用 8 段。
+        ranged: false,
       });
       return url;
     } catch (e) {
