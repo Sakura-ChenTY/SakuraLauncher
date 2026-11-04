@@ -3,8 +3,8 @@
  *
  * - 第一帧先加载官方 Steve，绝不出现空白/转圈
  * - 在线账号皮肤回来后再静默替换；失败保持 Steve
- * - 鼠标在舞台内移动时用阻尼改变相机 yaw/pitch
- * - 3 秒不动 / 失焦 / 指针离开时缓慢回到正面
+ * - 身子保持静态站姿，只让视角和头部跟随鼠标
+ * - 3 秒不动 / 失焦 / 指针离开时视角缓慢回正，头部留一点待机微动
  * - 右键只作用于舞台，用来刷新当前账号的官方披风
  */
 (function () {
@@ -40,6 +40,8 @@
   let targetPitch = 0;
   let yaw = 0;
   let pitch = 0;
+  let headYaw = 0;
+  let headPitch = 0;
   let lastFrame = performance.now();
   let selectedCapeId = '';
 
@@ -274,6 +276,21 @@
     const cz = Math.cos(yaw) * Math.cos(pitch) * distance;
     viewer.camera.position.set(cx, cy, cz);
     viewer.camera.lookAt(0, 12, 0);
+
+    // 只动头：鼠标在舞台内时轻轻跟随，待机时给很小的呼吸式摆动。
+    // 不设置 viewer.animation，四肢和躯干保持默认站姿。
+    const head = viewer.playerObject?.skin?.head;
+    if (head) {
+      const idleYaw = Math.sin(now * 0.0011) * 0.035;
+      const idlePitch = Math.sin(now * 0.0017) * 0.018;
+      const targetHeadYaw = idle ? idleYaw : targetYaw * 0.7;
+      const targetHeadPitch = idle ? idlePitch : targetPitch * 0.7;
+      const hk = 1 - Math.exp(-7 * dt);
+      headYaw += (targetHeadYaw - headYaw) * hk;
+      headPitch += (targetHeadPitch - headPitch) * hk;
+      head.rotation.y = headYaw;
+      head.rotation.x = headPitch;
+    }
     requestAnimationFrame(stepCamera);
   }
 
