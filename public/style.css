@@ -2114,15 +2114,6 @@ main {
   .install-cancel.busy svg { animation: none; }
 }
 
-/* 小女仆放在卡片上方做主角，镐子退到文字旁边当状态指示 */
-.install-buddy {
-  width: 108px;
-  height: 108px;
-  object-fit: contain;
-  pointer-events: none;
-  filter: drop-shadow(0 4px 14px rgba(0, 0, 0, .45));
-}
-
 .install-head {
   display: flex;
   align-items: center;
