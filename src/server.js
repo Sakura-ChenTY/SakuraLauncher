@@ -904,7 +904,7 @@ function clearMemoryScheduleTimer() {
 function scheduleMemoryNext(delayMs) {
   clearMemoryScheduleTimer();
   if (!memorySchedule.enabled || memorySchedule.suspended) return;
-  const delay = Math.max(60_000, Number(delayMs) || memorySchedule.intervalMs);
+  const delay = Math.max(30 * 60 * 1000, Number(delayMs) || memorySchedule.intervalMs);
   memorySchedule.nextAt = Date.now() + delay;
   memorySchedule.timer = setTimeout(async () => {
     memorySchedule.timer = null;
@@ -3757,7 +3757,7 @@ const server = http.createServer(async (req, res) => {
       const enabled = Boolean(body.enabled);
       const minutes = Number(body.intervalMinutes);
       const intervalMinutes = Number.isFinite(minutes)
-        ? Math.max(1, Math.min(1440, Math.round(minutes)))
+        ? Math.max(30, Math.min(1440, Math.round(minutes)))
         : Math.round(memorySchedule.intervalMs / 60000);
       memorySchedule.enabled = enabled;
       memorySchedule.intervalMs = intervalMinutes * 60000;
