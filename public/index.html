@@ -738,6 +738,24 @@
                   让程序把暂时不用的内存还给系统，之后可能被重新占用。不会关闭程序，也不保证游戏变快。
                 </div>
                 <div class="memory-stats" id="memoryStats">正在读取…</div>
+                <div class="memory-schedule-row">
+                  <label class="mem-optimize"><input id="memoryScheduleEnabled" type="checkbox"> 定时清理</label>
+                  <select id="memoryScheduleInterval" class="select narrow" disabled>
+                    <option value="5">5 分钟</option>
+                    <option value="10">10 分钟</option>
+                    <option value="15">15 分钟</option>
+                    <option value="30" selected>30 分钟</option>
+                    <option value="60">60 分钟</option>
+                    <option value="custom">自定义</option>
+                  </select>
+                  <input id="memoryScheduleCustom" class="input narrow mono" type="number" min="1" max="1440" step="1" value="30" disabled>
+                  <span class="hint">分钟</span>
+                </div>
+                <div class="field-note">
+                  只在启动器运行期间生效，关掉启动器就停止。定时清理不弹窗、不打断当前操作，只写一条日志。
+                  清得太勤反而会让程序重新读硬盘，30 分钟一次比较合理。
+                </div>
+                <div class="memory-schedule-status" id="memoryScheduleStatus"></div>
                 <div class="field-line">
                   <button class="btn ghost" id="memoryRefresh" type="button">刷新进程</button>
                   <button class="btn" id="memoryOptimizeAll" type="button">优化可回收进程</button>

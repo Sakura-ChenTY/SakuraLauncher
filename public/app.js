@@ -3754,6 +3754,127 @@ async function optimizeMemoryProcess(pid) {
   }
 }
 
+const MEMORY_SCHEDULE_KEY = 'sakura.memorySchedule';
+const MEMORY_SCHEDULE_DEFAULT = { enabled: false, intervalMinutes: 30 };
+let memoryScheduleSaveTimer = 0;
+let memoryScheduleBooted = false;
+
+function readMemoryScheduleLocal() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(MEMORY_SCHEDULE_KEY) || 'null');
+    const minutes = Number(raw?.intervalMinutes);
+    return {
+      enabled: Boolean(raw?.enabled),
+      intervalMinutes: Number.isFinite(minutes) ? Math.max(1, Math.min(1440, Math.round(minutes))) : 30,
+    };
+  } catch {
+    return { ...MEMORY_SCHEDULE_DEFAULT };
+  }
+}
+
+function memoryScheduleTime(ms) {
+  if (!ms) return '—';
+  return new Date(ms).toLocaleString('zh-CN', { hour12: false });
+}
+
+function renderMemoryScheduleControls() {
+  const cfg = readMemoryScheduleLocal();
+  const enabled = $('memoryScheduleEnabled');
+  const select = $('memoryScheduleInterval');
+  const custom = $('memoryScheduleCustom');
+  if (enabled) enabled.checked = cfg.enabled;
+  const preset = [5, 10, 15, 30, 60];
+  if (select) {
+    if (preset.includes(cfg.intervalMinutes)) {
+      select.value = String(cfg.intervalMinutes);
+    } else {
+      select.value = 'custom';
+    }
+  }
+  if (custom) {
+    custom.value = String(cfg.intervalMinutes);
+    custom.disabled = !cfg.enabled || select?.value !== 'custom';
+  }
+  if (select) select.disabled = !cfg.enabled;
+}
+
+function syncMemoryScheduleInputState() {
+  const enabled = Boolean($('memoryScheduleEnabled')?.checked);
+  const select = $('memoryScheduleInterval');
+  const custom = $('memoryScheduleCustom');
+  if (select) select.disabled = !enabled;
+  if (custom) custom.disabled = !enabled || select?.value !== 'custom';
+}
+
+function renderMemoryScheduleStatus(status) {
+  const el = $('memoryScheduleStatus');
+  if (!el) return;
+  if (!status?.enabled) {
+    el.textContent = status?.lastAt
+      ? `上次清理：${memoryScheduleTime(status.lastAt)}，处理 ${status.lastCount} 个进程，释放 ${memoryMbText(status.lastReleased)}；定时清理已关闭`
+      : '定时清理已关闭。';
+    return;
+  }
+  const last = status.lastAt
+    ? `上次清理：${memoryScheduleTime(status.lastAt)}，释放 ${memoryMbText(status.lastReleased)}`
+    : '上次清理：还没有记录';
+  const next = status.suspended
+    ? '下次：系统休眠中，唤醒后重新计算'
+    : `下次：${memoryScheduleTime(status.nextAt)}`;
+  el.textContent = `${last} · ${next}`;
+}
+
+async function refreshMemoryScheduleStatus() {
+  try {
+    const status = await api('/api/system/memory/schedule');
+    renderMemoryScheduleStatus(status);
+  } catch {
+    /* 服务切换时静默 */
+  }
+}
+
+async function saveMemorySchedule() {
+  const enabled = Boolean($('memoryScheduleEnabled')?.checked);
+  const select = $('memoryScheduleInterval');
+  let minutes = Number($('memoryScheduleCustom')?.value || 30);
+  if (select?.value !== 'custom') minutes = Number(select?.value || 30);
+  minutes = Math.max(1, Math.min(1440, Number.isFinite(minutes) ? Math.round(minutes) : 30));
+  if ($('memoryScheduleCustom')) $('memoryScheduleCustom').value = String(minutes);
+
+  const cfg = { enabled, intervalMinutes: minutes };
+  try { localStorage.setItem(MEMORY_SCHEDULE_KEY, JSON.stringify(cfg)); } catch { /* 无痕模式 */ }
+  try {
+    const status = await api('/api/system/memory/schedule', {
+      method: 'POST',
+      body: JSON.stringify(cfg),
+    });
+    renderMemoryScheduleStatus(status);
+  } catch (e) {
+    const el = $('memoryScheduleStatus');
+    if (el) el.textContent = `定时清理设置失败：${e.message}`;
+  }
+}
+
+function queueMemoryScheduleSave() {
+  clearTimeout(memoryScheduleSaveTimer);
+  memoryScheduleSaveTimer = setTimeout(async () => {
+    syncMemoryScheduleInputState();
+    await saveMemorySchedule();
+  }, 250);
+}
+
+async function initMemorySchedule() {
+  renderMemoryScheduleControls();
+  if (!memoryScheduleBooted) {
+    memoryScheduleBooted = true;
+    const cfg = readMemoryScheduleLocal();
+    if (cfg.enabled) {
+      try { await api('/api/system/memory/schedule', { method: 'POST', body: JSON.stringify(cfg) }); } catch { /* 静默 */ }
+    }
+  }
+  await refreshMemoryScheduleStatus();
+}
+
 function updateMemTotal() {
   const min = memToMb($('setMemMin').value);
   const max = memToMb($('setMemMax').value);
@@ -5229,7 +5350,10 @@ document.querySelectorAll('.nav-item').forEach((tab) => {
     tab.classList.add('active');
     $('panel-' + tab.dataset.tab).classList.add('active');
     if (tab.dataset.tab === 'saves') loadSavesPage();
-    if (tab.dataset.tab === 'settings') loadMemoryProcesses();
+    if (tab.dataset.tab === 'settings') {
+      loadMemoryProcesses();
+      initMemorySchedule();
+    }
   });
 });
 
@@ -5552,6 +5676,17 @@ $('setMemMaxRange').addEventListener('input', (e) => {
 });
 $('memoryRefresh')?.addEventListener('click', loadMemoryProcesses);
 $('memoryOptimizeAll')?.addEventListener('click', () => optimizeMemoryProcess(0));
+$('memoryScheduleEnabled')?.addEventListener('change', () => {
+  syncMemoryScheduleInputState();
+  queueMemoryScheduleSave();
+});
+$('memoryScheduleInterval')?.addEventListener('change', () => {
+  syncMemoryScheduleInputState();
+  if ($('memoryScheduleInterval')?.value === 'custom') $('memoryScheduleCustom')?.focus();
+  queueMemoryScheduleSave();
+});
+$('memoryScheduleCustom')?.addEventListener('input', queueMemoryScheduleSave);
+initMemorySchedule();
 // 透明度滑块：拖的时候实时预览，不用等点保存。
 $('setGlass').addEventListener('input', (e) => applyGlassAlpha(Number(e.target.value)));
 
@@ -5983,6 +6118,12 @@ initWindowControls();
 
 
 /* 设置页打开时每秒读取系统内存，实时更新占用条。 */
+setInterval(() => {
+  if (document.getElementById('panel-settings')?.classList.contains('active')) {
+    refreshMemoryScheduleStatus();
+  }
+}, 15_000);
+
 let memoryTickerBusy = false;
 setInterval(async () => {
   const panel = document.getElementById('panel-settings');
