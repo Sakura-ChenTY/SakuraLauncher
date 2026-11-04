@@ -1954,9 +1954,8 @@ main {
     transform: rotate(-135deg) translate(-2px, -2px);
   }
 }
-/* ===== 列表加载动画（仿 PCL 矿镐） ===== */
-/* 仿 PCL 的 Loading：一把会挥的矿镐 + 一行文字。
-   节奏照搬 PCL 的 AniLoop，用 CSS keyframes 还原。 */
+/* ===== 列表加载动画（GIF） ===== */
+/* 安装页改用 Q 版动图；普通列表仍用 loading.gif。 */
 .pcl-loading {
   flex: 1;
   display: flex;
@@ -1966,78 +1965,6 @@ main {
   gap: 10px;
   padding: 30px 20px;
   min-height: 220px;
-}
-
-/* 60x47 与 PCL 控件同尺寸，碎屑的绝对定位才对得上 */
-.pcl-loader {
-  position: relative;
-  width: 60px;
-  height: 47px;
-  flex: none;
-  color: var(--text-dim);
-}
-
-.pcl-pick {
-  display: block;
-  width: 35px;
-  height: 35px;
-  margin: 6px 0 0 10px;
-  overflow: visible;
-  /* 绕手柄末端。35px 空间里的 (30,30) → 85.7% */
-  transform-box: border-box;
-  transform-origin: 85.7% 85.7%;
-  animation: pclSwing 2.4s infinite;
-}
-
-/* 描边线条图。non-scaling-stroke 让 2px 不被 viewBox 放大缩小 */
-.pcl-pick-path {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-  vector-effect: non-scaling-stroke;
-}
-
-/* 2.4s 一轮：停顿 → 反手压一下 → 抬到位 → 劈到底 → 弹性收回 */
-@keyframes pclSwing {
-  0%, 10% { transform: rotate(55deg); }
-  13%     { transform: rotate(60deg); }
-  25%     { transform: rotate(-20deg); }
-  62%     { transform: rotate(50deg); }
-  71%     { transform: rotate(35deg); }
-  80%     { transform: rotate(30deg); }
-  90%     { transform: rotate(23deg); }
-  100%    { transform: rotate(25deg); }
-}
-
-/* 两块碎屑：劈下那一刻出现，向外上方飞 6-7px 并淡出 */
-.pcl-spark {
-  position: absolute;
-  top: 41px;
-  width: 3px;
-  height: 5px;
-  background: currentColor;
-  clip-path: polygon(0 0, 100% 0, 50% 100%);
-  opacity: 0;
-  pointer-events: none;
-}
-
-.pcl-spark.l { left: 7px;  animation: pclSparkL 2.4s infinite; }
-.pcl-spark.r { left: 14px; animation: pclSparkR 2.4s infinite; }
-
-@keyframes pclSparkL {
-  0%, 61% { opacity: 0; transform: translate(0, 0) rotate(-45deg); }
-  64%     { opacity: .95; transform: translate(0, 0) rotate(-45deg); }
-  74%     { opacity: 0; transform: translate(-7px, -6px) rotate(-45deg); }
-  100%    { opacity: 0; transform: translate(-7px, -6px) rotate(-45deg); }
-}
-
-@keyframes pclSparkR {
-  0%, 63% { opacity: 0; transform: translate(0, 0) rotate(45deg); }
-  66%     { opacity: .95; transform: translate(0, 0) rotate(45deg); }
-  76%     { opacity: 0; transform: translate(7px, -6px) rotate(45deg); }
-  100%    { opacity: 0; transform: translate(7px, -6px) rotate(45deg); }
 }
 
 .pcl-text {
@@ -2061,19 +1988,6 @@ main {
 
 @media (prefers-reduced-motion: reduce) {
   .pcl-gif { opacity: .75; }
-}
-
-/* 系统开了「减少动态效果」就别一直挥镐，改成轻微呼吸 */
-@media (prefers-reduced-motion: reduce) {
-  .pcl-pick {
-    animation: pclBreathe 1.8s ease-in-out infinite;
-  }
-  .pcl-spark { animation: none; opacity: 0; }
-
-  @keyframes pclBreathe {
-    0%, 100% { opacity: .55; }
-    50%      { opacity: 1; }
-  }
 }
 
 /* ---------- 全屏安装/下载页 ---------- */
@@ -2215,11 +2129,27 @@ main {
   gap: 6px;
 }
 
-/* 复用 .pcl-loader 的尺寸与动画，颜色用主题绿 */
-.install-loader {
-  color: var(--accent);
-  /* 不缩放：PCL 原控件就是 60x47 里 35px 的图标，
-     缩到 0.8 会细到看不清笔画 */
+/* 安装页的抱本子写字动图，尺寸接近原来的 60x47 镐子 */
+.install-loader-art {
+  width: 64px;
+  height: 64px;
+  flex: 0 0 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.install-loader-art picture,
+.install-loader-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.install-loader-img {
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
 }
 
 .install-title {
@@ -2272,6 +2202,7 @@ main {
 
 @media (prefers-reduced-motion: reduce) {
   .install-page { transition: none; }
+  .install-loader-img { animation: none; }
 }
 
 /* 整页展开时把底部那条收起来。
