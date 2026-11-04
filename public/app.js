@@ -5438,6 +5438,12 @@ $('yggPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') doYggLo
 let pendingImport = null;
 
 async function performImport(path, versionId, backupSaves = false) {
+  const isZip = /\.zip$/i.test(path);
+  if (isZip) {
+    showProgress(true);
+    updateProgress({ stage: 'modpack', message: '正在解压整合包…' });
+    resetCancelButton();
+  }
   try {
     const data = await api('/api/import/file', {
       method: 'POST',
@@ -5465,7 +5471,12 @@ async function performImport(path, versionId, backupSaves = false) {
     state.selectedVersion = data.versionId;
     renderInstalled();
     updateHome();
+    if (isZip) {
+      updateProgress({ stage: 'done', message: '导入完成' });
+      setTimeout(() => showProgress(false), 2000);
+    }
   } catch (e) {
+    if (isZip) showProgress(false);
     toast('导入失败：' + e.message, 'err');
   }
 }

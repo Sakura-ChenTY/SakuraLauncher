@@ -28,10 +28,12 @@ import { installFabric } from './fabric.js';
 import { installForge, installNeoForge } from './forge.js';
 import { installVersion } from './installer.js';
 
-/** 从 mrpack zip 里读出清单 */
-export function readMrpackIndex(zipPath) {
-  const buf = fs.readFileSync(zipPath);
-  const entries = listEntries(buf);
+/** 从 mrpack zip 里读出清单。
+ *  preloaded 是已经读好的 { buf, entries }，用于复用 preview 阶段的整包读取。
+ */
+export function readMrpackIndex(zipPath, preloaded = null) {
+  const buf = preloaded?.buf ?? fs.readFileSync(zipPath);
+  const entries = preloaded?.entries ?? listEntries(buf);
 
   const idxEntry = entries.find((e) => e.name === 'modrinth.index.json');
   if (!idxEntry) {
@@ -203,7 +205,7 @@ export async function installModpack(opts = {}) {
   }
 
   // 2. 解析
-  const { index, entries, buf } = readMrpackIndex(zipPath);
+  const { index, entries, buf } = readMrpackIndex(zipPath, opts.mrpackArchive ?? null);
 
   const deps = index.dependencies ?? {};
   const gameVersion = deps.minecraft;
@@ -234,6 +236,7 @@ export async function installModpack(opts = {}) {
     loaderInfo = await installFabric({
       gameDir,
       gameVersion,
+      skipVanilla: true,
       loaderVersion: deps[loaderKey],
       versionIdOverride: instanceId,
       source,

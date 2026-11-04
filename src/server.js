@@ -483,9 +483,9 @@ function safeInstanceName(name, fallback = 'imported-pack') {
   return s || fallback;
 }
 
-function extractZipTo(buf, entries, targetDir, mapRel = (name) => name) {
+async function extractZipTo(buf, entries, targetDir, mapRel = (name) => name, onProgress = () => {}) {
   const root = path.resolve(targetDir);
-  fs.mkdirSync(root, { recursive: true });
+  await fsp.mkdir(root, { recursive: true });
   let count = 0;
   for (const e of entries) {
     if (!e.name || e.name.endsWith('/')) continue;
@@ -493,10 +493,12 @@ function extractZipTo(buf, entries, targetDir, mapRel = (name) => name) {
     if (!rel) continue;
     const dest = path.resolve(root, rel);
     if (dest !== root && !dest.startsWith(root + path.sep)) continue;
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.writeFileSync(dest, readEntry(buf, e));
+    await fsp.mkdir(path.dirname(dest), { recursive: true });
+    await fsp.writeFile(dest, readEntry(buf, e));
     count += 1;
+    onProgress(count, entries.length);
   }
+  onProgress(count, count);
   return count;
 }
 
@@ -530,6 +532,87 @@ function buildImportPlan(entries, targetDir, mapRel) {
   return { overwrites, additions, overwritePaths };
 }
 
+/* ---- 导入进度：按时间合并，避免每个文件都推一条 SSE ---- */
+function createProgressThrottle(send, intervalMs = 200) {
+  let lastAt = 0;
+  let timer = null;
+  let pending = null;
+
+  const flush = () => {
+    if (!pending) return;
+    const value = pending;
+    pending = null;
+    lastAt = Date.now();
+    send(value);
+  };
+
+  const throttled = (value) => {
+    pending = value;
+    const now = Date.now();
+    const finished = value && value.total != null && value.done >= value.total;
+    if (finished || now - lastAt >= intervalMs) {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      flush();
+      return;
+    }
+    if (!timer) {
+      timer = setTimeout(() => {
+        timer = null;
+        flush();
+      }, intervalMs - (now - lastAt));
+    }
+  };
+
+  throttled.cancel = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    pending = null;
+  };
+
+  return throttled;
+}
+
+/* ---- preview 与 install 之间复用 mrpack 的整包读取 ---- */
+const MRPACK_PREVIEW_TTL_MS = 10 * 60 * 1000;
+let mrpackPreviewCache = null;
+
+function cacheMrpackPreview(filePath, buf, entries) {
+  const st = fs.statSync(filePath);
+  mrpackPreviewCache = {
+    filePath: path.resolve(filePath),
+    size: st.size,
+    mtimeMs: st.mtimeMs,
+    buf,
+    entries,
+    at: Date.now(),
+  };
+}
+
+function takeMrpackPreview(filePath) {
+  const cached = mrpackPreviewCache;
+  if (!cached) return null;
+  if (cached.filePath !== path.resolve(filePath) ||
+      Date.now() - cached.at > MRPACK_PREVIEW_TTL_MS) {
+    mrpackPreviewCache = null;
+    return null;
+  }
+  try {
+    const st = fs.statSync(filePath);
+    if (st.size !== cached.size || st.mtimeMs !== cached.mtimeMs) {
+      mrpackPreviewCache = null;
+      return null;
+    }
+  } catch {
+    mrpackPreviewCache = null;
+    return null;
+  }
+  mrpackPreviewCache = null;
+  return { buf: cached.buf, entries: cached.entries };
+}
+
 async function handleDroppedFile(filePath, versionId, opts = {}) {
   const src = path.resolve(String(filePath ?? ''));
   if (!fs.existsSync(src) || !fs.statSync(src).isFile()) {
@@ -554,34 +637,48 @@ async function handleDroppedFile(filePath, versionId, opts = {}) {
     throw new Error('只支持拖入整合包 zip / mrpack 或单个 jar');
   }
 
-  const buf = fs.readFileSync(src);
-  const entries = listEntries(buf);
+  const cachedArchive = opts.preview ? null : takeMrpackPreview(src);
+  let buf;
+  let entries;
+  if (cachedArchive) {
+    buf = cachedArchive.buf;
+    entries = cachedArchive.entries;
+  } else {
+    buf = fs.readFileSync(src);
+    entries = listEntries(buf);
+  }
   const names = entries.map((e) => e.name.replace(/\\/g, '/'));
   const isMrpack = /\.mrpack$/i.test(ext) || names.some((n) => n === 'modrinth.index.json' || n.endsWith('/modrinth.index.json'));
 
   if (isMrpack) {
-    if (opts.preview) return { kind: 'modpack', preview: true, versionId: path.parse(src).name };
+    if (opts.preview) {
+      cacheMrpackPreview(src, buf, entries);
+      return { kind: 'modpack', preview: true, versionId: path.parse(src).name };
+    }
     if (state.installing) throw new Error('已有安装任务在进行');
     if (state.running) throw new Error('游戏正在运行，先退出再导入');
     state.installing = { versionId: path.parse(src).name, stage: 'modpack', done: 0, total: 0 };
     markInstallStart({ versionId: state.installing.versionId, stage: 'modpack' });
     startJob();
     emit('modpack-start', { mrpackPath: src });
+    const installingVersionId = state.installing.versionId;
+    const sendInstallProgress = createProgressThrottle((p) => {
+      state.installing = { ...state.installing, ...p };
+      emit('install-progress', { versionId: state.installing?.versionId ?? installingVersionId, ...p });
+    });
     (async () => {
       try {
         const r = await installModpack({
           gameDir: state.gameDir,
           mrpackPath: src,
+          mrpackArchive: { buf, entries },
           source: (await awaitOrCancel(resolveSource(getSettings().downloadSource))).source,
           onStage: ({ stage, message }) => {
             state.installing = { ...state.installing, stage, message };
             emit('install-stage', { versionId: state.installing.versionId, stage, message });
             pushLog(`[${stage}] ${message}`);
           },
-          onProgress: (p) => {
-            state.installing = { ...state.installing, ...p };
-            emit('install-progress', { versionId: state.installing.versionId, ...p });
-          },
+          onProgress: sendInstallProgress,
         });
         ensureChineseLanguage(r.instanceId);
         state.installing = null;
@@ -589,11 +686,13 @@ async function handleDroppedFile(filePath, versionId, opts = {}) {
         emit('install-done', { versionId: r.instanceId, report: r });
         pushLog(`本地整合包导入完成：${r.instanceId}`);
       } catch (e) {
+        sendInstallProgress.cancel();
         state.installing = null;
         endJob();
         emit('install-error', { versionId: path.parse(src).name, error: e.message });
         pushLog(`本地整合包导入失败：${e.message}`);
       } finally {
+        sendInstallProgress.cancel();
         markInstallEnd();
       }
     })();
@@ -645,7 +744,21 @@ async function handleDroppedFile(filePath, versionId, opts = {}) {
       source: 'manual',
     });
   }
-  const count = extractZipTo(buf, entries, instanceDir, mapRel);
+  const zipProgress = createProgressThrottle((p) => {
+    emit('install-progress', { versionId: instanceId, stage: 'modpack', ...p });
+  });
+  let count;
+  try {
+    count = await extractZipTo(
+      buf,
+      entries,
+      instanceDir,
+      mapRel,
+      (done, total) => zipProgress({ done, total, message: `解压整合包 ${done}/${total}` })
+    );
+  } finally {
+    zipProgress.cancel();
+  }
   let cfResult = null;
   if (cfManifest) {
     try {

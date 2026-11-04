@@ -59,6 +59,7 @@ export async function installFabric(opts = {}) {
   const {
     gameDir,
     gameVersion,
+    skipVanilla = false,
     onStage = () => {},
     onProgress = () => {},
     source,
@@ -83,14 +84,16 @@ export async function installFabric(opts = {}) {
   // 根因：Fabric profile 只有 inheritsFrom，没有原版目录就永远起不来。
   // 四个加载器入口统一先补原版（version json / client.jar / libraries / assets），
   // 再写 loader profile；不能只写一个孤立 profile 就算装完。
-  onStage({ stage: 'fabric', message: `先安装原版 Minecraft ${gameVersion}` });
-  await installVersion({
-    gameDir,
-    versionId: gameVersion,
-    source,
-    onStage,
-    onProgress,
-  });
+  if (!skipVanilla) {
+    onStage({ stage: 'fabric', message: `先安装原版 Minecraft ${gameVersion}` });
+    await installVersion({
+      gameDir,
+      versionId: gameVersion,
+      source,
+      onStage,
+      onProgress,
+    });
+  }
 
   // 2. 取 profile JSON
   const profileUrl =
