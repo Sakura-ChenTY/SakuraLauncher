@@ -438,12 +438,13 @@
     }
     if (side < 8) return null;
 
+    // 保持裁切原图的原始像素尺寸；放大只交给最终 64×64 绘制和 CSS 预览。
     const crop = document.createElement('canvas');
-    crop.width = 256;
-    crop.height = 256;
+    crop.width = side;
+    crop.height = side;
     const cropCtx = crop.getContext('2d');
     cropCtx.imageSmoothingEnabled = true;
-    cropCtx.drawImage(snapshot, sx, sy, side, side, 0, 0, 256, 256);
+    cropCtx.drawImage(snapshot, sx, sy, side, side, 0, 0, side, side);
 
     return {
       cropDataUrl: crop.toDataURL('image/png'),

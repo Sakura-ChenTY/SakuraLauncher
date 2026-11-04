@@ -5392,9 +5392,11 @@ async function openAvatarPreview() {
     const img = new Image();
     img.onload = () => {
       const cctx = cropCanvas.getContext('2d');
-      cctx.clearRect(0, 0, 256, 256);
-      cctx.imageSmoothingEnabled = true;
-      cctx.drawImage(img, 0, 0, 256, 256);
+      cropCanvas.width = img.naturalWidth || 256;
+      cropCanvas.height = img.naturalHeight || 256;
+      cctx.clearRect(0, 0, cropCanvas.width, cropCanvas.height);
+      cctx.imageSmoothingEnabled = false;
+      cctx.drawImage(img, 0, 0);
       drawCustomAvatar(finalCanvas, img, 'rounded');
       resolve();
     };
