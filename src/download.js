@@ -330,9 +330,10 @@ async function isComplete(filePath, expectedSha1, expectedSize) {
 
 /**
  * 下载单个文件。
- * opts: { sha1, size, retries, timeout, preferMirror, source, onSkip, onDone }
+ * opts: { sha1, size, retries, timeout, preferMirror, source, gameDir, reuseRoots, onSkip, onDone }
  *   source: 'official' | 'bmclapi' | 'split' —— 主选源；split 按文件稳定分流
  *   preferMirror: 旧参数，等价于 source='bmclapi'
+ *   reuseRoots: 其他 .minecraft 根目录，按相对路径找同文件后直接复制
  * 返回 'skipped' | 'downloaded'
  */
 export async function downloadFile(url, destPath, opts = {}) {
@@ -343,6 +344,8 @@ export async function downloadFile(url, destPath, opts = {}) {
     timeout = 60000,
     preferMirror = false,
     source,
+    gameDir,
+    reuseRoots = [],
   } = opts;
 
   await mkdirTracked(path.dirname(destPath));
@@ -359,6 +362,23 @@ export async function downloadFile(url, destPath, opts = {}) {
   // 已有但校验不过 -> 删掉重下
   if (fs.existsSync(destPath)) {
     await fsp.rm(destPath, { force: true });
+  }
+
+  // 跨 .minecraft 复用：相对路径一致，且大小/SHA1 都对得上才复制。
+  // 这是冷装之外最划算的一步：已有对象不发网络请求。
+  if (gameDir && reuseRoots.length) {
+    const rel = path.relative(path.resolve(gameDir), path.resolve(destPath));
+    if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+      for (const root of reuseRoots) {
+        const candidate = path.join(root, rel);
+        if (path.resolve(candidate) === path.resolve(destPath)) continue;
+        if (!(await isComplete(candidate, sha1, size))) continue;
+        await fsp.mkdir(path.dirname(destPath), { recursive: true });
+        await fsp.copyFile(candidate, destPath);
+        trackFile(destPath);
+        return 'skipped';
+      }
+    }
   }
 
   let effectiveSource = source === 'split' ? splitSourceFor(url, destPath) : source;
@@ -452,9 +472,17 @@ export async function downloadFile(url, destPath, opts = {}) {
 /**
  * 并发池：限制同时进行数，收集结果与错误。
  * items: [{ url, dest, sha1, size }]
- * opts: { concurrency, retries, preferMirror, source, onProgress }
+ * opts: { concurrency, retries, preferMirror, source, gameDir, reuseRoots, onProgress }
  */
-export async function downloadMany(items, { concurrency = 8, retries = 3, preferMirror = false, source, onProgress } = {}) {
+export async function downloadMany(items, {
+  concurrency = 8,
+  retries = 3,
+  preferMirror = false,
+  source,
+  gameDir,
+  reuseRoots = [],
+  onProgress,
+} = {}) {
   let index = 0;
   let done = 0;
   let skipped = 0;
@@ -475,6 +503,8 @@ export async function downloadMany(items, { concurrency = 8, retries = 3, prefer
           retries,
           preferMirror: it.preferMirror ?? preferMirror,
           source: it.source ?? source,
+          gameDir,
+          reuseRoots,
         });
         if (r === 'skipped') skipped++;
         else downloaded++;

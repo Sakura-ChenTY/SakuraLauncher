@@ -25,7 +25,35 @@ import { mavenPath, isNativeLibrary, nativeClassifierKey, nativeLibraryRel } fro
 import { extractNatives } from './zip.js';
 import { ensureJava } from './javadl.js';
 import { getSettings } from './settings.js';
-import { JAVA_SCAN_CACHE } from './paths.js';
+import { JAVA_SCAN_CACHE, HOME_DIR, defaultGameDir } from './paths.js';
+
+/** 可复用的其他 .minecraft 根目录（默认官启目录 + 最近记录 + 当前设置）。 */
+function getReuseRoots(gameDir) {
+  const current = path.resolve(gameDir);
+  const roots = [];
+  const seen = new Set([current.toLowerCase()]);
+  const add = (value) => {
+    if (!value || typeof value !== 'string') return;
+    const abs = path.resolve(value);
+    const key = abs.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    roots.push(abs);
+  };
+  add(defaultGameDir());
+  try {
+    add(getSettings().gameDir);
+  } catch {
+    /* 设置读取失败时只保留默认目录 */
+  }
+  try {
+    const recent = JSON.parse(fs.readFileSync(path.join(HOME_DIR, 'recent-play.json'), 'utf8'));
+    add(recent?.last?.gameDir);
+  } catch {
+    /* 没有最近记录就算了 */
+  }
+  return roots;
+}
 
 /** 拉取版本清单并缓存到本地 */
 export async function getVersionManifest(manifestCachePath) {
@@ -83,6 +111,7 @@ export async function installVersion(opts) {
   const dlSource = source ?? (preferMirror ? 'bmclapi' : 'official');
 
   const root = path.resolve(gameDir);
+  const reuseRoots = getReuseRoots(root);
   const versionsDir = path.join(root, 'versions');
   const libsDir = path.join(root, 'libraries');
   const assetsDir = path.join(root, 'assets');
@@ -133,6 +162,8 @@ export async function installVersion(opts) {
         size: clientDl.size,
         retries: 3,
         source: dlSource,
+        gameDir: root,
+        reuseRoots,
       });
       report.stages.client = r;
     } catch (e) {
@@ -204,6 +235,8 @@ export async function installVersion(opts) {
       concurrency,
       retries: 3,
       source: dlSource,
+      gameDir: root,
+      reuseRoots,
       onProgress: (p) => onProgress({ stage: 'libraries', ...p }),
     });
     report.stages.libraries = {
@@ -228,6 +261,8 @@ export async function installVersion(opts) {
         size: logCfg.size,
         retries: 2,
         source: dlSource,
+        gameDir: root,
+        reuseRoots,
       });
     } catch (e) {
       report.stages.logconfig = 'error: ' + e.message;
@@ -271,6 +306,8 @@ export async function installVersion(opts) {
       concurrency: Math.max(concurrency, 12),
       retries: 3,
       source: dlSource,
+      gameDir: root,
+      reuseRoots,
       onProgress: (p) => onProgress({ stage: 'assets', ...p }),
     });
     report.stages.assets = {
