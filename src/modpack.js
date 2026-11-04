@@ -27,6 +27,12 @@ import { listEntries, readEntry } from './zip.js';
 import { installFabric } from './fabric.js';
 import { installForge, installNeoForge } from './forge.js';
 import { installVersion } from './installer.js';
+import { getSettings } from './settings.js';
+
+function downloadConcurrency() {
+  const n = Number(getSettings().concurrency);
+  return Math.max(1, Math.min(128, Number.isFinite(n) ? Math.round(n) : 64));
+}
 
 /** 从 mrpack zip 里读出清单。
  *  preloaded 是已经读好的 { buf, entries }，用于复用 preview 阶段的整包读取。
@@ -295,7 +301,7 @@ export async function installModpack(opts = {}) {
   onStage({ stage: 'modpack', message: `下载 ${items.length} 个整合包文件` });
 
   const r = await downloadMany(items, {
-    concurrency: 12,
+    concurrency: downloadConcurrency(),
     retries: 3,
     onProgress: (p) =>
       onProgress({

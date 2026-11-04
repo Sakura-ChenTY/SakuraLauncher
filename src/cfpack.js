@@ -31,8 +31,14 @@ import { installFabric } from './fabric.js';
 import { installForge, installNeoForge } from './forge.js';
 import { savePackIcon } from './modpack.js';
 import { cfGet, cfPost, CF_GAME_ID } from './curseforge.js';
+import { getSettings } from './settings.js';
 
 const UA = 'mclauncher/0.1 (local)';
+
+function downloadConcurrency() {
+  const n = Number(getSettings().concurrency);
+  return Math.max(1, Math.min(128, Number.isFinite(n) ? Math.round(n) : 64));
+}
 
 /** 批量接口一次最多 50 个 id，超了服务端会拒 */
 const BATCH = 50;
@@ -399,7 +405,7 @@ export async function installCurseForgePack(opts = {}) {
   });
 
   const r = await downloadMany(items, {
-    concurrency: 12,
+    concurrency: downloadConcurrency(),
     retries: 3,
     source,
     onProgress: (p) =>

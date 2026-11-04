@@ -100,7 +100,7 @@ export async function installVersion(opts) {
   const {
     gameDir,
     versionId,
-    concurrency = 8,
+    concurrency = 64,
     preferMirror = false,
     source,
     onStage = () => {},

@@ -38,6 +38,11 @@ const BMCLAPI_RULES = [
   [/^https?:\/\/maven\.fabricmc\.net\//, 'https://bmclapi2.bangbang93.com/maven/'],
   // 资源对象
   [/^https?:\/\/resources\.download\.minecraft\.net\//, 'https://bmclapi2.bangbang93.com/assets/'],
+  // Modrinth / CurseForge 的 mod 文件 CDN -> MCIM
+  [/^https?:\/\/cdn\.modrinth\.com\//, 'https://mod.mcimirror.top/'],
+  [/^https?:\/\/edge\.forgecdn\.net\//, 'https://mod.mcimirror.top/'],
+  [/^https?:\/\/mediafilez\.forgecdn\.net\//, 'https://mod.mcimirror.top/'],
+  [/^https?:\/\/media\.forgecdn\.net\//, 'https://mod.mcimirror.top/'],
 ];
 
 /**

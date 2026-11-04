@@ -19,9 +19,18 @@ import { candidateUrls, toMirror } from './sources.js';
 import { getSettings } from './settings.js';
 
 const agents = {
-  'https:': new https.Agent({ keepAlive: true, maxSockets: 256 }),
-  'http:': new http.Agent({ keepAlive: true, maxSockets: 256 }),
+  'https:': new https.Agent({ keepAlive: true, maxSockets: 64, maxFreeSockets: 64 }),
+  'http:': new http.Agent({ keepAlive: true, maxSockets: 64, maxFreeSockets: 64 }),
 };
+
+/** 连接池大小跟当前任务并发对齐，避免排队 64 个却只有少量连接。 */
+function configureAgents(concurrency) {
+  const n = Math.max(1, Math.min(128, Number(concurrency) || 64));
+  for (const agent of Object.values(agents)) {
+    agent.maxSockets = n;
+    agent.maxFreeSockets = n;
+  }
+}
 
 /** Optional sink for download diagnostics; the server points this at its log. */
 let downloadLogger = null;
@@ -330,6 +339,7 @@ export function startJob() {
     monitor: null,
   };
   currentJob = { ctrl: new AbortController(), reason: '', files: new Set(), dirs: [] };
+  configureAgents(getSettings().concurrency);
   startSourceMonitor();
   notifySourceChanged('start');
   return currentJob.ctrl.signal;
@@ -546,6 +556,104 @@ async function isComplete(filePath, expectedSha1, expectedSize) {
 }
 
 /**
+ * 大文件分段下载：4 个 Range 请求并行写入临时段，最后合并。
+ * 只在全新文件、已知大小 > 8MB 时尝试；服务器不支持 Range 时返回 false，
+ * 调用方退回原来的单流路径。
+ */
+async function downloadRanged(url, destPath, size, sha1, source) {
+  const effectiveSource = sourceState?.active ?? (source === 'bmclapi' ? 'bmclapi' : 'official');
+  const target = candidateUrls(url, { source: effectiveSource })[0];
+  if (!target) return false;
+  const partPath = `${destPath}.part`;
+  let completed = false;
+  const segs = [];
+  const count = 4;
+  const chunk = Math.ceil(size / count);
+  for (let i = 0; i < count; i++) {
+    const start = i * chunk;
+    const end = Math.min(size - 1, start + chunk - 1);
+    if (start <= end) segs.push({ start, end, path: `${partPath}.${i}` });
+  }
+  const ctrl = new AbortController();
+  const transfer = {
+    controller: ctrl,
+    url,
+    dest: path.resolve(destPath),
+    source: effectiveSource,
+    generation: sourceState?.generation ?? 0,
+  };
+  sourceState?.transfers.add(transfer);
+  try {
+    await Promise.all(segs.map(async (seg) => {
+      const { res } = await requestOnce(target, {
+        headers: { Range: `bytes=${seg.start}-${seg.end}` },
+        timeout: 90000,
+        signal: ctrl.signal,
+      });
+      if (res.statusCode !== 206) {
+        res.resume();
+        throw new Error(`HTTP ${res.statusCode}（不支持 Range）`);
+      }
+      const contentRange = String(res.headers['content-range'] ?? '');
+      const m = /^bytes\s+(\d+)-/i.exec(contentRange);
+      if (!m || Number(m[1]) !== seg.start) {
+        res.resume();
+        throw new Error(`Range 起点不匹配（期望 ${seg.start}）`);
+      }
+      const out = fs.createWriteStream(seg.path, { flags: 'w' });
+      const meter = new Transform({
+        transform(chunk, _enc, cb) {
+          if (sourceState) {
+            sourceState.windowBytes += chunk.length;
+            sourceState.lastByteAt = Date.now();
+          }
+          cb(null, chunk);
+        },
+      });
+      await pipeline(res, meter, out, { signal: ctrl.signal });
+    }));
+
+    const out = fs.createWriteStream(partPath, { flags: 'w' });
+    try {
+      for (const seg of segs) {
+        for await (const chunk of fs.createReadStream(seg.path)) {
+          if (!out.write(chunk)) await new Promise((r) => out.once('drain', r));
+        }
+      }
+    } finally {
+      out.end();
+      await new Promise((resolve, reject) => {
+        out.once('finish', resolve);
+        out.once('error', reject);
+      });
+    }
+    if (sha1) {
+      const actual = await sha1File(partPath);
+      if (actual.toLowerCase() !== sha1.toLowerCase()) {
+        throw new Error(`SHA1 不匹配（期望 ${sha1.slice(0, 8)}… 实际 ${actual.slice(0, 8)}…）`);
+      }
+    }
+    await fsp.rename(partPath, destPath);
+    completed = true;
+    return true;
+  } catch (e) {
+    if (e?.sourceSwitch || ctrl.signal.reason instanceof SourceSwitchError) {
+      throw new SourceSwitchError();
+    }
+    try { ctrl.abort(); } catch { /* ignore */ }
+    return false;
+  } finally {
+    sourceState?.transfers.delete(transfer);
+    for (const seg of segs) {
+      try { await fsp.rm(seg.path, { force: true }); } catch { /* ignore */ }
+    }
+    if (!completed) {
+      try { await fsp.rm(partPath, { force: true }); } catch { /* ignore */ }
+    }
+  }
+}
+
+/**
  * 下载单个文件。
  * opts: { sha1, size, retries, timeout, preferMirror, source, gameDir, reuseRoots, onSkip, onDone }
  *   source: 'official' | 'bmclapi' —— 优先源；运行中由 sourceState 自动降级
@@ -563,6 +671,7 @@ export async function downloadFile(url, destPath, opts = {}) {
     source,
     gameDir,
     reuseRoots = [],
+    onThrottle,
   } = opts;
 
   await mkdirTracked(path.dirname(destPath));
@@ -647,6 +756,17 @@ export async function downloadFile(url, destPath, opts = {}) {
         const headers = {};
         if (startAt > 0) headers.Range = `bytes=${startAt}-`;
 
+        // 全新大文件先尝试 4 段 Range；镜像/服务器不支持时自动回退单流。
+        if (startAt === 0 && Number(size) > 8 * 1024 * 1024) {
+          try {
+            if (await downloadRanged(url, destPath, Number(size), sha1, effectiveSource)) {
+              return 'downloaded';
+            }
+          } catch (e) {
+            if (e?.sourceSwitch || e instanceof SourceSwitchError) throw e;
+          }
+        }
+
         const { res } = await requestOnce(target, {
           headers,
           timeout,
@@ -661,7 +781,9 @@ export async function downloadFile(url, destPath, opts = {}) {
         }
         if (res.statusCode !== 200 && res.statusCode !== 206) {
           res.resume();
-          throw new Error(`HTTP ${res.statusCode}`);
+          const err = new Error(`HTTP ${res.statusCode}`);
+          err.statusCode = res.statusCode;
+          throw err;
         }
 
         // 旧源在响应途中被切走：不要写盘，直接让 worker 用新源重来。
@@ -727,12 +849,21 @@ export async function downloadFile(url, destPath, opts = {}) {
         }
 
         lastErr = e;
+        const status = Number(e?.statusCode || /^HTTP\s+(\d{3})\b/i.exec(String(e?.message ?? ''))?.[1] || 0);
+        const retryable = status === 429 || status >= 500;
+        if (retryable) {
+          try { onThrottle?.(); } catch { /* 降低并发失败不影响重试 */ }
+        }
         if (sourceState) {
           sourceState.consecutiveFailures += 1;
           if (String(e?.message ?? '').includes('TIMEOUT')) sourceState.lastTimeoutAt = Date.now();
         }
         attempt += 1;
-        await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+        // 429/5xx 指数退避；普通网络错误只做短退避。
+        const backoff = retryable
+          ? Math.min(30_000, 500 * 2 ** Math.min(6, attempt))
+          : 300 * (attempt + 1);
+        await new Promise((r) => setTimeout(r, backoff + Math.floor(Math.random() * 200)));
       } finally {
         sourceState?.transfers.delete(transfer);
       }
@@ -750,7 +881,7 @@ export async function downloadFile(url, destPath, opts = {}) {
  * opts: { concurrency, retries, preferMirror, source, gameDir, reuseRoots, onProgress }
  */
 export async function downloadMany(items, {
-  concurrency = 8,
+  concurrency = 64,
   retries = 3,
   preferMirror = false,
   source,
@@ -763,13 +894,44 @@ export async function downloadMany(items, {
   let skipped = 0;
   let downloaded = 0;
   const errors = [];
+  const n = Math.max(1, Math.min(128, Math.max(1, Number(concurrency) || 64), items.length));
+  configureAgents(n);
+
+  // 只创建 n 个 worker，按 index 排队取任务；不会给 4000 个文件各建一个 Promise。
+  // activeLimit 遇到 429/5xx 会下调，已开始的请求继续，后续排队请求等水位。
+  let active = 0;
+  let activeLimit = n;
+  const waiters = [];
+  const acquire = () => new Promise((resolve) => {
+    if (active < activeLimit) {
+      active++;
+      resolve();
+    } else {
+      waiters.push(resolve);
+    }
+  });
+  const release = () => {
+    active--;
+    while (waiters.length && active < activeLimit) {
+      active++;
+      waiters.shift()();
+    }
+  };
+  const reduceConcurrency = () => {
+    activeLimit = Math.max(4, Math.floor(activeLimit * 0.7));
+    while (waiters.length && active < activeLimit) {
+      active++;
+      waiters.shift()();
+    }
+  };
 
   async function worker() {
     while (true) {
-      // 取消后立刻停止再取新任务：否则 8 个 worker 还会各自再去开新连接
       if (isCancelled()) return;
       const i = index++;
       if (i >= items.length) return;
+      await acquire();
+      if (isCancelled()) { release(); return; }
       const it = items[i];
       try {
         const r = await downloadFile(it.url, it.dest, {
@@ -780,14 +942,17 @@ export async function downloadMany(items, {
           source: it.source ?? source,
           gameDir,
           reuseRoots,
+          onThrottle: reduceConcurrency,
         });
         if (r === 'skipped') skipped++;
         else downloaded++;
       } catch (e) {
         // 取消不算失败条目，否则浮窗上会出现“失败 N 个”的误导计数
         if (e?.cancelled || isCancelled()) return;
+        if (e?.statusCode === 429 || Number(e?.statusCode) >= 500) reduceConcurrency();
         errors.push({ item: it, error: e.message });
       } finally {
+        release();
         done++;
         if (onProgress) {
           try {
@@ -800,7 +965,6 @@ export async function downloadMany(items, {
     }
   }
 
-  const n = Math.max(1, Math.min(concurrency, items.length));
   await Promise.all(Array.from({ length: n }, worker));
 
   // 取消了就不要装成“全部跑完”：上层据此决定是收尾还是报错
