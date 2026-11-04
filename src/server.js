@@ -105,6 +105,7 @@ import { JAVA_SCAN_CACHE } from './paths.js';
 import { HOME_DIR } from './paths.js';
 import { getSettings, saveSettings, DEFAULTS, SETTINGS_FILE } from './settings.js';
 import { resolveSource, measureSources, clearSourceCache } from './speedtest.js';
+import { listMemoryProcesses, optimizeMemory } from './memory.js';
 import { appendLogLine } from './logfile.js';
 import { listTrash, restoreTrash, purgeTrash } from './trash.js';
 import { resolveRequiredDependencies } from './dependencies.js';
@@ -849,6 +850,7 @@ export const state = {
   installInterrupted: null, // 上次安装被中断的信息（启动时取一次）
   forceFirstRun: false, // --first-run：强制显示引导，不删数据
   msLogin: null,      // 进行中的微软设备码登录 { deviceCode, userCode, ... }
+  memoryOptimizeAt: 0, // 上次系统内存优化时间（60 秒冷却）
 };
 
 const activeTasks = new Map();
@@ -3563,12 +3565,57 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/system/memory' && req.method === 'GET') {
       const total = os.totalmem();
       const free = os.freemem();
+      const recommendedMax = Math.max(1024, Math.floor((total / 1024 / 1024) * 0.25 / 512) * 512);
       return json(res, 200, {
         total: Math.round(total / 1024 / 1024),
         free: Math.round(free / 1024 / 1024),
         used: Math.round((total - free) / 1024 / 1024),
         maxMemory: memoryCapMb(),
+        recommendedMax,
+        recommendedReason: '约物理内存的 1/4，给系统和其他程序留出余量',
       });
+    }
+
+    if (p === '/api/system/memory/processes' && req.method === 'GET') {
+      try {
+        const data = await listMemoryProcesses();
+        return json(res, 200, data);
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
+    if (p === '/api/system/memory/optimize' && req.method === 'POST') {
+      const now = Date.now();
+      const wait = 60_000 - (now - state.memoryOptimizeAt);
+      if (state.memoryOptimizeAt && wait > 0) {
+        return json(res, 429, {
+          error: `内存优化冷却中，请 ${Math.ceil(wait / 1000)} 秒后再试`,
+          retryAfterMs: wait,
+        });
+      }
+      const body = await readBody(req);
+      const pid = Number(body.pid || 0);
+      if (pid && (!Number.isInteger(pid) || pid <= 0)) {
+        return json(res, 400, { error: 'PID 不合法' });
+      }
+      try {
+        const result = await optimizeMemory(pid);
+        state.memoryOptimizeAt = Date.now();
+        const totalMb = Math.round(result.released / 1024 / 1024);
+        pushLog(
+          pid
+            ? `系统内存优化：PID ${pid}，工作集减少约 ${totalMb} MB`
+            : `系统内存优化：处理 ${result.processes.length} 个进程，工作集减少约 ${totalMb} MB`
+        );
+        return json(res, 200, {
+          ...result,
+          cooldownMs: 60_000,
+          nextAllowedAt: state.memoryOptimizeAt + 60_000,
+        });
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
     }
 
     if (p === '/api/path/ensure' && req.method === 'POST') {
