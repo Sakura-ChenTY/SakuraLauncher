@@ -4072,51 +4072,56 @@ function paintAccountAvatar(acc) {
     letter.textContent = acc ? acc.name.slice(0, 1) : '?';
   };
 
-  const useDefault = () => {
+  const showAvatar = () => {
     if (mySeq !== avatarSeq) return;
-    if (typeof window.paintDefaultFace === 'function') {
-      window.paintDefaultFace(canvas, { width: 64, height: 64 })
-        .then(() => {
-          if (mySeq !== avatarSeq) return;
-          canvas.hidden = false;
-          letter.hidden = true;
-        })
+    canvas.hidden = false;
+    letter.hidden = true;
+  };
+
+  const fallbackStatic = () => {
+    if (mySeq !== avatarSeq) return;
+    if (typeof window.paintAvatar3DFallback === 'function') {
+      window.paintAvatar3DFallback(canvas)
+        .then(showAvatar)
         .catch(fallbackLetter);
     } else {
       fallbackLetter();
     }
   };
 
-  const paintSkin = () => {
-    if (!acc || (acc.type !== 'microsoft' && acc.type !== 'yggdrasil')) {
-      useDefault();
-      return;
-    }
-    fetch('/api/skin', { cache: 'no-cache' })
-      .then((res) => {
-        if (res.status === 204 || !res.ok) throw new Error('no skin');
-        return res.blob();
-      })
-      .then((blob) => {
+  // 头像和主页 3D 用同一套 skinview3d 模型，离屏渲染头部正脸。
+  // 不经过 face2d 的 8×8 皮肤裁切。
+  const paintSkin3D = async () => {
+    let source = '';
+    let objectUrl = '';
+    try {
+      if (acc && (acc.type === 'microsoft' || acc.type === 'yggdrasil')) {
+        const res = await fetch('/api/skin', { cache: 'no-cache' });
+        if (res.ok && res.status !== 204) {
+          objectUrl = URL.createObjectURL(await res.blob());
+          if (avatarObjectUrl) URL.revokeObjectURL(avatarObjectUrl);
+          avatarObjectUrl = objectUrl;
+          source = objectUrl;
+        }
+      }
+      if (mySeq !== avatarSeq) return;
+      if (typeof window.paintAvatar3D === 'function') {
+        await window.paintAvatar3D(canvas, source);
         if (mySeq !== avatarSeq) return;
-        const url = URL.createObjectURL(blob);
-        if (avatarObjectUrl) URL.revokeObjectURL(avatarObjectUrl);
-        avatarObjectUrl = url;
-        const img = new Image();
-        img.onload = () => {
-          if (mySeq !== avatarSeq) return;
-          paintFace(canvas, img, { width: 64, height: 64 });
-          canvas.hidden = false;
-          letter.hidden = true;
-        };
-        img.onerror = useDefault;
-        img.src = url;
-      })
-      .catch(useDefault);
+        showAvatar();
+      } else {
+        fallbackStatic();
+      }
+    } catch {
+      fallbackStatic();
+    } finally {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      if (avatarObjectUrl === objectUrl) avatarObjectUrl = null;
+    }
   };
 
   if (!acc) {
-    useDefault();
+    paintSkin3D();
     return;
   }
 
@@ -4125,7 +4130,7 @@ function paintAccountAvatar(acc) {
     .then((data) => {
       if (mySeq !== avatarSeq) return;
       if (!data?.avatar) {
-        paintSkin();
+        paintSkin3D();
         return;
       }
       const img = new Image();
@@ -4135,10 +4140,10 @@ function paintAccountAvatar(acc) {
         canvas.hidden = false;
         letter.hidden = true;
       };
-      img.onerror = paintSkin;
+      img.onerror = paintSkin3D;
       img.src = data.avatar;
     })
-    .catch(paintSkin);
+    .catch(paintSkin3D);
 }
 
 /* 三个图标能点不能点，按当前账号情况定 */
