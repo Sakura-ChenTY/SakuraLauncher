@@ -35,11 +35,8 @@
   let capeSeq = 0;
   let capeAuthExpired = false;
   let pointerInside = false;
-  let lastPointerAt = 0;
   let targetYaw = 0;
   let targetPitch = 0;
-  let yaw = 0;
-  let pitch = 0;
   let headYaw = 0;
   let headPitch = 0;
   let lastFrame = performance.now();
@@ -263,28 +260,15 @@
     const now = performance.now();
     const dt = Math.min(0.05, Math.max(0.001, (now - lastFrame) / 1000));
     lastFrame = now;
-    const idle = !pointerInside || Date.now() - lastPointerAt > 3000;
-    const ty = idle ? 0 : targetYaw;
-    const tp = idle ? 0 : targetPitch;
-    const k = 1 - Math.exp(-8 * dt);
-    yaw += (ty - yaw) * k;
-    pitch += (tp - pitch) * k;
 
-    const distance = 54;
-    const cx = Math.sin(yaw) * Math.cos(pitch) * distance;
-    const cy = 14 + Math.sin(pitch) * distance;
-    const cz = Math.cos(yaw) * Math.cos(pitch) * distance;
-    viewer.camera.position.set(cx, cy, cz);
-    viewer.camera.lookAt(0, 12, 0);
-
-    // 只动头：鼠标在舞台内时轻轻跟随，待机时给很小的呼吸式摆动。
-    // 不设置 viewer.animation，四肢和躯干保持默认站姿。
+    // 视角固定正对人物；只有头部按鼠标指针方向转。
     const head = viewer.playerObject?.skin?.head;
     if (head) {
+      const idle = !pointerInside;
       const idleYaw = Math.sin(now * 0.0011) * 0.035;
       const idlePitch = Math.sin(now * 0.0017) * 0.018;
-      const targetHeadYaw = idle ? idleYaw : targetYaw * 0.7;
-      const targetHeadPitch = idle ? idlePitch : targetPitch * 0.7;
+      const targetHeadYaw = idle ? idleYaw : targetYaw;
+      const targetHeadPitch = idle ? idlePitch : targetPitch;
       const hk = 1 - Math.exp(-7 * dt);
       headYaw += (targetHeadYaw - headYaw) * hk;
       headPitch += (targetHeadPitch - headPitch) * hk;
@@ -295,17 +279,18 @@
   }
 
   function bindPointer() {
-    stage.addEventListener('pointermove', (e) => {
+    // 指针在屏幕任何位置：相对人物画布中心算方向，头只转有限角度。
+    window.addEventListener('pointermove', (e) => {
       if (!viewer) return;
-      const r = stage.getBoundingClientRect();
-      const mx = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
-      const my = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
-      targetYaw = (mx - 0.5) * 0.6;
-      targetPitch = (0.5 - my) * 0.32;
+      const r = canvas.getBoundingClientRect();
+      const nx = (e.clientX - (r.left + r.width / 2)) / Math.max(1, window.innerWidth / 2);
+      const ny = (e.clientY - (r.top + r.height / 2)) / Math.max(1, window.innerHeight / 2);
+      targetYaw = Math.max(-1, Math.min(1, nx)) * 0.55;
+      targetPitch = Math.max(-1, Math.min(1, ny)) * 0.30;
       pointerInside = true;
-      lastPointerAt = Date.now();
     });
-    stage.addEventListener('pointerleave', () => {
+    window.addEventListener('pointerout', (e) => {
+      if (e.relatedTarget) return;
       pointerInside = false;
       targetYaw = 0;
       targetPitch = 0;
