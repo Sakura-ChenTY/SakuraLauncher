@@ -3756,7 +3756,7 @@ function applySettingsToForm(s) {
   if ($('setAutoDiagnostic')) $('setAutoDiagnostic').checked = s.autoDiagnostic !== false;
   if ($('roomMemory')) $('roomMemory').value = String(Number(s.roomMemoryMb) > 0 ? s.roomMemoryMb : 2048);
   syncMemoryMode(false);
-  $('setConcurrency').value = s.concurrency ?? 16;
+  $('setConcurrency').value = s.concurrency ?? 64;
   $('setDownloadSource').value = s.downloadSource ?? (s.preferMirror ? 'bmclapi' : 'auto');
   $('setJavaMode').value = s.javaMode === 'auto' ? 'auto' : 'external';
   $('setIsolated').value = s.isolated ?? 'auto';

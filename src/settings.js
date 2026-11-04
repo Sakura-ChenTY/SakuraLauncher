@@ -35,7 +35,7 @@ export const DEFAULTS = {
   //   external = 只用外部 Java，缺了就报错提示用户自己装（体积最小）
   //   auto     = 缺了就自动下载对应版本的 JRE（开箱即用，但多占 ~180MB/版本）
   javaMode: 'auto',
-  concurrency: 16,
+  concurrency: 64,
   downloadSource: 'auto', // auto | official | bmclapi
   preferMirror: false, // 旧字段，仅为兼容老 settings.json，保存时与 downloadSource 同步
   isolated: 'on', // auto | on | off —— 默认总是隔离，每个实例独立存档与 mod
@@ -119,8 +119,8 @@ export function normalize(raw = {}, base = DEFAULTS) {
   else if (raw.javaMode !== undefined) notes.push('javaMode 只能是 external / auto，已保留原值');
 
   const n = Number(raw.concurrency);
-  if (Number.isFinite(n) && n >= 1 && n <= 64) out.concurrency = Math.floor(n);
-  else if (raw.concurrency !== undefined) notes.push('并发数需在 1-64，已保留原值');
+  if (Number.isFinite(n) && n >= 1 && n <= 256) out.concurrency = Math.floor(n);
+  else if (raw.concurrency !== undefined) notes.push('并发数需在 1-256，已保留原值');
 
   // ---- 下载源 ----
   // 新字段 downloadSource 为准；旧字段 preferMirror 仅在未提供新字段时用来推断

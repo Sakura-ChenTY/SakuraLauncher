@@ -16,8 +16,8 @@ import http from 'node:http';
 import { candidateUrls } from './sources.js';
 
 const agents = {
-  'https:': new https.Agent({ keepAlive: true, maxSockets: 32 }),
-  'http:': new http.Agent({ keepAlive: true, maxSockets: 32 }),
+  'https:': new https.Agent({ keepAlive: true, maxSockets: 256 }),
+  'http:': new http.Agent({ keepAlive: true, maxSockets: 256 }),
 };
 
 /** Optional sink for download diagnostics; the server points this at its log. */
