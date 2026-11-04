@@ -203,6 +203,10 @@ export async function createTunnel(provider, { name, localPort }) {
   if (!/^[\w.-]{1,32}$/.test(tunnelName)) {
     throw new Error('隧道名只能用字母/数字/下划线/点/横线，最多 32 位');
   }
+  const wantedPort = Number(localPort);
+  if (!(wantedPort > 0 && wantedPort < 65536)) {
+    throw new Error('缺少真实本地监听端口，已拒绝创建隧道（不会回退 25565）');
+  }
   const data = await fetchJson(`${SAKURA}/tunnels`, {
     token,
     method: 'POST',
@@ -211,7 +215,7 @@ export async function createTunnel(provider, { name, localPort }) {
       type: 'tcp',
       node: node.id,
       local_ip: '127.0.0.1',
-      local_port: Number(localPort) || 25565,
+      local_port: wantedPort,
     },
   });
   tunnelCache.sakura = null;
@@ -610,6 +614,10 @@ async function ensureGenericFrpc() {
 function startCustom(localPort) {
   const cfg = readCustomConfig();
   if (!cfg) throw new Error('先保存自定义 frps 配置');
+  const wantedPort = Number(localPort);
+  if (!(wantedPort > 0 && wantedPort < 65536)) {
+    throw new Error('缺少真实本地监听端口，已拒绝启动自定义隧道（不会回退 25565）');
+  }
   stopOtherProviders('custom');
   return (async () => {
     const exe = await ensureGenericFrpc();
@@ -625,7 +633,7 @@ function startCustom(localPort) {
       `[${cfg.name}]`,
       'type = tcp',
       'local_ip = 127.0.0.1',
-      `local_port = ${Number(localPort) || 25565}`,
+      `local_port = ${wantedPort}`,
       `remote_port = ${cfg.remotePort}`,
     ].join('\n');
     fs.writeFileSync(configPath, ini, { encoding: 'utf8', mode: 0o600 });

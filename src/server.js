@@ -67,7 +67,7 @@ import {
 } from './online.js';
 import { startRoom, stopRoom, getRoomState, setRoomFrp, failRoom, attachHostGame, onHostGameExit, getWorldSettings, saveWorldSettings } from './gameserver.js';
 import { readRecent, saveRecent, clearRecent, validateRecent } from './recent-play.js';
-import { resolveRoomPort } from './room-port.js';
+import { resolveRoomPort, waitForRoomPort } from './room-port.js';
 import { openPort as openUpnp, closePort as closeUpnp, mappingState as upnpState } from './upnp.js';
 import { installContent, listInstalled, removeContent, toggleContent } from './content.js';
 import { checkModUpdates, applyModUpdates } from './modupdate.js';
@@ -2990,12 +2990,12 @@ const server = http.createServer(async (req, res) => {
 
         let roomPortInfo;
         try {
-          roomPortInfo = resolveRoomPort({
+          roomPortInfo = await waitForRoomPort({
             gameDir: state.gameDir,
             versionId: body.versionId,
             serverDir: room.serverDir,
             roomLogs: room.logs,
-          });
+          }, 30000);
         } catch (e) {
           await stopRoom({ keepWorld: true, onLog: (line) => emit('room-log', { line }) });
           const failed = failRoom(`无法确定房间监听端口：${e.message}`);
@@ -3198,12 +3198,12 @@ const server = http.createServer(async (req, res) => {
           });
           let roomPortInfo;
           try {
-            roomPortInfo = resolveRoomPort({
+            roomPortInfo = await waitForRoomPort({
               gameDir: state.gameDir,
               versionId: recent.versionId,
               serverDir: room.serverDir,
               roomLogs: room.logs,
-            });
+            }, 30000);
           } catch (e) {
             await stopRoom({ keepWorld: true, onLog: (line) => emit('room-log', { line }) });
             const failed = failRoom(`无法确定房间监听端口：${e.message}`);
