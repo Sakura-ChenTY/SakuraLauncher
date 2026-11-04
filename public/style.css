@@ -499,6 +499,33 @@ main { flex: 1; overflow: hidden; position: relative; min-width: 0; }
 }
 .avatar-tools .hint { flex-basis: 100%; font-size: 10px; }
 .avatar-box { width: min(360px, 92vw); }
+.avatar-preview-box { width: min(700px, 94vw); }
+.avatar-preview-grid {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 26px;
+  flex-wrap: wrap;
+}
+.avatar-preview-grid > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+#avatarPreviewCrop,
+#avatarPreviewFinal {
+  display: block;
+  max-width: 100%;
+  background:
+    linear-gradient(45deg, rgba(255,255,255,.04) 25%, transparent 25%) 0 0/16px 16px,
+    linear-gradient(-45deg, rgba(255,255,255,.04) 25%, transparent 25%) 0 0/16px 16px,
+    var(--bg-3);
+  border-radius: 14px;
+  image-rendering: pixelated;
+}
+#avatarPreviewCrop { width: 256px; height: 256px; }
+#avatarPreviewFinal { width: 128px; height: 128px; }
 #avatarCropCanvas {
   width: 256px;
   height: 256px;

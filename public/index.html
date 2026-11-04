@@ -1503,6 +1503,29 @@
     </div>
   </div>
 
+  <!-- 头像裁切预览 -->
+  <div class="modal" id="avatarPreviewModal" hidden>
+    <div class="modal-box avatar-preview-box">
+      <div class="modal-head">
+        <h3>头像裁切预览</h3>
+        <button class="btn ghost" id="avatarPreviewClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="avatar-preview-grid">
+          <div>
+            <div class="field-note">主舞台裁切原图</div>
+            <canvas id="avatarPreviewCrop" width="256" height="256"></canvas>
+          </div>
+          <div>
+            <div class="field-note">最终 64×64</div>
+            <canvas id="avatarPreviewFinal" width="64" height="64"></canvas>
+          </div>
+        </div>
+        <div class="hint" id="avatarPreviewMeta"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- 披风列表 -->
   <div class="modal" id="capeModal" hidden>
     <div class="modal-box cape-box">

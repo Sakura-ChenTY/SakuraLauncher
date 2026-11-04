@@ -352,33 +352,104 @@
     }[c]));
   }
 
+  /** 把 head + 外层 hat 的包围盒八个角投影到主 canvas 的像素坐标 */
+  function projectHeadRect() {
+    if (!viewer || !canvas) return null;
+    const head = viewer.playerObject?.skin?.head;
+    if (!head) return null;
+
+    viewer.playerObject.updateMatrixWorld(true);
+    viewer.camera.updateMatrixWorld(true);
+    viewer.camera.updateProjectionMatrix();
+
+    // 只要 head 的 inner + outer（hat）。ears 也是 head 的子节点，
+    // 但不能算进头部包围盒，否则裁切框会被两侧耳朵撑宽、带进肩膀。
+    const meshes = [head.innerLayer, head.outerLayer].filter((o) => o?.isMesh && o.geometry);
+    if (!meshes.length) return null;
+
+    const w = canvas.width;
+    const h = canvas.height;
+    const v = head.position.clone();
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    for (const mesh of meshes) {
+      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+      const box = mesh.geometry.boundingBox;
+      if (!box) continue;
+      for (const x of [box.min.x, box.max.x]) {
+        for (const y of [box.min.y, box.max.y]) {
+          for (const z of [box.min.z, box.max.z]) {
+            v.set(x, y, z);
+            mesh.localToWorld(v);
+            v.project(viewer.camera);
+            const px = (v.x + 1) * 0.5 * w;
+            const py = (1 - v.y) * 0.5 * h;
+            if (px < minX) minX = px;
+            if (px > maxX) maxX = px;
+            if (py < minY) minY = py;
+            if (py > maxY) maxY = py;
+          }
+        }
+      }
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(minY)) return null;
+    return { minX, minY, maxX, maxY, width: w, height: h };
+  }
+
   /**
-   * 从主舞台实际渲染帧里裁头部区域。
-   * 这里不隐藏/重建任何部件：皮肤、hat、披风等只要落在裁切框里，
-   * 都按当前层级和颜色一起带走。
+   * 先把主舞台整帧复制成 DPR 全分辨率 PNG，再从这张图裁头部。
+   * 裁切框来自 head + hat 的八点投影，不再用固定比例猜。
    */
   async function captureStageHead() {
     if (!viewer || !canvas) return null;
     // 确保拿到的是最新的一帧，而不是上一轮 resize/皮肤切换前的画面。
     viewer.render();
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    viewer.render();
 
+    // 这是 devicePixelRatio 下的 canvas 真实尺寸，不先缩成 CSS 尺寸。
     const w = canvas.width;
     const h = canvas.height;
-    // 头部在主舞台偏上居中；按 canvas 尺寸换算，窗口缩放后自动重算。
-    const side = Math.round(Math.min(w, h) * 0.36);
-    const cx = Math.round(w * 0.5);
-    const cy = Math.round(h * 0.22);
-    const sx = Math.max(0, Math.min(w - side, Math.round(cx - side / 2)));
-    const sy = Math.max(0, Math.min(h - side, Math.round(cy - side / 2)));
+    const snapshot = document.createElement('canvas');
+    snapshot.width = w;
+    snapshot.height = h;
+    const snapCtx = snapshot.getContext('2d');
+    snapCtx.drawImage(canvas, 0, 0, w, h);
 
-    const out = document.createElement('canvas');
-    out.width = 256;
-    out.height = 256;
-    const ctx = out.getContext('2d');
-    ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(canvas, sx, sy, side, side, 0, 0, 256, 256);
-    return out.toDataURL('image/png');
+    const projected = projectHeadRect();
+    let sx;
+    let sy;
+    let side;
+    if (projected) {
+      const bar = Math.max(4, Math.max(projected.maxX - projected.minX, projected.maxY - projected.minY) * 0.07);
+      const cx = (projected.minX + projected.maxX) / 2;
+      const cy = (projected.minY + projected.maxY) / 2;
+      side = Math.ceil(Math.max(projected.maxX - projected.minX, projected.maxY - projected.minY) + bar * 2);
+      sx = Math.max(0, Math.min(w - side, Math.round(cx - side / 2)));
+      sy = Math.max(0, Math.min(h - side, Math.round(cy - side / 2)));
+    } else {
+      // 投影失败时只做保底，不参与正常路径。
+      side = Math.round(Math.min(w, h) * 0.36);
+      sx = Math.round((w - side) / 2);
+      sy = Math.round(h * 0.04);
+    }
+    if (side < 8) return null;
+
+    const crop = document.createElement('canvas');
+    crop.width = 256;
+    crop.height = 256;
+    const cropCtx = crop.getContext('2d');
+    cropCtx.imageSmoothingEnabled = true;
+    cropCtx.drawImage(snapshot, sx, sy, side, side, 0, 0, 256, 256);
+
+    return {
+      cropDataUrl: crop.toDataURL('image/png'),
+      fullDataUrl: snapshot.toDataURL('image/png'),
+      rect: { x: sx, y: sy, size: side, canvasWidth: w, canvasHeight: h },
+    };
   }
 
   function init() {

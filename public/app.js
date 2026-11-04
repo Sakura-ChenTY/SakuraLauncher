@@ -4094,8 +4094,9 @@ function paintAccountAvatar(acc) {
   const paintStageHead = async () => {
     try {
       if (typeof window.captureStageHead === 'function') {
-        const dataUrl = await window.captureStageHead();
+        const capture = await window.captureStageHead();
         if (mySeq !== avatarSeq) return;
+        const dataUrl = typeof capture === 'string' ? capture : capture?.cropDataUrl;
         if (dataUrl) {
           const img = new Image();
           img.onload = () => {
@@ -5378,6 +5379,61 @@ window.addEventListener('resize', () => {
 });
 
 /* ---------------- 账号自定义头像 ---------------- */
+async function openAvatarPreview() {
+  const modal = $('avatarPreviewModal');
+  const cropCanvas = $('avatarPreviewCrop');
+  const finalCanvas = $('avatarPreviewFinal');
+  const meta = $('avatarPreviewMeta');
+  if (!modal || !cropCanvas || !finalCanvas) return;
+  modal.hidden = false;
+  if (meta) meta.textContent = '正在从主舞台取帧…';
+
+  const draw = (src) => new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const cctx = cropCanvas.getContext('2d');
+      cctx.clearRect(0, 0, 256, 256);
+      cctx.imageSmoothingEnabled = true;
+      cctx.drawImage(img, 0, 0, 256, 256);
+      drawCustomAvatar(finalCanvas, img, 'rounded');
+      resolve();
+    };
+    img.onerror = reject;
+    img.src = src;
+  });
+
+  try {
+    const capture = typeof window.captureStageHead === 'function'
+      ? await window.captureStageHead()
+      : null;
+    const src = typeof capture === 'string' ? capture : capture?.cropDataUrl;
+    if (src) {
+      await draw(src);
+      if (meta) {
+        const r = capture?.rect;
+        meta.textContent = r
+          ? `主 canvas ${r.canvasWidth}×${r.canvasHeight}，裁切 ${r.size}×${r.size}（x ${r.x}, y ${r.y}）；最终圆角 64×64`
+          : '主舞台裁切；最终圆角 64×64';
+      }
+    } else {
+      await draw('/steve-avatar.png');
+      if (meta) meta.textContent = '主舞台不可用，显示 Steve 兜底';
+    }
+  } catch {
+    try { await draw('/steve-avatar.png'); } catch { /* ignore */ }
+    if (meta) meta.textContent = '裁切预览失败，显示 Steve 兜底';
+  }
+}
+
+$('accountAvatar')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  openAvatarPreview();
+});
+$('avatarPreviewClose')?.addEventListener('click', () => { $('avatarPreviewModal').hidden = true; });
+$('avatarPreviewModal')?.addEventListener('click', (e) => {
+  if (e.target === $('avatarPreviewModal')) $('avatarPreviewModal').hidden = true;
+});
+
 let avatarCropImage = null;
 let avatarCropShape = 'circle';
 let avatarCropZoom = 1;
