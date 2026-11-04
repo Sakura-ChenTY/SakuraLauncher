@@ -18,10 +18,14 @@
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { CACHE_DIR, APP_ROOT } from './paths.js';
+import { msEnsureFresh } from './auth.js';
 
 const SKIN_DIR = path.join(CACHE_DIR, 'skins');
 const CUSTOM_DIR = path.join(CACHE_DIR, 'skins-custom');
+const AVATAR_DIR = path.join(CACHE_DIR, 'avatars');
+export const SKIN_INBOX_DIR = path.join(CUSTOM_DIR, 'inbox');
 const MOJANG_SESSION = 'https://sessionserver.mojang.com/session/minecraft/profile/';
 
 /** 官方 18 套默认皮肤（9 个角色 x slim/wide），直接从客户端 jar 抽出，不是手画 */
@@ -287,4 +291,216 @@ export async function hasCustomSkin(uuid) {
   } catch {
     return false;
   }
+}
+
+/* ---------------- 披风 ---------------- */
+
+export class AuthExpiredError extends Error {
+  constructor(message = '登录已过期，请重新登录') {
+    super(message);
+    this.name = 'AuthExpiredError';
+    this.authExpired = true;
+  }
+}
+
+function isPng(buf) {
+  return Boolean(buf && buf.length > 100 && buf.readUInt32BE(0) === 0x89504e47);
+}
+
+/** 取当前账号公开 profile 里正在显示的披风 PNG。没有披风返回 null。 */
+export async function getCape(account) {
+  if (!account?.uuid) return null;
+  if (account.type !== 'microsoft' && account.type !== 'yggdrasil') return null;
+  const meta = await fetchTextureMeta(
+    account.uuid,
+    account.type === 'yggdrasil' ? account.server : null
+  );
+  if (!meta?.capeUrl) return null;
+  return download(meta.capeUrl);
+}
+
+/**
+ * 微软账号的完整披风列表。
+ * 返回 { listable, capes:[{id, alias, state, url}], account? }
+ * account 是刷新后的账号（调用方需要时落盘）。
+ */
+export async function getCapeList(account) {
+  if (!account) return { listable: false, capes: [], reason: '先登录账号' };
+
+  if (account.type !== 'microsoft') {
+    const png = await getCape(account);
+    return {
+      listable: false,
+      capes: png
+        ? [{ id: null, alias: '当前披风', state: 'ACTIVE', url: '/api/cape' }]
+        : [],
+      reason: account.type === 'yggdrasil'
+        ? '第三方认证服务器的标准接口不提供可切换披风列表'
+        : '离线账号没有官方披风',
+    };
+  }
+
+  let fresh;
+  try {
+    fresh = await msEnsureFresh(account);
+  } catch {
+    throw new AuthExpiredError();
+  }
+
+  let res;
+  try {
+    res = await fetch('https://api.minecraftservices.com/minecraft/profile', {
+      headers: {
+        Authorization: `Bearer ${fresh.accessToken}`,
+        'User-Agent': 'mclauncher/0.1',
+      },
+      signal: AbortSignal.timeout(12000),
+    });
+  } catch {
+    throw new Error('连不上微软档案服务器');
+  }
+  if (res.status === 401 || res.status === 403) throw new AuthExpiredError();
+  if (!res.ok) throw new Error(`读取披风列表失败（HTTP ${res.status}）`);
+
+  let json;
+  try {
+    json = await res.json();
+  } catch {
+    throw new Error('微软档案返回了无法解析的数据');
+  }
+
+  const capes = (Array.isArray(json.capes) ? json.capes : [])
+    .filter((c) => c && c.url)
+    .map((c) => ({
+      id: String(c.id ?? ''),
+      alias: String(c.alias || c.id || '披风'),
+      state: c.state === 'ACTIVE' ? 'ACTIVE' : 'INACTIVE',
+      url: String(c.url).replace(/^http:\/\//i, 'https://'),
+    }));
+
+  return { listable: true, capes, account: fresh };
+}
+
+/** 切换微软账号当前披风。返回刷新后的账号。 */
+export async function setActiveCape(account, capeId) {
+  if (!account?.uuid) throw new Error('还没有选中的账号');
+  if (account.type !== 'microsoft') throw new Error('只有微软正版账号支持切换披风');
+  if (!capeId) throw new Error('缺少 capeId');
+
+  let fresh;
+  try {
+    fresh = await msEnsureFresh(account);
+  } catch {
+    throw new AuthExpiredError();
+  }
+
+  let res;
+  try {
+    res = await fetch('https://api.minecraftservices.com/minecraft/profile/capes/active', {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${fresh.accessToken}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'mclauncher/0.1',
+      },
+      body: JSON.stringify({ capeId }),
+      signal: AbortSignal.timeout(12000),
+    });
+  } catch {
+    throw new Error('连不上微软披风服务器');
+  }
+  if (res.status === 401 || res.status === 403) throw new AuthExpiredError();
+  if (!res.ok) throw new Error(`切换披风失败（HTTP ${res.status}）`);
+  return fresh;
+}
+
+/* ---------------- 账号自定义头像 ---------------- */
+
+function avatarKey(account) {
+  if (!account?.uuid) return null;
+  return crypto.createHash('sha1')
+    .update(`${account.type || 'offline'}:${String(account.uuid).toLowerCase()}`)
+    .digest('hex');
+}
+
+function avatarPath(account) {
+  const key = avatarKey(account);
+  return key ? path.join(AVATAR_DIR, `${key}.png`) : null;
+}
+
+/** 读自定义头像；返回 { png, shape } 或 null */
+export async function getCustomAvatar(account) {
+  const p = avatarPath(account);
+  if (!p) return null;
+  try {
+    const png = await fsp.readFile(p);
+    if (!isPng(png)) return null;
+    let shape = 'circle';
+    try {
+      const meta = JSON.parse(await fsp.readFile(p.replace(/\.png$/, '.json'), 'utf8'));
+      if (meta.shape === 'rounded') shape = 'rounded';
+    } catch {
+      /* 没元数据就按圆形 */
+    }
+    return { png, shape };
+  } catch {
+    return null;
+  }
+}
+
+export async function saveCustomAvatar(account, buf, shape = 'circle') {
+  const p = avatarPath(account);
+  if (!p) throw new Error('账号没有 uuid，不能保存头像');
+  if (!isPng(buf) || buf.length > 2 * 1024 * 1024) throw new Error('头像必须是 2MB 以内的 PNG');
+  await fsp.mkdir(AVATAR_DIR, { recursive: true });
+  await fsp.writeFile(p, buf);
+  await fsp.writeFile(
+    p.replace(/\.png$/, '.json'),
+    JSON.stringify({ shape: shape === 'rounded' ? 'rounded' : 'circle' }, null, 2),
+    'utf8'
+  );
+  return p;
+}
+
+export async function clearCustomAvatar(account) {
+  const p = avatarPath(account);
+  if (!p) return;
+  await fsp.rm(p, { force: true });
+  await fsp.rm(p.replace(/\.png$/, '.json'), { force: true });
+}
+
+/* ---------------- 本地皮肤文件夹 ---------------- */
+
+function normUuidOrNull(uuid) {
+  const id = String(uuid ?? '').replace(/-/g, '').toLowerCase();
+  return /^[0-9a-f]{32}$/.test(id) ? id : null;
+}
+
+export function skinInboxDir(account) {
+  const id = normUuidOrNull(account?.uuid);
+  return id ? path.join(SKIN_INBOX_DIR, id) : null;
+}
+
+export async function ensureSkinInbox(account) {
+  const dir = skinInboxDir(account);
+  if (!dir) throw new Error('账号 uuid 不合法');
+  await fsp.mkdir(dir, { recursive: true });
+  return dir;
+}
+
+/** 把皮肤文件夹里的 skin.png 导入成当前账号的自定义皮肤 */
+export async function importSkinFromInbox(account) {
+  const dir = skinInboxDir(account);
+  if (!dir) return false;
+  const file = path.join(dir, 'skin.png');
+  let buf;
+  try {
+    buf = await fsp.readFile(file);
+  } catch {
+    return false;
+  }
+  if (!isPng(buf)) throw new Error('skin.png 不是有效的 PNG');
+  await saveCustomSkin(account.uuid, buf, 'classic');
+  await clearSkinCache(account.uuid);
+  return true;
 }

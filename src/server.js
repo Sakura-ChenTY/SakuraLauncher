@@ -97,7 +97,25 @@ import {
   startTracking,
 } from './tracker.js';
 import { scanJavas } from './java.js';
-import { getSkin, clearSkinCache, saveCustomSkin, clearCustomSkin, hasCustomSkin, defaultSkinFor, readDefaultSkin } from './skin.js';
+import {
+  getSkin,
+  clearSkinCache,
+  saveCustomSkin,
+  clearCustomSkin,
+  hasCustomSkin,
+  defaultSkinFor,
+  readDefaultSkin,
+  getCape,
+  getCapeList,
+  setActiveCape,
+  AuthExpiredError,
+  getCustomAvatar,
+  saveCustomAvatar,
+  clearCustomAvatar,
+  ensureSkinInbox,
+  importSkinFromInbox,
+  SKIN_INBOX_DIR,
+} from './skin.js';
 import { loadPlugins, savePlugin, deletePlugin, togglePlugin, runPluginCode } from './plugins.js';
 import { JAVA_SCAN_CACHE } from './paths.js';
 import { HOME_DIR } from './paths.js';
@@ -2126,6 +2144,138 @@ const server = http.createServer(async (req, res) => {
       if (!acc) return json(res, 200, { account: null, custom: false });
       const custom = await hasCustomSkin(acc.uuid);
       return json(res, 200, { account: acc.name, custom, type: acc.type });
+    }
+
+    /* 打开当前账号的皮肤投放文件夹；把 skin.png 放进去后 watcher 自动导入 */
+    if (p === '/api/accounts/skin/open-folder' && req.method === 'POST') {
+      const acc = await currentAccount();
+      if (!acc) return json(res, 400, { error: '还没有选中的账号' });
+      const dir = await ensureSkinInbox(acc);
+      try {
+        const child = spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore' });
+        child.unref();
+      } catch {
+        return json(res, 500, { error: '打开皮肤文件夹失败' });
+      }
+      return json(res, 200, { ok: true, dir });
+    }
+
+    if (p === '/api/accounts/skin/import-folder' && req.method === 'POST') {
+      const acc = await currentAccount();
+      if (!acc) return json(res, 400, { error: '还没有选中的账号' });
+      const changed = await importSkinFromInbox(acc);
+      if (!changed) return json(res, 404, { error: '文件夹里没有 skin.png' });
+      emit('skin-changed', { account: acc.name });
+      pushLog(`皮肤文件夹导入：${acc.name}`);
+      return json(res, 200, { ok: true, account: acc.name });
+    }
+
+    /* 账号自定义头像：GET 返回 data URL + shape，未设置返回 204 */
+    if (p === '/api/accounts/avatar' && req.method === 'GET') {
+      const acc = await currentAccount();
+      if (!acc) { res.writeHead(204).end(); return; }
+      const avatar = await getCustomAvatar(acc);
+      if (!avatar) { res.writeHead(204).end(); return; }
+      return json(res, 200, {
+        avatar: `data:image/png;base64,${avatar.png.toString('base64')}`,
+        shape: avatar.shape,
+      });
+    }
+
+    if (p === '/api/accounts/avatar' && req.method === 'POST') {
+      const acc = await currentAccount();
+      if (!acc) return json(res, 400, { error: '还没有选中的账号' });
+      const body = await readBody(req);
+      const raw = String(body.data ?? '');
+      const b64 = raw.includes(',') ? raw.slice(raw.indexOf(',') + 1) : raw;
+      let buf;
+      try { buf = Buffer.from(b64, 'base64'); } catch { return json(res, 400, { error: '头像数据解析失败' }); }
+      await saveCustomAvatar(acc, buf, body.shape === 'rounded' ? 'rounded' : 'circle');
+      emit('avatar-changed', { account: acc.name });
+      return json(res, 200, { ok: true, shape: body.shape === 'rounded' ? 'rounded' : 'circle' });
+    }
+
+    if (p === '/api/accounts/avatar' && req.method === 'DELETE') {
+      const acc = await currentAccount();
+      if (!acc) return json(res, 400, { error: '还没有选中的账号' });
+      await clearCustomAvatar(acc);
+      emit('avatar-changed', { account: acc.name });
+      return json(res, 200, { ok: true });
+    }
+
+    /* 披风：当前账号正在显示的官方披风 PNG */
+    if (p === '/api/cape' && req.method === 'GET') {
+      const acc = await currentAccount();
+      if (!acc) { res.writeHead(204).end(); return; }
+      try {
+        // 刷新走一次带鉴权的披风列表请求：令牌过期时必须明确报 401，
+        // 不能拿公开 session profile 的当前披风冒充“刷新成功”。
+        if (new URL(req.url, 'http://127.0.0.1').searchParams.has('refresh') && acc.type === 'microsoft') {
+          const list = await getCapeList(acc);
+          if (list.account) await upsertAccount(list.account);
+        }
+        const png = await getCape(acc);
+        if (!png) { res.writeHead(204).end(); return; }
+        res.writeHead(200, {
+          'Content-Type': 'image/png',
+          'Cache-Control': 'no-store',
+          'Content-Length': png.length,
+        });
+        res.end(png);
+      } catch (e) {
+        if (e instanceof AuthExpiredError) {
+          return json(res, 401, {
+            error: 'AUTH_EXPIRED',
+            message: '登录已过期，请重新登录',
+            action: 'login',
+          });
+        }
+        return json(res, 400, { error: e.message });
+      }
+      return;
+    }
+
+    /* 披风列表：微软返回完整拥有列表；Yggdrasil/离线返回不可切换和原因 */
+    if (p === '/api/capes' && req.method === 'GET') {
+      const acc = await currentAccount();
+      if (!acc) return json(res, 200, { listable: false, capes: [], reason: '先登录账号' });
+      try {
+        const data = await getCapeList(acc);
+        if (data.account) await upsertAccount(data.account);
+        const { account: _fresh, ...safe } = data;
+        return json(res, 200, safe);
+      } catch (e) {
+        if (e instanceof AuthExpiredError) {
+          return json(res, 401, {
+            error: 'AUTH_EXPIRED',
+            message: '登录已过期，请重新登录',
+            action: 'login',
+          });
+        }
+        return json(res, 400, { error: e.message });
+      }
+    }
+
+    if (p === '/api/capes/active' && req.method === 'POST') {
+      const acc = await currentAccount();
+      if (!acc) return json(res, 400, { error: '还没有选中的账号' });
+      const body = await readBody(req);
+      try {
+        const fresh = await setActiveCape(acc, String(body.capeId ?? ''));
+        await upsertAccount(fresh);
+        pushLog(`披风切换：${acc.name} → ${body.capeId}`);
+        emit('cape-changed', { account: acc.name });
+        return json(res, 200, { ok: true });
+      } catch (e) {
+        if (e instanceof AuthExpiredError) {
+          return json(res, 401, {
+            error: 'AUTH_EXPIRED',
+            message: '登录已过期，请重新登录',
+            action: 'login',
+          });
+        }
+        return json(res, 400, { error: e.message });
+      }
     }
 
     /* 改名：只改本地显示名。
@@ -4636,9 +4786,38 @@ async function handleModpackInstall(body) {
 
   return { started: true };
 }
+let skinInboxWatcher = null;
+let skinInboxTimer = null;
+
+/** 监听本地皮肤投放文件夹；写完 500ms 后再导入，避开半截文件。 */
+function startSkinInboxWatcher() {
+  if (skinInboxWatcher) return;
+  try {
+    fs.mkdirSync(SKIN_INBOX_DIR, { recursive: true });
+    skinInboxWatcher = fs.watch(SKIN_INBOX_DIR, { recursive: true }, () => {
+      clearTimeout(skinInboxTimer);
+      skinInboxTimer = setTimeout(async () => {
+        try {
+          const acc = await currentAccount();
+          if (!acc) return;
+          if (!(await importSkinFromInbox(acc))) return;
+          emit('skin-changed', { account: acc.name });
+          pushLog(`皮肤文件夹已导入：${acc.name}`);
+        } catch (e) {
+          pushLog(`皮肤文件夹导入失败：${e.message}`);
+        }
+      }, 500);
+    });
+  } catch {
+    /* 文件夹监听失败不影响手动导入 */
+  }
+}
+
 export async function startServer({ port = 7801, host = '127.0.0.1', gameDir, firstRun = false } = {}) {
   if (gameDir) state.gameDir = gameDir;
   if (firstRun) state.forceFirstRun = true;
+
+  startSkinInboxWatcher();
 
   setDownloadLogger((line) => pushLog(line));
   setSourceChangeListener((snapshot) => {

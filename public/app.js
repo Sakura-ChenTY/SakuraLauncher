@@ -2979,6 +2979,19 @@ function connectEvents() {
         appendLog(`[下载源] ${msg.source === 'bmclapi' ? '镜像' : '官方'}${msg.manualOverride ? '（手动）' : '（自动）'}`);
         break;
 
+      case 'skin-changed':
+        paintAccountAvatar(state.accounts.find((a) => a.key === state.selectedAccount) ?? null);
+        if (typeof window.refreshSkin === 'function') window.refreshSkin();
+        break;
+
+      case 'avatar-changed':
+        paintAccountAvatar(state.accounts.find((a) => a.key === state.selectedAccount) ?? null);
+        break;
+
+      case 'cape-changed':
+        if (typeof window.refreshCape === 'function') window.refreshCape();
+        break;
+
       case 'install-stage':
         updateProgress({ stage: msg.stage, message: msg.message });
         break;
@@ -4022,12 +4035,42 @@ function renderAccountCard() {
 let avatarSeq = 0;
 let avatarObjectUrl = null;
 
+function drawCustomAvatar(canvas, img, shape = 'circle') {
+  const w = canvas.width;
+  const h = canvas.height;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+  ctx.save();
+  ctx.beginPath();
+  if (shape === 'rounded') {
+    const r = w * 0.22;
+    ctx.moveTo(r, 0);
+    ctx.arcTo(w, 0, w, h, r);
+    ctx.arcTo(w, h, 0, h, r);
+    ctx.arcTo(0, h, 0, 0, r);
+    ctx.arcTo(0, 0, w, 0, r);
+  } else {
+    ctx.arc(w / 2, h / 2, Math.min(w, h) / 2, 0, Math.PI * 2);
+  }
+  ctx.closePath();
+  ctx.clip();
+  ctx.drawImage(img, 0, 0, w, h);
+  ctx.restore();
+}
+
 function paintAccountAvatar(acc) {
   const canvas = $('accountAvatarCanvas');
   const letter = $('accountAvatarLetter');
   if (!canvas || !letter) return;
 
   const mySeq = ++avatarSeq;
+
+  const fallbackLetter = () => {
+    if (mySeq !== avatarSeq) return;
+    canvas.hidden = true;
+    letter.hidden = false;
+    letter.textContent = acc ? acc.name.slice(0, 1) : '?';
+  };
 
   const useDefault = () => {
     if (mySeq !== avatarSeq) return;
@@ -4044,49 +4087,58 @@ function paintAccountAvatar(acc) {
     }
   };
 
-  // 只有连默认贴图都加载失败才退首字母（基本不会发生）
-  const fallbackLetter = () => {
-    if (mySeq !== avatarSeq) return;
-    canvas.hidden = true;
-    letter.hidden = false;
-    letter.textContent = acc ? acc.name.slice(0, 1) : '?';
+  const paintSkin = () => {
+    if (!acc || (acc.type !== 'microsoft' && acc.type !== 'yggdrasil')) {
+      useDefault();
+      return;
+    }
+    fetch('/api/skin', { cache: 'no-cache' })
+      .then((res) => {
+        if (res.status === 204 || !res.ok) throw new Error('no skin');
+        return res.blob();
+      })
+      .then((blob) => {
+        if (mySeq !== avatarSeq) return;
+        const url = URL.createObjectURL(blob);
+        if (avatarObjectUrl) URL.revokeObjectURL(avatarObjectUrl);
+        avatarObjectUrl = url;
+        const img = new Image();
+        img.onload = () => {
+          if (mySeq !== avatarSeq) return;
+          paintFace(canvas, img, { width: 64, height: 64 });
+          canvas.hidden = false;
+          letter.hidden = true;
+        };
+        img.onerror = useDefault;
+        img.src = url;
+      })
+      .catch(useDefault);
   };
 
-  // 未登录：没有账号，直接给默认脸
   if (!acc) {
     useDefault();
     return;
   }
 
-  // 离线账号本来就没有官方皮肤，连请求都省了
-  if (acc.type !== 'microsoft' && acc.type !== 'yggdrasil') {
-    useDefault();
-    return;
-  }
-
-  fetch('/api/skin', { cache: 'no-cache' })
-    .then((res) => {
-      if (res.status === 204 || !res.ok) throw new Error('no skin');
-      return res.blob();
-    })
-    .then((blob) => {
+  fetch('/api/accounts/avatar', { cache: 'no-cache' })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((data) => {
       if (mySeq !== avatarSeq) return;
-      const url = URL.createObjectURL(blob);
-      if (avatarObjectUrl) URL.revokeObjectURL(avatarObjectUrl);
-      avatarObjectUrl = url;
-
+      if (!data?.avatar) {
+        paintSkin();
+        return;
+      }
       const img = new Image();
       img.onload = () => {
         if (mySeq !== avatarSeq) return;
-        // 和主页一致：裁 8x8 脸 + 帽子层，最近邻放大
-        paintFace(canvas, img, { width: 64, height: 64 });
+        drawCustomAvatar(canvas, img, data.shape);
         canvas.hidden = false;
         letter.hidden = true;
       };
-      img.onerror = useDefault;
-      img.src = url;
+      img.onerror = paintSkin;
+      img.src = data.avatar;
     })
-    .catch(useDefault);
+    .catch(paintSkin);
 }
 
 /* 三个图标能点不能点，按当前账号情况定 */
@@ -5312,6 +5364,132 @@ $('setMemMaxRange').addEventListener('input', (e) => {
 });
 // 透明度滑块：拖的时候实时预览，不用等点保存。
 $('setGlass').addEventListener('input', (e) => applyGlassAlpha(Number(e.target.value)));
+
+/* ---------------- 账号自定义头像 ---------------- */
+let avatarCropImage = null;
+let avatarCropShape = 'circle';
+let avatarCropZoom = 1;
+
+function drawAvatarCrop(preview = true) {
+  const canvas = $('avatarCropCanvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, 256, 256);
+  if (!avatarCropImage) return;
+  const sw = Math.min(avatarCropImage.width, avatarCropImage.height) / avatarCropZoom;
+  const sx = (avatarCropImage.width - sw) / 2;
+  const sy = (avatarCropImage.height - sw) / 2;
+  ctx.save();
+  if (preview) {
+    ctx.beginPath();
+    if (avatarCropShape === 'rounded') {
+      const r = 48;
+      ctx.moveTo(r, 0);
+      ctx.arcTo(256, 0, 256, 256, r);
+      ctx.arcTo(256, 256, 0, 256, r);
+      ctx.arcTo(0, 256, 0, 0, r);
+      ctx.arcTo(0, 0, 256, 0, r);
+    } else {
+      ctx.arc(128, 128, 128, 0, Math.PI * 2);
+    }
+    ctx.closePath();
+    ctx.clip();
+  }
+  ctx.drawImage(avatarCropImage, sx, sy, sw, sw, 0, 0, 256, 256);
+  ctx.restore();
+}
+
+function avatarCropDataUrl() {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 256;
+  const ctx = c.getContext('2d');
+  const sw = Math.min(avatarCropImage.width, avatarCropImage.height) / avatarCropZoom;
+  const sx = (avatarCropImage.width - sw) / 2;
+  const sy = (avatarCropImage.height - sw) / 2;
+  ctx.drawImage(avatarCropImage, sx, sy, sw, sw, 0, 0, 256, 256);
+  return c.toDataURL('image/png');
+}
+
+function openAvatarCrop(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      avatarCropImage = img;
+      avatarCropZoom = 1;
+      avatarCropShape = 'circle';
+      if ($('avatarZoom')) $('avatarZoom').value = '1';
+      document.querySelectorAll('[data-avatar-shape]').forEach((b) => {
+        b.classList.toggle('active', b.dataset.avatarShape === 'circle');
+      });
+      drawAvatarCrop(true);
+      if ($('avatarModal')) $('avatarModal').hidden = false;
+    };
+    img.src = String(reader.result);
+  };
+  reader.readAsDataURL(file);
+}
+
+$('avatarPick')?.addEventListener('click', () => $('avatarFile')?.click());
+$('avatarFile')?.addEventListener('change', (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  openAvatarCrop(file);
+});
+$('avatarZoom')?.addEventListener('input', (e) => {
+  avatarCropZoom = Number(e.target.value) || 1;
+  drawAvatarCrop(true);
+});
+document.querySelectorAll('[data-avatar-shape]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    avatarCropShape = btn.dataset.avatarShape === 'rounded' ? 'rounded' : 'circle';
+    document.querySelectorAll('[data-avatar-shape]').forEach((b) => {
+      b.classList.toggle('active', b === btn);
+    });
+    drawAvatarCrop(true);
+  });
+});
+$('avatarClose')?.addEventListener('click', () => { $('avatarModal').hidden = true; });
+$('avatarCancel')?.addEventListener('click', () => { $('avatarModal').hidden = true; });
+$('avatarSave')?.addEventListener('click', async () => {
+  if (!avatarCropImage) return;
+  const btn = $('avatarSave');
+  btn.disabled = true;
+  try {
+    await api('/api/accounts/avatar', {
+      method: 'POST',
+      body: JSON.stringify({ data: avatarCropDataUrl(), shape: avatarCropShape }),
+    });
+    $('avatarModal').hidden = true;
+    paintAccountAvatar(state.accounts.find((a) => a.key === state.selectedAccount) ?? null);
+    toast('头像已保存');
+  } catch (e) {
+    $('avatarStatus').textContent = `保存失败：${e.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+$('avatarClear')?.addEventListener('click', async () => {
+  try {
+    await api('/api/accounts/avatar', { method: 'DELETE' });
+    paintAccountAvatar(state.accounts.find((a) => a.key === state.selectedAccount) ?? null);
+    toast('已恢复皮肤脸');
+  } catch (e) {
+    toast(`移除失败：${e.message}`, 'err');
+  }
+});
+async function openSkinFolder() {
+  try {
+    const r = await api('/api/accounts/skin/open-folder', { method: 'POST' });
+    toast(`已打开皮肤文件夹：${r.dir}`);
+  } catch (e) {
+    toast(`打开失败：${e.message}`, 'err');
+  }
+}
+$('openSkinFolder')?.addEventListener('click', openSkinFolder);
+$('openSkinFolderFromSkin')?.addEventListener('click', openSkinFolder);
 
 // 下载/安装页收起与展开。
 // 收起后底部那条还在，点它就能把整页叫回来（PCL 的习惯）。

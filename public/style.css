@@ -338,30 +338,54 @@ main { flex: 1; overflow: hidden; position: relative; min-width: 0; }
 .home {
   flex: 1;
   display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding-bottom: 72px;
+}
+.home-main {
+  width: min(1040px, 100%);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 224px;
+  gap: 20px;
+  align-items: center;
+}
+.home-stage {
+  display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  min-height: 0;
+  min-width: 0;
+  position: relative;
+}
+.home-actions {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+.home-actions .launch-btn {
+  width: 100%;
+  margin-top: 0;
 }
 
 .char-card {
-  width: 132px;
-  height: 132px;
+  width: 280px;
+  height: 360px;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   position: relative;
 }
 
-/* 正版皮肤 3D 画布：尺寸跟原来 SVG 小人一样，位置不跳 */
+/* 3D 皮肤画布：第一帧由 JS 先放 Steve，失败时才退回 SVG */
 .skin-canvas {
-  width: 132px;
-  height: 132px;
+  width: 280px;
+  height: 360px;
   display: block;
-  /* 像素风不要模糊，缩放时保持硬边 */
-  image-rendering: pixelated;
+  object-fit: contain;
   filter: drop-shadow(0 8px 18px rgba(0, 0, 0, .45));
 }
 
@@ -431,6 +455,99 @@ main { flex: 1; overflow: hidden; position: relative; min-width: 0; }
 .home .acc-act svg {
   width: 17px;
   height: 17px;
+}
+
+/* 3D 舞台右键菜单：只属于中间人物 */
+.cape-menu {
+  position: fixed;
+  z-index: 90;
+  min-width: 150px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg-2);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
+}
+.cape-menu button {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.cape-menu button:hover { background: var(--bg-3); }
+.cape-menu button:disabled { color: var(--text-dim); cursor: default; opacity: .7; }
+.cape-menu-hint {
+  padding: 5px 10px 3px;
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.avatar-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.avatar-tools .hint { flex-basis: 100%; font-size: 10px; }
+.avatar-box { width: min(360px, 92vw); }
+#avatarCropCanvas {
+  width: 256px;
+  height: 256px;
+  max-width: 100%;
+  display: block;
+  margin: 0 auto 12px;
+  background:
+    linear-gradient(45deg, rgba(255,255,255,.04) 25%, transparent 25%) 0 0/16px 16px,
+    linear-gradient(-45deg, rgba(255,255,255,.04) 25%, transparent 25%) 0 0/16px 16px,
+    var(--bg-3);
+  border-radius: 8px;
+  touch-action: none;
+}
+.avatar-shape-tabs { display: flex; gap: 6px; justify-content: center; }
+.avatar-shape-tabs .active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.cape-box { width: min(420px, 92vw); }
+.cape-list { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
+.cape-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.cape-item:hover { border-color: var(--accent); }
+.cape-item input { accent-color: var(--accent); }
+.cape-item.disabled { opacity: .5; cursor: default; }
+.cape-item small { margin-left: auto; color: var(--text-dim); }
+
+@media (min-width: 1200px) {
+  .home-main { grid-template-columns: minmax(0, 1fr) 248px; gap: 24px; }
+  .char-card, .skin-canvas { width: 320px; height: 400px; }
+}
+@media (max-width: 860px) {
+  .home { padding-bottom: 88px; }
+  .home-main { grid-template-columns: 1fr; gap: 14px; }
+  .home-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .home-actions .launch-btn { grid-column: 1 / -1; }
+  .home-actions .link-btn { margin-top: 0; }
+  .char-card, .skin-canvas { width: 220px; height: 300px; }
 }
 
 .launch-btn {
