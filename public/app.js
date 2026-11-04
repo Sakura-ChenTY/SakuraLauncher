@@ -4033,7 +4033,6 @@ function renderAccountCard() {
    保留像素硬边。拿不到皮肤（离线号/没登录/断网）就画官方史蒂夫的脸，
    不退成名字首字母 —— 首字母不像头像。 */
 let avatarSeq = 0;
-let avatarObjectUrl = null;
 
 function drawCustomAvatar(canvas, img, shape = 'circle') {
   const w = canvas.width;
@@ -4080,48 +4079,43 @@ function paintAccountAvatar(acc) {
 
   const fallbackStatic = () => {
     if (mySeq !== avatarSeq) return;
-    if (typeof window.paintAvatar3DFallback === 'function') {
-      window.paintAvatar3DFallback(canvas)
-        .then(showAvatar)
-        .catch(fallbackLetter);
-    } else {
-      fallbackLetter();
-    }
+    const img = new Image();
+    img.onload = () => {
+      if (mySeq !== avatarSeq) return;
+      drawCustomAvatar(canvas, img, 'rounded');
+      showAvatar();
+    };
+    img.onerror = fallbackLetter;
+    img.src = '/steve-avatar.png';
   };
 
-  // 头像和主页 3D 用同一套 skinview3d 模型，离屏渲染头部正脸。
-  // 不经过 face2d 的 8×8 皮肤裁切。
-  const paintSkin3D = async () => {
-    let source = '';
-    let objectUrl = '';
+  // 从主页 3D 舞台当前画面裁头部：皮肤、hat、披风等全部来自同一帧。
+  // 不另开离屏 viewer，也不再调用 PCL 的 8×8 裁脸代码。
+  const paintStageHead = async () => {
     try {
-      if (acc && (acc.type === 'microsoft' || acc.type === 'yggdrasil')) {
-        const res = await fetch('/api/skin', { cache: 'no-cache' });
-        if (res.ok && res.status !== 204) {
-          objectUrl = URL.createObjectURL(await res.blob());
-          if (avatarObjectUrl) URL.revokeObjectURL(avatarObjectUrl);
-          avatarObjectUrl = objectUrl;
-          source = objectUrl;
+      if (typeof window.captureStageHead === 'function') {
+        const dataUrl = await window.captureStageHead();
+        if (mySeq !== avatarSeq) return;
+        if (dataUrl) {
+          const img = new Image();
+          img.onload = () => {
+            if (mySeq !== avatarSeq) return;
+            drawCustomAvatar(canvas, img, 'rounded');
+            showAvatar();
+          };
+          img.onerror = fallbackStatic;
+          img.src = dataUrl;
+          return;
         }
       }
-      if (mySeq !== avatarSeq) return;
-      if (typeof window.paintAvatar3D === 'function') {
-        await window.paintAvatar3D(canvas, source);
-        if (mySeq !== avatarSeq) return;
-        showAvatar();
-      } else {
-        fallbackStatic();
-      }
+      fallbackStatic();
     } catch {
       fallbackStatic();
-    } finally {
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-      if (avatarObjectUrl === objectUrl) avatarObjectUrl = null;
     }
   };
 
   if (!acc) {
-    paintSkin3D();
+    paintStageHead();
     return;
   }
 
@@ -4130,7 +4124,7 @@ function paintAccountAvatar(acc) {
     .then((data) => {
       if (mySeq !== avatarSeq) return;
       if (!data?.avatar) {
-        paintSkin3D();
+        paintStageHead();
         return;
       }
       const img = new Image();
@@ -4140,10 +4134,10 @@ function paintAccountAvatar(acc) {
         canvas.hidden = false;
         letter.hidden = true;
       };
-      img.onerror = paintSkin3D;
+      img.onerror = paintStageHead;
       img.src = data.avatar;
     })
-    .catch(paintSkin3D);
+    .catch(paintStageHead);
 }
 
 /* 三个图标能点不能点，按当前账号情况定 */
@@ -5373,6 +5367,14 @@ $('setGlass').addEventListener('input', (e) => applyGlassAlpha(Number(e.target.v
 /* 3D 皮肤加载完成后再对齐一次左上头像，避免两边请求时序不同。 */
 window.addEventListener('skin3d:skin-updated', () => {
   paintAccountAvatar(state.accounts.find((a) => a.key === state.selectedAccount) ?? null);
+});
+
+let avatarResizeTimer = 0;
+window.addEventListener('resize', () => {
+  clearTimeout(avatarResizeTimer);
+  avatarResizeTimer = setTimeout(() => {
+    paintAccountAvatar(state.accounts.find((a) => a.key === state.selectedAccount) ?? null);
+  }, 150);
 });
 
 /* ---------------- 账号自定义头像 ---------------- */

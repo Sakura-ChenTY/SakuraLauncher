@@ -352,6 +352,35 @@
     }[c]));
   }
 
+  /**
+   * 从主舞台实际渲染帧里裁头部区域。
+   * 这里不隐藏/重建任何部件：皮肤、hat、披风等只要落在裁切框里，
+   * 都按当前层级和颜色一起带走。
+   */
+  async function captureStageHead() {
+    if (!viewer || !canvas) return null;
+    // 确保拿到的是最新的一帧，而不是上一轮 resize/皮肤切换前的画面。
+    viewer.render();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+    const w = canvas.width;
+    const h = canvas.height;
+    // 头部在主舞台偏上居中；按 canvas 尺寸换算，窗口缩放后自动重算。
+    const side = Math.round(Math.min(w, h) * 0.36);
+    const cx = Math.round(w * 0.5);
+    const cy = Math.round(h * 0.22);
+    const sx = Math.max(0, Math.min(w - side, Math.round(cx - side / 2)));
+    const sy = Math.max(0, Math.min(h - side, Math.round(cy - side / 2)));
+
+    const out = document.createElement('canvas');
+    out.width = 256;
+    out.height = 256;
+    const ctx = out.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(canvas, sx, sy, side, side, 0, 0, 256, 256);
+    return out.toDataURL('image/png');
+  }
+
   function init() {
     if (!createViewer()) return;
     loadSkin();
@@ -366,6 +395,7 @@
       refreshCape(false);
     };
     window.refreshCape = () => refreshCape(true);
+    window.captureStageHead = captureStageHead;
   }
 
   if (document.readyState === 'loading') {
