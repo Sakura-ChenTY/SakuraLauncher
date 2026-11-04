@@ -77,6 +77,22 @@ const AUTO_DWELL_MS = 8000;
 const AUTO_STALL_MS = 3000;
 const PROBE_BYTES = 1024 * 1024;
 const PROBE_TIMEOUT_MS = 3000;
+const STALL_TIMEOUT_MS = 30_000;
+
+function makeStallGuard(ctrl, label) {
+  let timer = null;
+  const arm = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (!ctrl.signal.aborted) ctrl.abort(new Error(`STALL_TIMEOUT:${label}`));
+    }, STALL_TIMEOUT_MS);
+  };
+  arm();
+  return {
+    reset: arm,
+    clear: () => clearTimeout(timer),
+  };
+}
 
 let sourceState = null;
 let sourceChangeListener = null;
@@ -648,16 +664,22 @@ async function downloadRanged(url, destPath, size, sha1, source) {
         throw new Error(`Range 起点不匹配（期望 ${seg.start}）`);
       }
       const out = fs.createWriteStream(seg.path, { flags: 'w' });
+      const stall = makeStallGuard(ctrl, `${target}#${seg.start}`);
       const meter = new Transform({
         transform(chunk, _enc, cb) {
           if (sourceState) {
             sourceState.windowBytes += chunk.length;
             sourceState.lastByteAt = Date.now();
           }
+          stall.reset();
           cb(null, chunk);
         },
       });
-      await pipeline(res, meter, out, { signal: ctrl.signal });
+      try {
+        await pipeline(res, meter, out, { signal: ctrl.signal });
+      } finally {
+        stall.clear();
+      }
     }));
 
     const out = fs.createWriteStream(partPath, { flags: 'w' });
@@ -856,17 +878,23 @@ export async function downloadFile(url, destPath, opts = {}) {
         }
 
         const out = fs.createWriteStream(partPath, { flags: append ? 'a' : 'w' });
+        const stall = makeStallGuard(ctrl, target);
         const meter = new Transform({
           transform(chunk, _enc, cb) {
             if (sourceState) {
               sourceState.windowBytes += chunk.length;
               sourceState.lastByteAt = Date.now();
             }
+            stall.reset();
             cb(null, chunk);
           },
         });
 
-        await pipeline(res, meter, out, { signal: ctrl.signal });
+        try {
+          await pipeline(res, meter, out, { signal: ctrl.signal });
+        } finally {
+          stall.clear();
+        }
 
         // 校验
         if (sha1) {
@@ -897,6 +925,11 @@ export async function downloadFile(url, destPath, opts = {}) {
         }
 
         lastErr = e;
+        const stalled = String(e?.message ?? '').includes('STALL_TIMEOUT');
+        if (stalled) {
+          if (sourceState) sourceState.lastTimeoutAt = Date.now();
+          logDownload(`[下载停滞] ${hostLabel(target)} 30 秒无字节增长，断开并换候选`);
+        }
         const status = Number(e?.statusCode || /^HTTP\s+(\d{3})\b/i.exec(String(e?.message ?? ''))?.[1] || 0);
         // 404 不是可重试错误：标记候选（镜像按前缀）并立刻换下一个候选。
         if (status === 404) {
