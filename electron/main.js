@@ -15,7 +15,7 @@
  *   transparent: true 让窗口外圈的 12px 留白真正透明 —— 壁纸是「外面的」，
  *   不是页面里画的一张图，看起来才像一块玻璃浮在桌面上。
  */
-import { app, BrowserWindow, ipcMain, shell, screen, clipboard, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, screen, clipboard, dialog, Tray, Menu, powerMonitor } from 'electron';
 import electronUpdater from 'electron-updater';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -384,6 +384,96 @@ function createWindow(port) {
   });
 }
 
+/* ---------- 托盘：显示定时清理的上次/下次时间 ---------- */
+let tray = null;
+let trayPoll = null;
+
+function memoryTime(ms) {
+  if (!ms) return '—';
+  return new Date(ms).toLocaleString('zh-CN', { hour12: false });
+}
+
+function memoryMbText(bytes) {
+  const mb = Number(bytes || 0) / 1024 / 1024;
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`;
+}
+
+async function readMemorySchedule(port) {
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/api/system/memory/schedule`, { cache: 'no-store' });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch {
+    return null;
+  }
+}
+
+function trayMenu(status) {
+  const last = status?.lastAt
+    ? `上次清理：${memoryTime(status.lastAt)}，释放 ${memoryMbText(status.lastReleased)}`
+    : '上次清理：还没有记录';
+  const next = status?.enabled
+    ? `下次清理：${memoryTime(status.nextAt)}${status.suspended ? '（系统休眠中，唤醒后重算）' : ''}`
+    : '定时清理：已关闭';
+  return Menu.buildFromTemplate([
+    { label: '显示主窗口', click: () => focusMainWindow() },
+    { type: 'separator' },
+    { label: last, enabled: false },
+    { label: next, enabled: false },
+    { type: 'separator' },
+    { label: '退出启动器', click: () => app.quit() },
+  ]);
+}
+
+async function refreshTray(port) {
+  if (!tray) return;
+  const status = await readMemorySchedule(port);
+  const last = status?.lastAt
+    ? `上次清理：${memoryTime(status.lastAt)}，释放 ${memoryMbText(status.lastReleased)}`
+    : '上次清理：还没有记录';
+  const next = status?.enabled
+    ? `下次：${memoryTime(status.nextAt)}`
+    : '下次：已关闭';
+  tray.setToolTip(`Sakura Launcher\n${last}\n${next}`);
+  tray.setContextMenu(trayMenu(status));
+}
+
+function createTray(port) {
+  if (tray) return;
+  try {
+    tray = new Tray(ICON_PATH);
+  } catch {
+    return;
+  }
+  tray.setToolTip('Sakura Launcher');
+  tray.on('click', () => focusMainWindow());
+  tray.on('right-click', async () => {
+    const status = await readMemorySchedule(port);
+    tray.popUpContextMenu(trayMenu(status));
+  });
+  refreshTray(port);
+  trayPoll = setInterval(() => refreshTray(port), 15_000);
+  trayPoll.unref?.();
+}
+
+async function notifyMemoryPower(port, action) {
+  try {
+    await fetch(`http://127.0.0.1:${port}/api/system/memory/schedule/power`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    });
+  } catch {
+    /* 服务已经退出时忽略 */
+  }
+}
+
+function bindPowerMonitor(port) {
+  // 睡眠时停表；唤醒后从当前时刻重新计时，不补跑睡前的次数。
+  powerMonitor.on('suspend', () => { void notifyMemoryPower(port, 'suspend'); });
+  powerMonitor.on('resume', () => { void notifyMemoryPower(port, 'resume'); });
+}
+
 /** 只允许开一个实例：第二次双击就把已有窗口提到前面 */
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -401,6 +491,8 @@ if (!gotLock) {
       // 主窗不显示，但已经开始加载数据，所以动画播完时揭开的不是空页。
       createSplashWindow(port);
       createWindow(port);
+      createTray(port);
+      bindPowerMonitor(port);
     } catch (e) {
       // 起不来时给个能看清的对话框，别让用户对着空屏幕
       const { dialog } = await import('electron');

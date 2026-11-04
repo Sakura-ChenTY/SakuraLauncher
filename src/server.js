@@ -869,6 +869,78 @@ export const state = {
   memoryOptimizeAt: 0, // 上次系统内存优化时间（60 秒冷却）
 };
 
+/* 定时清理只存在于本次启动器进程内；关掉启动器就随进程停止。 */
+const memorySchedule = {
+  enabled: false,
+  intervalMs: 30 * 60 * 1000,
+  timer: null,
+  nextAt: 0,
+  lastAt: 0,
+  lastCount: 0,
+  lastReleased: 0,
+  suspended: false,
+  running: false,
+};
+
+function memoryScheduleStatus() {
+  return {
+    enabled: memorySchedule.enabled,
+    intervalMinutes: Math.round(memorySchedule.intervalMs / 60000),
+    nextAt: memorySchedule.nextAt,
+    lastAt: memorySchedule.lastAt,
+    lastCount: memorySchedule.lastCount,
+    lastReleased: memorySchedule.lastReleased,
+    suspended: memorySchedule.suspended,
+    running: memorySchedule.running,
+  };
+}
+
+function clearMemoryScheduleTimer() {
+  if (memorySchedule.timer) clearTimeout(memorySchedule.timer);
+  memorySchedule.timer = null;
+  memorySchedule.nextAt = 0;
+}
+
+function scheduleMemoryNext(delayMs) {
+  clearMemoryScheduleTimer();
+  if (!memorySchedule.enabled || memorySchedule.suspended) return;
+  const delay = Math.max(60_000, Number(delayMs) || memorySchedule.intervalMs);
+  memorySchedule.nextAt = Date.now() + delay;
+  memorySchedule.timer = setTimeout(async () => {
+    memorySchedule.timer = null;
+    const late = Date.now() - memorySchedule.nextAt;
+    // 睡眠/休眠唤醒后如果已经错过多轮，只跳过，不补跑。
+    if (late > Math.max(30_000, memorySchedule.intervalMs * 0.5)) {
+      scheduleMemoryNext(memorySchedule.intervalMs);
+      return;
+    }
+    await runScheduledMemoryCleanup();
+    scheduleMemoryNext(memorySchedule.intervalMs);
+  }, delay);
+  memorySchedule.timer.unref?.();
+}
+
+async function runScheduledMemoryCleanup() {
+  if (!memorySchedule.enabled || memorySchedule.suspended || memorySchedule.running) return;
+  memorySchedule.running = true;
+  try {
+    const result = await optimizeMemory();
+    state.memoryOptimizeAt = Date.now();
+    memorySchedule.lastAt = Date.now();
+    memorySchedule.lastCount = result.processes.length;
+    memorySchedule.lastReleased = result.released;
+    const mb = Math.round(result.released / 1024 / 1024);
+    pushLog(
+      `[定时清理] ${new Date(memorySchedule.lastAt).toLocaleString('zh-CN')}，` +
+      `处理 ${result.processes.length} 个进程，工作集减少约 ${mb} MB`
+    );
+  } catch (e) {
+    pushLog(`[定时清理] 失败：${e.message}`);
+  } finally {
+    memorySchedule.running = false;
+  }
+}
+
 const activeTasks = new Map();
 
 function startTask(kind, requestedId) {
@@ -3676,6 +3748,42 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    if (p === '/api/system/memory/schedule' && req.method === 'GET') {
+      return json(res, 200, memoryScheduleStatus());
+    }
+
+    if (p === '/api/system/memory/schedule' && req.method === 'POST') {
+      const body = await readBody(req);
+      const enabled = Boolean(body.enabled);
+      const minutes = Number(body.intervalMinutes);
+      const intervalMinutes = Number.isFinite(minutes)
+        ? Math.max(1, Math.min(1440, Math.round(minutes)))
+        : Math.round(memorySchedule.intervalMs / 60000);
+      memorySchedule.enabled = enabled;
+      memorySchedule.intervalMs = intervalMinutes * 60000;
+      if (enabled && !memorySchedule.suspended) {
+        scheduleMemoryNext(memorySchedule.intervalMs);
+      } else {
+        clearMemoryScheduleTimer();
+      }
+      return json(res, 200, memoryScheduleStatus());
+    }
+
+    if (p === '/api/system/memory/schedule/power' && req.method === 'POST') {
+      const body = await readBody(req);
+      const action = String(body.action || '');
+      if (action === 'suspend') {
+        memorySchedule.suspended = true;
+        clearMemoryScheduleTimer();
+      } else if (action === 'resume') {
+        memorySchedule.suspended = false;
+        if (memorySchedule.enabled) scheduleMemoryNext(memorySchedule.intervalMs);
+      } else {
+        return json(res, 400, { error: 'action 只能是 suspend 或 resume' });
+      }
+      return json(res, 200, memoryScheduleStatus());
+    }
+
     if (p === '/api/system/memory/optimize' && req.method === 'POST') {
       const now = Date.now();
       const wait = 60_000 - (now - state.memoryOptimizeAt);
@@ -3693,6 +3801,9 @@ const server = http.createServer(async (req, res) => {
       try {
         const result = await optimizeMemory(pid);
         state.memoryOptimizeAt = Date.now();
+        memorySchedule.lastAt = Date.now();
+        memorySchedule.lastCount = result.processes.length;
+        memorySchedule.lastReleased = result.released;
         const totalMb = Math.round(result.released / 1024 / 1024);
         pushLog(
           pid
