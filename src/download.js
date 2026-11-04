@@ -20,6 +20,32 @@ const agents = {
   'http:': new http.Agent({ keepAlive: true, maxSockets: 32 }),
 };
 
+/** Optional sink for download diagnostics; the server points this at its log. */
+let downloadLogger = null;
+
+/** Install a callback for downloader messages such as a source fallback. */
+export function setDownloadLogger(fn) {
+  downloadLogger = typeof fn === 'function' ? fn : null;
+}
+
+function logDownload(message) {
+  try {
+    if (downloadLogger) downloadLogger(message);
+    else console.warn(message);
+  } catch {
+    /* diagnostics must never break a download */
+  }
+}
+
+function hostLabel(value) {
+  try {
+    const u = new URL(value);
+    return u.host + u.pathname.replace(/\/[^/]*$/, '/');
+  } catch {
+    return String(value);
+  }
+}
+
 /* ---------------- 取消 ----------------
  * 为什么用模块级单例而不是层层传 signal：
  *   服务端本来就只允许一个安装任务（`if (state.installing) throw`），
@@ -276,11 +302,19 @@ export async function downloadFile(url, destPath, opts = {}) {
 
   const urls = candidateUrls(url, { preferMirror, source });
   let lastErr = null;
+  let previousTarget = null;
 
   for (let attempt = 0; attempt < retries; attempt++) {
     // 每轮开头先看有没有被取消，别在取消后还开新连接
     ensureNotCancelled();
     const target = urls[Math.min(attempt, urls.length - 1)];
+    if (attempt > 0 && target !== previousTarget) {
+      logDownload(
+        `[下载降级] ${hostLabel(previousTarget)} 请求失败，改用备用源 ${hostLabel(target)}；` +
+        `原因：${lastErr?.message ?? '未知错误'}`
+      );
+    }
+    previousTarget = target;
     const partPath = `${destPath}.part`;
 
     try {

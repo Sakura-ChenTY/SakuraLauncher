@@ -22,7 +22,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { launch, listVersions, DEFAULT_GAME_DIR } from './launch.js';
-import { startJob, endJob, cancelJob, isCancelled, CancelledError, rollbackJob } from './download.js';
+import { startJob, endJob, cancelJob, isCancelled, CancelledError, rollbackJob, setDownloadLogger } from './download.js';
 import { installVersion, getVersionManifest, latestReleases, findVersionInManifest } from './installer.js';
 import { searchProjects, getProjectVersions, getProject, detectLoaderFromVersionJson, PROJECT_TYPES } from './modrinth.js';
 import { installFabric, listLoaders } from './fabric.js';
@@ -4608,6 +4608,8 @@ async function handleModpackInstall(body) {
 export async function startServer({ port = 7801, host = '127.0.0.1', gameDir, firstRun = false } = {}) {
   if (gameDir) state.gameDir = gameDir;
   if (firstRun) state.forceFirstRun = true;
+
+  setDownloadLogger((line) => pushLog(line));
 
   await initSecureStore();
   const interrupted = takeInterruptedInstall();
