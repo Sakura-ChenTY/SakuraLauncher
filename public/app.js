@@ -4640,25 +4640,39 @@ function renderYggProfilesWithSkins(pending, profiles, selectedProfileId) {
   });
 }
 
-/** 只画头部：8x8 脸 + 帽子层，最近邻放大；失败换回首字 */
+/** 列表小脸：离屏 3D 渲染头部，失败换回首字。队列一次只跑一个。 */
 function paintYggHeads(list) {
   list.querySelectorAll('canvas.ygg-head[data-skin]').forEach((canvas) => {
     const skin = canvas.dataset.skin;
     const letter = canvas.dataset.letter || '?';
-    const img = new Image();
-    img.onload = () => {
-      if (typeof window.paintFace === 'function') {
-        window.paintFace(canvas, img, { width: 32, height: 32 });
-        canvas.classList.remove('loading');
-      }
-    };
-    img.onerror = () => {
+    const fallback = () => {
+      if (!canvas.isConnected) return;
       const span = document.createElement('span');
       span.className = 'ygg-avatar';
       span.textContent = letter;
       canvas.replaceWith(span);
     };
-    img.src = skin;
+
+    if (!window.HeadRenderer?.renderHead) {
+      fallback();
+      return;
+    }
+    window.HeadRenderer.renderHead(skin, 64)
+      .then((dataUrl) => {
+        if (!canvas.isConnected) return;
+        const img = new Image();
+        img.onload = () => {
+          if (!canvas.isConnected) return;
+          const ctx = canvas.getContext('2d');
+          ctx.imageSmoothingEnabled = true;
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          canvas.classList.remove('loading');
+        };
+        img.onerror = fallback;
+        img.src = dataUrl;
+      })
+      .catch(fallback);
   });
 }
 
