@@ -899,6 +899,15 @@ function pushLog(line) {
   }
 }
 
+function roomTypeFor(room, joinGame = false, explicit = '') {
+  const type = String(explicit || '').toLowerCase();
+  if (['lan', 'singleplayer', 'local', 'dedicated', 'server'].includes(type)) return type;
+  const lines = Array.isArray(room?.logs) ? room.logs : [];
+  if (lines.some((line) => /Started serving on|Local game hosted on port|对局域网开放/.test(String(line)))) return 'lan';
+  if (lines.some((line) => /Starting Minecraft server on/.test(String(line)))) return 'dedicated';
+  return joinGame ? 'lan' : 'dedicated';
+}
+
 setTunnelLogger((e) => {
   const remote = e.remotePort ? `:${e.remotePort}` : '';
   pushLog(
@@ -2995,6 +3004,8 @@ const server = http.createServer(async (req, res) => {
             versionId: body.versionId,
             serverDir: room.serverDir,
             roomLogs: room.logs,
+            roomType: roomTypeFor(room, Boolean(body.joinGame), body.roomType),
+            sinceMs: room.startedAt || Date.now(),
           }, 30000);
         } catch (e) {
           await stopRoom({ keepWorld: true, onLog: (line) => emit('room-log', { line }) });
@@ -3203,6 +3214,8 @@ const server = http.createServer(async (req, res) => {
               versionId: recent.versionId,
               serverDir: room.serverDir,
               roomLogs: room.logs,
+              roomType: roomTypeFor(room, Boolean(recent.hostJoined), recent.roomType || ''),
+              sinceMs: room.startedAt || Date.now(),
             }, 30000);
           } catch (e) {
             await stopRoom({ keepWorld: true, onLog: (line) => emit('room-log', { line }) });

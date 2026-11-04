@@ -39,9 +39,11 @@ export function portFromServerProperties(file) {
   return null;
 }
 
-export function portFromLogFile(file) {
+export function portFromLogFile(file, sinceMs = 0) {
   try {
     const st = fs.statSync(file);
+    // 只接受本次启动之后有更新的日志，避免读到上一次会话残留端口。
+    if (sinceMs && st.mtimeMs < sinceMs) return null;
     const fd = fs.openSync(file, 'r');
     const max = 256 * 1024;
     const start = Math.max(0, st.size - max);
@@ -84,10 +86,10 @@ function portPaths({ gameDir, versionId, serverDir }) {
  * 2. server.properties 的 server-port（专用服务器）
  * 3. 都没有就抛错，绝不静默使用 25565。
  */
-function roomPortFromLogs({ gameDir, versionId, serverDir, roomLogs = [] } = {}) {
+function roomPortFromLogs({ gameDir, versionId, serverDir, roomLogs = [], sinceMs = 0 } = {}) {
   const { logFiles } = portPaths({ gameDir, versionId, serverDir });
   for (const file of logFiles) {
-    const found = portFromLogFile(file);
+    const found = portFromLogFile(file, sinceMs);
     if (found) return { port: found.port, source: 'latest.log', file };
   }
   const fromRoom = portFromRoomLogs(roomLogs);
@@ -95,25 +97,54 @@ function roomPortFromLogs({ gameDir, versionId, serverDir, roomLogs = [] } = {})
   return null;
 }
 
-export function resolveRoomPort(opts = {}) {
-  const fromLogs = roomPortFromLogs(opts);
-  if (fromLogs) return fromLogs;
-
+function portFromProperties(opts = {}) {
   const { propFiles } = portPaths(opts);
   for (const file of propFiles) {
     const port = portFromServerProperties(file);
     if (port) return { port, source: 'server.properties', file };
   }
+  return null;
+}
 
-  const { logFiles } = portPaths(opts);
-  throw new Error(
-    `拿不到端口：没有在 latest.log / room.log 找到 Started serving / Local game hosted，也没有可用的 server-port。` +
+function errorNoPort(opts = {}, reason = '') {
+  const { logFiles, propFiles } = portPaths(opts);
+  return new Error(
+    `拿不到端口${reason ? `（${reason}）` : ''}：没有在 latest.log / room.log 找到 Started serving / Local game hosted，也没有可用的 server-port。` +
     `已检查：${[...logFiles, ...propFiles].join('；') || '无路径'}`
   );
 }
 
+/**
+ * roomType:
+ * - lan / singleplayer：只认本次启动后的日志，properties 不参与
+ * - dedicated：只认 server.properties
+ * - 其他/未知：日志优先，日志没有再用 properties
+ */
+export function resolveRoomPort(opts = {}) {
+  const roomType = String(opts.roomType || '').toLowerCase();
+  const logs = roomPortFromLogs(opts);
+  const props = portFromProperties(opts);
+
+  if (roomType === 'lan' || roomType === 'singleplayer' || roomType === 'local') {
+    if (logs) return logs;
+    throw errorNoPort(opts, '局域网房间必须从游戏输出拿到监听端口');
+  }
+  if (roomType === 'dedicated' || roomType === 'server') {
+    if (props) return props;
+    throw errorNoPort(opts, '专用服务器缺少 server-port');
+  }
+
+  if (logs) return logs;
+  if (props) return props;
+  throw errorNoPort(opts);
+}
+
 /** 先等游戏输出出现监听端口；超时后才允许回落到 server.properties。 */
 export async function waitForRoomPort(opts = {}, timeoutMs = 30000) {
+  const roomType = String(opts.roomType || '').toLowerCase();
+  if (roomType === 'dedicated' || roomType === 'server') {
+    return resolveRoomPort(opts);
+  }
   const deadline = Date.now() + Math.max(1000, Number(timeoutMs) || 30000);
   while (Date.now() < deadline) {
     const fromLogs = roomPortFromLogs(opts);
