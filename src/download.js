@@ -659,8 +659,20 @@ async function downloadRanged(url, destPath, size, sha1, source) {
     generation: sourceState?.generation ?? 0,
   };
   sourceState?.transfers.add(transfer);
+  let rangeTimer = null;
+  let rangeReject = null;
+  const resetRangeTimer = () => {
+    clearTimeout(rangeTimer);
+    rangeTimer = setTimeout(() => {
+      const e = new Error('STALL_TIMEOUT:range');
+      ctrl.abort(e);
+      rangeReject?.(e);
+    }, STALL_TIMEOUT_MS);
+  };
+  const rangeTimeout = new Promise((_, reject) => { rangeReject = reject; });
   try {
-    await Promise.all(segs.map(async (seg) => {
+    resetRangeTimer();
+    const rangeWork = Promise.all(segs.map(async (seg) => {
       const { res } = await requestOnce(target, {
         headers: { Range: `bytes=${seg.start}-${seg.end}` },
         timeout: 90000,
@@ -685,6 +697,7 @@ async function downloadRanged(url, destPath, size, sha1, source) {
             sourceState.lastByteAt = Date.now();
           }
           stall.reset();
+          resetRangeTimer();
           cb(null, chunk);
         },
       });
@@ -694,6 +707,7 @@ async function downloadRanged(url, destPath, size, sha1, source) {
         stall.clear();
       }
     }));
+    await Promise.race([rangeWork, rangeTimeout]);
 
     const out = fs.createWriteStream(partPath, { flags: 'w' });
     try {
@@ -725,6 +739,7 @@ async function downloadRanged(url, destPath, size, sha1, source) {
     try { ctrl.abort(); } catch { /* ignore */ }
     return false;
   } finally {
+    clearTimeout(rangeTimer);
     sourceState?.transfers.delete(transfer);
     for (const seg of segs) {
       try { await fsp.rm(seg.path, { force: true }); } catch { /* ignore */ }
