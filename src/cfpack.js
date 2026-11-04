@@ -375,10 +375,15 @@ export async function installCurseForgePack(opts = {}) {
       skipped.push({ id: f.fileID, reason: '镜像查不到这个文件' });
       continue;
     }
-    if (!meta.downloadUrl) {
-      skipped.push({ id: f.fileID, name: meta.fileName, reason: '作者关闭了第三方分发' });
+    if (!meta.fileName) {
+      skipped.push({ id: f.fileID, reason: '文件名为空，无法构造地址' });
       continue;
     }
+
+    // PCL 同款：downloadUrl 为空时按 fileId 拼 CurseForge CDN 地址。
+    // edge 已知可能 404，候选顺序交由 sources.js / downloadFile 继续换源。
+    const downloadUrl = meta.downloadUrl
+      || `https://edge.forgecdn.net/files/${String(meta.id).slice(0, 4)}/${String(meta.id).slice(4)}/${encodeURIComponent(meta.fileName)}`;
 
     const folder = CLASS_FOLDER[classOf.get(f.projectID)];
     if (!folder) {
@@ -396,7 +401,7 @@ export async function installCurseForgePack(opts = {}) {
     const sha1 = (meta.hashes ?? []).find((h) => h.algo === 1)?.value ?? undefined;
 
     items.push({
-      url: meta.downloadUrl,
+      url: downloadUrl,
       dest,
       sha1,
       size: meta.fileLength ?? undefined,

@@ -104,6 +104,12 @@ export function candidateUrls(url, opts = {}) {
   const primary = primaryId === 'official' ? url : toMirror(url, primaryId);
   const list = [primary ?? url];
 
+  // CurseForge: edge 已知可能 404，官方首选先补同路径的 mediafilez。
+  if (primaryId === 'official' && /^https?:\/\/(edge|media)\.forgecdn\.net\//.test(url)) {
+    const direct = url.replace(/^https?:\/\/(edge|media)\.forgecdn\.net\//, 'https://mediafilez.forgecdn.net/');
+    if (!list.includes(direct)) list.push(direct);
+  }
+
   if (fallback) {
     // 另一侧兜底
     const altId = primaryId === 'official' ? 'bmclapi' : 'official';
