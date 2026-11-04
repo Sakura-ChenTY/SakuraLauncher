@@ -741,14 +741,13 @@
                 <div class="memory-schedule-row">
                   <label class="mem-optimize"><input id="memoryScheduleEnabled" type="checkbox"> 定时清理</label>
                   <select id="memoryScheduleInterval" class="select narrow" disabled>
-                    <option value="5">5 分钟</option>
-                    <option value="10">10 分钟</option>
-                    <option value="15">15 分钟</option>
                     <option value="30" selected>30 分钟</option>
                     <option value="60">60 分钟</option>
+                    <option value="120">120 分钟</option>
+                    <option value="180">180 分钟</option>
                     <option value="custom">自定义</option>
                   </select>
-                  <input id="memoryScheduleCustom" class="input narrow mono" type="number" min="1" max="1440" step="1" value="30" disabled>
+                  <input id="memoryScheduleCustom" class="input narrow mono" type="number" min="30" max="1440" step="1" value="30" disabled>
                   <span class="hint">分钟</span>
                 </div>
                 <div class="field-note">

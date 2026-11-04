@@ -3763,10 +3763,13 @@ function readMemoryScheduleLocal() {
   try {
     const raw = JSON.parse(localStorage.getItem(MEMORY_SCHEDULE_KEY) || 'null');
     const minutes = Number(raw?.intervalMinutes);
-    return {
-      enabled: Boolean(raw?.enabled),
-      intervalMinutes: Number.isFinite(minutes) ? Math.max(1, Math.min(1440, Math.round(minutes))) : 30,
-    };
+    const intervalMinutes = Number.isFinite(minutes) ? Math.max(30, Math.min(1440, Math.round(minutes))) : 30;
+    if (raw && intervalMinutes !== minutes) {
+      try {
+        localStorage.setItem(MEMORY_SCHEDULE_KEY, JSON.stringify({ enabled: Boolean(raw.enabled), intervalMinutes }));
+      } catch { /* 无痕模式 */ }
+    }
+    return { enabled: Boolean(raw?.enabled), intervalMinutes };
   } catch {
     return { ...MEMORY_SCHEDULE_DEFAULT };
   }
@@ -3783,7 +3786,7 @@ function renderMemoryScheduleControls() {
   const select = $('memoryScheduleInterval');
   const custom = $('memoryScheduleCustom');
   if (enabled) enabled.checked = cfg.enabled;
-  const preset = [5, 10, 15, 30, 60];
+  const preset = [30, 60, 120, 180];
   if (select) {
     if (preset.includes(cfg.intervalMinutes)) {
       select.value = String(cfg.intervalMinutes);
@@ -3838,7 +3841,7 @@ async function saveMemorySchedule() {
   const select = $('memoryScheduleInterval');
   let minutes = Number($('memoryScheduleCustom')?.value || 30);
   if (select?.value !== 'custom') minutes = Number(select?.value || 30);
-  minutes = Math.max(1, Math.min(1440, Number.isFinite(minutes) ? Math.round(minutes) : 30));
+  minutes = Math.max(30, Math.min(1440, Number.isFinite(minutes) ? Math.round(minutes) : 30));
   if ($('memoryScheduleCustom')) $('memoryScheduleCustom').value = String(minutes);
 
   const cfg = { enabled, intervalMinutes: minutes };
