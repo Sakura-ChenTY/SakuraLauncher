@@ -219,6 +219,7 @@ function showProgress(show) {
   } else {
     clearTimeout(installRevealTimer);
     installRevealTimer = null;
+    resetInstallStageRows();
     // 一次安装结束，收起状态自动复位，下一次才开始时还是完整卡片
     installCollapsed = false;
     page.classList.remove('show');
@@ -231,7 +232,109 @@ function showProgress(show) {
   }
 }
 
-function updateProgress({ stage, message, done, total, downloaded, errors }) {
+const INSTALL_STAGE_ORDER = ['pack', 'vanilla', 'assets', 'neoforge', 'mod'];
+let installStageCursor = null;
+let installStageStartedAt = 0;
+let installStageLastBytes = 0;
+let installStageLastAt = 0;
+let installStageLastDone = 0;
+let installStageLastTotal = 0;
+
+function resetInstallStageRows() {
+  installStageCursor = null;
+  installStageStartedAt = 0;
+  installStageLastBytes = 0;
+  installStageLastAt = 0;
+  installStageLastDone = 0;
+  installStageLastTotal = 0;
+  document.querySelectorAll('#installStages .install-stage').forEach((row) => {
+    row.classList.remove('active', 'done', 'error');
+    const info = row.querySelector('.install-stage-info');
+    if (info) info.textContent = '等待';
+  });
+}
+
+function installStageKey(stage, message) {
+  if (stage === 'cfpack') {
+    return /整合包文件|查询\s*\d+\s*个文件|下载\s*\d+\s*个文件|展开整合包/.test(message) ? 'mod' : 'pack';
+  }
+  if (stage === 'client' || stage === 'libraries') return 'vanilla';
+  if (stage === 'assets' || stage === 'assetsIndex') return 'assets';
+  if (stage === 'neoforge' || stage === 'java') return 'neoforge';
+  if (stage === 'modpack') return 'mod';
+  return null;
+}
+
+function formatStageBytes(n) {
+  const v = Number(n) || 0;
+  if (v >= 1024 * 1024 * 1024) return `${(v / 1024 / 1024 / 1024).toFixed(2)} GiB`;
+  if (v >= 1024 * 1024) return `${(v / 1024 / 1024).toFixed(1)} MiB`;
+  return `${Math.round(v / 1024)} KiB`;
+}
+
+function updateInstallStages(stage, message, { bytes, totalBytes, done, total } = {}) {
+  const rows = [...document.querySelectorAll('#installStages .install-stage')];
+  if (!rows.length) return;
+  const key = installStageKey(stage, message);
+  if (!key) return;
+  const idx = INSTALL_STAGE_ORDER.indexOf(key);
+  if (idx < 0) return;
+
+  if (installStageCursor !== key) {
+    if (installStageCursor && INSTALL_STAGE_ORDER.indexOf(installStageCursor) <= idx) {
+      const prev = document.querySelector(`#installStages [data-stage="${installStageCursor}"]`);
+      if (prev) {
+        prev.classList.remove('active');
+        prev.classList.add('done');
+        const info = prev.querySelector('.install-stage-info');
+        if (info && !/完成|失败/.test(info.textContent)) info.textContent = '完成';
+      }
+    }
+    installStageCursor = key;
+    installStageStartedAt = Date.now();
+    installStageLastAt = installStageStartedAt;
+    installStageLastBytes = 0;
+    installStageLastDone = 0;
+    installStageLastTotal = 0;
+  }
+
+  rows.forEach((row) => row.classList.toggle('active', row.dataset.stage === key));
+
+  let b = Number(bytes);
+  let tb = Number(totalBytes);
+  let d = Number(done);
+  let t = Number(total);
+  if (key === 'pack' && (!Number.isFinite(b) || !Number.isFinite(tb)) && Number.isFinite(d) && Number.isFinite(t)) {
+    b = d;
+    tb = t;
+  }
+  const now = Date.now();
+  if (Number.isFinite(b) && Number.isFinite(tb) && tb > 0) {
+    const speed = Math.max(0, (b - installStageLastBytes) / Math.max(0.2, (now - installStageLastAt) / 1000));
+    const eta = speed > 0 ? Math.max(0, (tb - b) / speed) : NaN;
+    installStageLastBytes = b;
+    installStageLastAt = now;
+    const row = document.querySelector(`#installStages [data-stage="${key}"] .install-stage-info`);
+    if (row) {
+      row.textContent = `${formatStageBytes(b)} / ${formatStageBytes(tb)} · ${(speed / 1024 / 1024).toFixed(1)} MiB/s${Number.isFinite(eta) ? ` · 剩 ${Math.ceil(eta)}s` : ''}`;
+    }
+    installStageLastDone = Number.isFinite(d) ? d : 0;
+    installStageLastTotal = Number.isFinite(t) ? t : 0;
+    return;
+  }
+
+  const ts = Math.max(0, Math.floor((now - installStageStartedAt) / 1000));
+  const row = document.querySelector(`#installStages [data-stage="${key}"] .install-stage-info`);
+  if (row) {
+    if (Number.isFinite(d) && Number.isFinite(t) && t > 0) {
+      row.textContent = `${d}/${t} 个文件 · ${ts}s`;
+    } else {
+      row.textContent = `进行中 · ${ts}s`;
+    }
+  }
+}
+
+function updateProgress({ stage, message, done, total, downloaded, errors, bytes, totalBytes }) {
   const bar = $('progressBar');
   const fill = $('progressFill');
   const pctEl = $('progressPct');
@@ -246,6 +349,25 @@ function updateProgress({ stage, message, done, total, downloaded, errors }) {
   if (message) {
     $('progressLabel').textContent = message;
     $('installTitle').textContent = message;
+  }
+
+  if (stage === 'done') {
+    document.querySelectorAll('#installStages .install-stage').forEach((row) => {
+      row.classList.remove('active', 'error');
+      row.classList.add('done');
+      const info = row.querySelector('.install-stage-info');
+      if (info) info.textContent = '完成';
+    });
+  } else if (stage === 'error') {
+    const current = installStageCursor && document.querySelector(`#installStages [data-stage="${installStageCursor}"]`);
+    if (current) {
+      current.classList.remove('active', 'done');
+      current.classList.add('error');
+      const info = current.querySelector('.install-stage-info');
+      if (info) info.textContent = '失败';
+    }
+  } else {
+    updateInstallStages(stage, message, { bytes, totalBytes, done, total });
   }
 
   // 状态色跟着走：PCL 也是跑完变绿、报错变红

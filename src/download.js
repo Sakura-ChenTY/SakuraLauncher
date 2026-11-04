@@ -81,6 +81,33 @@ const PROBE_TIMEOUT_MS = 3000;
 let sourceState = null;
 let sourceChangeListener = null;
 
+// 404 是“这个候选地址不存在”，不是网络抖动：记住后不要再反复撞。
+const invalidCandidates = new Set();
+const invalidMirrorPrefixes = new Set();
+
+function markCandidateInvalid(target) {
+  invalidCandidates.add(target);
+  try {
+    const u = new URL(target);
+    if (u.hostname === 'mod.mcimirror.top') {
+      const first = u.pathname.split('/').filter(Boolean)[0] || '';
+      invalidMirrorPrefixes.add(`${u.protocol}//${u.host}/${first ? `${first}/` : ''}`);
+    }
+  } catch {
+    /* 非标准 URL 只按完整地址失效 */
+  }
+}
+
+function availableCandidates(url, opts) {
+  return candidateUrls(url, opts).filter((candidate) => {
+    if (invalidCandidates.has(candidate)) return false;
+    for (const prefix of invalidMirrorPrefixes) {
+      if (candidate.startsWith(prefix)) return false;
+    }
+    return true;
+  });
+}
+
 /** 安装页/服务端可以订阅活动源变化 */
 export function setSourceChangeListener(fn) {
   sourceChangeListener = typeof fn === 'function' ? fn : null;
@@ -562,7 +589,7 @@ async function isComplete(filePath, expectedSha1, expectedSize) {
  */
 async function downloadRanged(url, destPath, size, sha1, source) {
   const effectiveSource = sourceState?.active ?? (source === 'bmclapi' ? 'bmclapi' : 'official');
-  const target = candidateUrls(url, { source: effectiveSource })[0];
+  const target = availableCandidates(url, { source: effectiveSource })[0];
   if (!target) return false;
   const partPath = `${destPath}.part`;
   let completed = false;
@@ -723,7 +750,8 @@ export async function downloadFile(url, destPath, opts = {}) {
       ensureNotCancelled();
 
       const effectiveSource = sourceState?.active ?? (source === 'bmclapi' ? 'bmclapi' : 'official');
-      const urls = candidateUrls(url, { preferMirror, source: effectiveSource });
+      const urls = availableCandidates(url, { preferMirror, source: effectiveSource });
+      if (!urls.length) throw new Error(`没有可用的下载候选：${path.basename(destPath)}`);
       const target = urls[Math.min(attempt, urls.length - 1)];
       if (attempt > 0 && target !== previousTarget) {
         logDownload(
@@ -850,6 +878,15 @@ export async function downloadFile(url, destPath, opts = {}) {
 
         lastErr = e;
         const status = Number(e?.statusCode || /^HTTP\s+(\d{3})\b/i.exec(String(e?.message ?? ''))?.[1] || 0);
+        // 404 不是可重试错误：标记候选（镜像按前缀）并立刻换下一个候选。
+        if (status === 404) {
+          markCandidateInvalid(target);
+          logDownload(`[下载候选失效] 404 ${target}，换下一个候选`);
+          attempt = 0;
+          previousTarget = null;
+          await new Promise((r) => setTimeout(r, 80));
+          continue;
+        }
         const retryable = status === 429 || status >= 500;
         if (retryable) {
           try { onThrottle?.(); } catch { /* 降低并发失败不影响重试 */ }
@@ -893,6 +930,8 @@ export async function downloadMany(items, {
   let done = 0;
   let skipped = 0;
   let downloaded = 0;
+  let doneBytes = 0;
+  const totalBytes = items.reduce((n, it) => n + (Number(it.size) || 0), 0);
   const errors = [];
   const n = Math.max(1, Math.min(128, Math.max(1, Number(concurrency) || 64), items.length));
   configureAgents(n);
@@ -954,9 +993,13 @@ export async function downloadMany(items, {
       } finally {
         release();
         done++;
+        doneBytes += Number(it.size) || 0;
         if (onProgress) {
           try {
-            onProgress({ done, total: items.length, skipped, downloaded, errors: errors.length, current: it });
+            onProgress({
+              done, total: items.length, skipped, downloaded, errors: errors.length, current: it,
+              bytes: doneBytes, totalBytes,
+            });
           } catch {
             /* 进度回调异常不影响下载 */
           }

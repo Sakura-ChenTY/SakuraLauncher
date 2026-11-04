@@ -415,6 +415,8 @@ export async function installCurseForgePack(opts = {}) {
         total: p.total,
         downloaded: p.downloaded,
         errors: p.errors,
+        bytes: p.bytes,
+        totalBytes: p.totalBytes,
         message: `整合包文件 ${p.done}/${p.total}`,
       }),
   });
