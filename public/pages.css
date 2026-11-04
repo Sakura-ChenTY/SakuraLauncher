@@ -751,8 +751,8 @@ body.theme-light .settings-tab.active {
   color: var(--text-dim);
 }
 
-/* ---------------- 更多：回声洞 ---------------- */
-.echo-card {
+/* ---------------- 更多：绘梨衣の本子 ---------------- */
+.notebook-card {
   position: relative;
   min-height: 76px;
   padding: 16px 18px 28px;
@@ -763,8 +763,8 @@ body.theme-light .settings-tab.active {
   user-select: none;
   transition: border-color var(--dur, 180ms) var(--ease, ease), background var(--dur, 180ms) var(--ease, ease);
 }
-.echo-card:hover { border-color: color-mix(in srgb, var(--line), var(--accent) 35%); background: color-mix(in srgb, var(--bg-2), #fff 4%); }
-.echo-message {
+.notebook-card:hover { border-color: color-mix(in srgb, var(--line), var(--accent) 35%); background: color-mix(in srgb, var(--bg-2), #fff 4%); }
+.notebook-message {
   overflow: hidden;
   color: var(--text);
   font-size: 13px;
@@ -774,7 +774,7 @@ body.theme-light .settings-tab.active {
   opacity: 1;
   transition: opacity 100ms ease;
 }
-.echo-hint {
+.notebook-hint {
   position: absolute;
   right: 14px;
   bottom: 8px;

@@ -2153,24 +2153,24 @@ function renderCredits() {
     + '<span>…等共 58 位</span>';
 }
 
-/* ---------------- 更多：回声洞 ---------------- */
+/* ---------------- 更多：绘梨衣の本子 ---------------- */
 
-let echoMessages = [];
-let echoCurrent = '';
-let echoTimer = 0;
+let notebookMessages = [];
+let notebookCurrent = '';
+let notebookTimer = 0;
 
-function pickEcho(avoid) {
-  if (!echoMessages.length) return '';
-  if (echoMessages.length === 1) return echoMessages[0];
+function pickNotebookMessage(avoid) {
+  if (!notebookMessages.length) return '';
+  if (notebookMessages.length === 1) return notebookMessages[0];
   let next = avoid;
   for (let i = 0; i < 12 && next === avoid; i++) {
-    next = echoMessages[Math.floor(Math.random() * echoMessages.length)];
+    next = notebookMessages[Math.floor(Math.random() * notebookMessages.length)];
   }
-  return next === avoid ? echoMessages[(echoMessages.indexOf(avoid) + 1) % echoMessages.length] : next;
+  return next === avoid ? notebookMessages[(notebookMessages.indexOf(avoid) + 1) % notebookMessages.length] : next;
 }
 
-function paintEcho(text, animate = true) {
-  const msg = document.getElementById('echoMessage');
+function paintNotebook(text, animate = true) {
+  const msg = document.getElementById('notebookMessage');
   if (!msg) return;
   if (!animate) {
     msg.textContent = text;
@@ -2178,29 +2178,29 @@ function paintEcho(text, animate = true) {
     return;
   }
   msg.style.opacity = '0';
-  clearTimeout(echoTimer);
-  echoTimer = setTimeout(() => {
+  clearTimeout(notebookTimer);
+  notebookTimer = setTimeout(() => {
     msg.textContent = text;
     requestAnimationFrame(() => { msg.style.opacity = '1'; });
   }, 100);
 }
 
-function nextEcho() {
-  if (!echoMessages.length) return;
-  const next = pickEcho(echoCurrent);
+function nextNotebook() {
+  if (!notebookMessages.length) return;
+  const next = pickNotebookMessage(notebookCurrent);
   if (!next) return;
-  echoCurrent = next;
-  try { localStorage.setItem('sakura.echo.last', next); } catch { /* 忽略隐私模式 */ }
-  paintEcho(next, true);
+  notebookCurrent = next;
+  try { localStorage.setItem('sakura.huiliyi-notebook.last', next); } catch { /* 忽略隐私模式 */ }
+  paintNotebook(next, true);
 }
 
-async function initEchoHollow() {
-  const local = Array.isArray(window.ECHO_HOLLOW) ? window.ECHO_HOLLOW.filter(Boolean) : [];
+async function initNotebook() {
+  const local = Array.isArray(window.HUILIYI_NOTEBOOK) ? window.HUILIYI_NOTEBOOK.filter(Boolean) : [];
   let remote = null;
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 1200);
-    const res = await fetch('/api/echo', { signal: controller.signal });
+    const res = await fetch('/api/huiliyi-notebook', { signal: controller.signal });
     clearTimeout(timer);
     if (res.ok) {
       const data = await res.json();
@@ -2212,24 +2212,24 @@ async function initEchoHollow() {
   } catch {
     remote = null;
   }
-  echoMessages = remote && remote.length ? remote : local;
-  if (!echoMessages.length) return;
+  notebookMessages = remote && remote.length ? remote : local;
+  if (!notebookMessages.length) return;
   let saved = '';
-  try { saved = localStorage.getItem('sakura.echo.last') || ''; } catch { /* 忽略 */ }
-  const savedIndex = echoMessages.indexOf(saved);
-  echoCurrent = savedIndex >= 0 ? saved : echoMessages[Math.floor(Math.random() * echoMessages.length)];
-  paintEcho(echoCurrent, false);
-  const card = document.getElementById('echoCard');
-  card?.addEventListener('click', nextEcho);
+  try { saved = localStorage.getItem('sakura.huiliyi-notebook.last') || ''; } catch { /* 忽略 */ }
+  const savedIndex = notebookMessages.indexOf(saved);
+  notebookCurrent = savedIndex >= 0 ? saved : notebookMessages[Math.floor(Math.random() * notebookMessages.length)];
+  paintNotebook(notebookCurrent, false);
+  const card = document.getElementById('notebookCard');
+  card?.addEventListener('click', nextNotebook);
   card?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      nextEcho();
+      nextNotebook();
     }
   });
 }
 
-initEchoHollow();
+initNotebook();
 /* ---------------- 更多：百宝箱 ---------------- */
 
 document.getElementById('tbOpenContent').addEventListener('click', () => {
