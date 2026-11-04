@@ -1088,6 +1088,7 @@ body.has-custom-bg .wallpaper {
 .memory-schedule-row .mem-optimize { margin-top: 0; }
 .memory-schedule-row .select { width: 104px; }
 .memory-schedule-row .input { width: 76px; }
+.memory-schedule-warn { color: var(--warn, #d6a34a); font-size: 10.5px; }
 .memory-schedule-status { min-height: 16px; color: var(--text-dim); font-size: 10.5px; line-height: 1.5; font-variant-numeric: tabular-nums; }
 .memory-result { min-height: 18px; color: var(--text-dim); font-size: 11px; line-height: 1.5; white-space: pre-wrap; }
 .memory-process-list { display: flex; flex-direction: column; gap: 5px; max-height: 230px; overflow-y: auto; margin-top: 9px; }
