@@ -28,7 +28,6 @@ function showPanel(name) {
   }
   if (name === 'theme') renderThemeGrid();
   if (name === 'assistant' && typeof window.assistantRefresh === 'function') window.assistantRefresh();
-  if (name === 'more') renderCredits();
   if (name === 'settings') loadPlugins();
 }
 
@@ -1550,10 +1549,23 @@ const THEMES = [
   { id: 'ocean', name: '深海', note: '冷色 · 清爽', bg: '#101a2b', accent: '#4a9eff' },
   { id: 'forest', name: '初音绿', note: '经典 · 明亮', bg: '#161c24', accent: '#39c5bb' },
   { id: 'violet', name: '紫罗兰', note: '安静 · 夜晚', bg: '#171424', accent: '#a78bfa' },
-  { id: 'light', name: 'PCL 蓝白', note: '蓝白 · 浅色', bg: '#ffffff', accent: '#1370f3' },
+  { id: 'daylight', name: '白昼', note: '明亮 · 浅色', bg: '#ffffff', accent: '#1370f3' },
 ];
 
 const THEME_KEY = 'sakura.theme';
+const THEME_ALIASES = { light: 'daylight' };
+
+/** 旧版主题 id/名称迁移到现在的 id */
+function normalizeThemeId(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return '';
+  const next = THEME_ALIASES[value.toLowerCase()] || value;
+  if (next !== value) {
+    try { localStorage.setItem(THEME_KEY, next); } catch { /* 忽略隐私模式 */ }
+  }
+  return next;
+}
+
 const ACCENT_KEY = 'sakura.accent';
 const BG_COLOR_KEY = 'sakura.bgColor';
 const TEXT_COLOR_KEY = 'sakura.textColor';
@@ -1615,7 +1627,8 @@ function applyCustomTheme(accent, bg, text) {
   renderThemeGrid();
 }
 
-function applyTheme(id) {
+function applyTheme(rawId) {
+  const id = normalizeThemeId(rawId);
   // html 和 body 都写：CSS 变量在 html 上也能立刻级联，
   // 避免某些组件在 body 变量切换时没有重绘。
   document.documentElement.dataset.theme = id;
@@ -1625,8 +1638,8 @@ function applyTheme(id) {
     document.documentElement.style.removeProperty(v);
     document.body.style.removeProperty(v);
   }
-  document.documentElement.style.colorScheme = id === 'light' ? 'light' : 'dark';
-  document.body.classList.toggle('theme-light', id === 'light');
+  document.documentElement.style.colorScheme = id === 'daylight' ? 'light' : 'dark';
+  document.body.classList.toggle('theme-light', id === 'daylight');
   localStorage.setItem(THEME_KEY, id);
   renderThemeGrid();
 }
@@ -1661,7 +1674,7 @@ function renderThemeGrid() {
   const grid = document.getElementById('themeGrid');
   if (!grid) return;
 
-  const cur = localStorage.getItem(THEME_KEY) || 'blackgold';
+  const cur = normalizeThemeId(localStorage.getItem(THEME_KEY)) || 'blackgold';
   grid.innerHTML = THEMES.map((t) => `
     <button class="theme-tile ${t.id === cur ? 'active' : ''}" data-theme-id="${t.id}">
       <div class="theme-swatch" style="background:${t.bg};--sw-accent:${t.accent}"></div>
@@ -1990,7 +2003,7 @@ function applyBg() {
 
 /* 启动时恢复上次的主题 */
 (function restoreTheme() {
-  const id = localStorage.getItem(THEME_KEY);
+  const id = normalizeThemeId(localStorage.getItem(THEME_KEY));
   const accent = localStorage.getItem(ACCENT_KEY);
   const bg = localStorage.getItem(BG_COLOR_KEY);
   const text = localStorage.getItem(TEXT_COLOR_KEY);
@@ -2001,7 +2014,7 @@ function applyBg() {
   // 只有当前就是 custom 才恢复自定义色；否则预设会被 inline 色盖掉
   if (id === 'custom') {
     applyCustomTheme(accent || '#d4af37', bg || '#0b0b0d', text || '#f0e9d8');
-  } else if (id === 'light') {
+  } else if (id === 'daylight') {
     document.documentElement.style.colorScheme = 'light';
   }
   applyBg();
@@ -2128,31 +2141,6 @@ document.getElementById('pluginDelete').addEventListener('click', async () => {
   }
 });
 
-/* ---------------- 更多：鸣谢 ---------------- */
-
-/* 名单来自 GitHub API（repos/Meloong-Git/PCL/contributors）实拉的，
-   按提交数排序的前 40 位；仓库共 58 位贡献者。没有编造。 */
-const PCL_CONTRIBUTORS = [
-  'allMagicNB', 'RyogiMutsuki', 'wyc-26', 'Pigeon0v0', 'tangge233',
-  'Silverteal', 'zkitefly', 'wuliaodexiaoluo', 'MoYuan-CN', 'Open-KFC',
-  'MatchaOre', 'HerobrineXia', 'youzi-3222', 'pynickle', '0x1A5',
-  '3gf8jv4dv', 'Pearl-Luo', 'hadesanc1', 'CerikoSky', 'SALTWOOD',
-  'tmdakm', 'Neclyon', 'shanlisi567', 'WForst-Breeze', 'Light-Beacon',
-  'so1ve', 'lingting', 'lactobionicAcid', 'CiiLu', 'Hill23333',
-  'Howard302', 'killcerr', 'Ad-closeNN', 'pover0k', 'nanhuajiaren',
-  'Chiloven945', 'Mxmilu666', 'Txt-Text', 'Copilot', 'shatyuka',
-];
-
-let creditsRendered = false;
-function renderCredits() {
-  if (creditsRendered) return;
-  const box = document.getElementById('pclContributors');
-  if (!box) return;
-  creditsRendered = true;
-  box.innerHTML = PCL_CONTRIBUTORS.map((n) => `<span>${escapeHtml(n)}</span>`).join('')
-    + '<span>…等共 58 位</span>';
-}
-
 /* ---------------- 更多：绘梨衣の本子 ---------------- */
 
 let notebookMessages = [];
@@ -2262,8 +2250,7 @@ setSub('vanilla');
 // 拖到最后：app.js 可能还没跑完，等下一帧再绑定
 requestAnimationFrame(() => {
   renderThemeGrid();
-  renderCredits();
-});
+  });
 
 /* 内存控件兜底绑定，避免 app.js 早期错误导致推荐值失效。 */
 document.getElementById('memRecommend')?.addEventListener('click', () => {

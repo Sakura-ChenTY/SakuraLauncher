@@ -175,19 +175,14 @@ function createSplashWindow(port) {
   const display = screen.getPrimaryDisplay();
   const { width, height } = display.workAreaSize;
 
-  /* 尺寸对齐 PCL
+  /* 启动窗尺寸
      ------------------------------------------------------------
-     PCL2 的启动窗是 WPF 的 SplashScreen 类，实测物理像素 128x128
-     （GetWindowRect + SetProcessDPIAware 量的，不是网上抄的）。
-
-     注意单位：BrowserWindow 的 width/height 吃的是 DIP，不是物理像素。
-     本机缩放 150%，直接写 128 会变成 192 物理像素 —— 比 PCL 大一圈。
-     所以先量物理目标（128），再除 scaleFactor 换成 DIP。
+     启动窗按 128×128 物理像素设计。BrowserWindow 的 width/height
+     使用 DIP；本机缩放 150%，直接写 128 会变成 192 物理像素，
+     所以先取物理目标，再除 scaleFactor 换成 DIP。
      workAreaSize 也是 DIP，居中计算保持一致。 */
   const TARGET_PHYSICAL = 128;
-  /* 实测补偿：即使 frame:false，Windows 也会给窗口留一圈外沿。
-     量到写 85 DIP 时实际是 131 物理像素（85*1.5=127.5，多出约 3）。
-     所以先减掉这 3 像素再除缩放比，才能真的对上 PCL 的 128。 */
+  /* 无边框窗口仍会占一圈外沿：实测多约 3 物理像素，先扣除再换算 DIP。 */
   const FRAME_PHYSICAL = 3;
   const scale = display.scaleFactor || 1;
   const size = Math.max(48, Math.round((TARGET_PHYSICAL - FRAME_PHYSICAL) / scale));
@@ -265,16 +260,14 @@ function revealMainWindow() {
 }
 
 function createWindow(port) {
-  /* 尺寸对齐 PCL2
+  /* 主窗口尺寸
      ------------------------------------------------------------
-     实测 PCL2 主窗口 1382x885 物理像素（GetWindowRect + SetProcessDPIAware
-     量的，不是网上抄的），本机缩放 150% → 921x590 DIP。
+     目标物理尺寸 1382×885，本机缩放 150% → 921×590 DIP。
 
      但 BrowserWindow 的 width/height 不等于最终窗口外沿：
-     frame:false 时 Windows 仍会给一圈非客户区。实测两轮：
-       写 921x590 → 量到 1404x896（理论 1381x885，多 23x11）
-       旧版写 1280x880 → 量到 1941x1333（多 21x13）
-     这圈固定开销换算成 DIP 约 15x7，所以写的时候先减掉：
+     frame:false 时 Windows 仍会给一圈非客户区。实测：
+       写 921×590 → 量到 1404×896（多 23×11）
+     这圈固定开销换算成 DIP 约 15×7，所以写的时候先减掉：
      (1382-23)/1.5 ≈ 906，(885-11)/1.5 ≈ 583。
 
      做成可调整大小：窗口小的时候列表只放得下七行，

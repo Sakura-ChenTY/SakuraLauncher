@@ -143,7 +143,7 @@ function setInstallCollapsed(collapsed) {
 
   if (collapsed) {
     page.classList.remove('show');
-    // 收起后变成右下角的小浮窗：照 PCL，随时点一下就能回来
+    // 收起后变成右下角的小浮窗，随时点一下就能回来
     bar.classList.remove('stowed');
     bar.classList.add('floating');
     // 等淡出走完再 hidden
@@ -248,13 +248,13 @@ function updateProgress({ stage, message, done, total, downloaded, errors }) {
     $('installTitle').textContent = message;
   }
 
-  // 状态色跟着走：PCL 也是跑完变绿、报错变红
+  // 状态色跟着走：跑完变绿、报错变红
   const state = stage === 'done' ? 'done' : stage === 'error' ? 'error' : 'run';
   bar.dataset.state = state;
   card.dataset.state = state;
 
   if (total) {
-    // 已有总量：正常进度 + 百分比（PCL 的「文本 - 42%」）
+    // 已有总量：正常进度 + 百分比
     const pct = Math.min(100, (done / total) * 100);
     track.classList.remove('indeterminate');
     iTrack.classList.remove('indeterminate');
@@ -288,7 +288,7 @@ function updateProgress({ stage, message, done, total, downloaded, errors }) {
     $('progressMeta').textContent = '';
     $('installMeta').textContent = '';
   } else if (stage) {
-    // 总量未知：PCL 也是不报百分比，改成来回跑的条，
+    // 总量未知：不报百分比，改成来回跑的条，
     // 比一条死钉在 0% 的空条更能说明「它在干活」
     track.classList.add('indeterminate');
     iTrack.classList.add('indeterminate');
@@ -1375,7 +1375,7 @@ const LOADER_LABEL = {
 };
 
 /**
- * PCL 风格的类型图标。honghemc 那个站点是物品图标库，不是加载器图标，
+ * 方块风格的类型图标。honghemc 那个站点是物品图标库，不是加载器图标，
  * 这里用内置 SVG：不依赖网络，实例自定义 icon 仍优先。
  */
 const VERSION_ICON_SVG = {
@@ -1572,9 +1572,9 @@ function renderSkeleton(boxId, count = 6, label = '正在加载…') {
   const box = $(boxId);
   if (!box) return;
   box.innerHTML = `
-      <div class="pcl-loading">
-        <img class="pcl-gif" src="loading.gif" alt="">
-        <div class="pcl-text">${escapeHtml(label)}</div>
+      <div class="boot-loading">
+        <img class="boot-gif" src="loading.gif" alt="">
+        <div class="boot-text">${escapeHtml(label)}</div>
       </div>`;
 }
 
@@ -4090,7 +4090,7 @@ function paintAccountAvatar(acc) {
   };
 
   // 从主页 3D 舞台当前画面裁头部：皮肤、hat、披风等全部来自同一帧。
-  // 不另开离屏 viewer，也不再调用 PCL 的 8×8 裁脸代码。
+  // 不另开离屏 viewer，也不再调用旧的头像裁切函数。
   const paintStageHead = async () => {
     try {
       if (typeof window.captureStageHead === 'function') {
@@ -4174,12 +4174,51 @@ function syncAccountActions(acc) {
 /** 把一张皮肤图的脸画到画布上（预览用，和头像同一套裁剪） */
 function drawFace(canvas, img) {
   const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
+  const size = Math.min(W, H);
+  const inset = size * 0.08;
+  const frame = size - inset * 2;
+  const corner = frame * 0.18;
+  const radius = Math.min(corner, frame / 2);
+  const cx = W / 2;
+  const cy = H / 2;
+  const k = Math.max(1, Math.round((img.naturalWidth || 64) / 64));
+
+  ctx.clearRect(0, 0, W, H);
   ctx.imageSmoothingEnabled = false;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(img, 8, 8, 8, 8, 0, 0, canvas.width, canvas.height);
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(inset + radius, inset);
+  ctx.arcTo(inset + frame, inset, inset + frame, inset + frame, radius);
+  ctx.arcTo(inset + frame, inset + frame, inset, inset + frame, radius);
+  ctx.arcTo(inset, inset + frame, inset, inset, radius);
+  ctx.arcTo(inset, inset, inset + frame, inset, radius);
+  ctx.closePath();
+  ctx.clip();
+
+  const faceSize = frame * 0.70;
+  const hatSize = frame * 0.86;
+  ctx.drawImage(img, 8 * k, 8 * k, 8 * k, 8 * k,
+    cx - faceSize / 2, cy - faceSize / 2, faceSize, faceSize);
   if (img.naturalHeight >= 64) {
-    ctx.drawImage(img, 40, 8, 8, 8, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 40 * k, 8 * k, 8 * k, 8 * k,
+      cx - hatSize / 2, cy - hatSize / 2, hatSize, hatSize);
   }
+  ctx.restore();
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(inset + radius, inset);
+  ctx.arcTo(inset + frame, inset, inset + frame, inset + frame, radius);
+  ctx.arcTo(inset + frame, inset + frame, inset, inset + frame, radius);
+  ctx.arcTo(inset, inset + frame, inset, inset, radius);
+  ctx.arcTo(inset, inset, inset + frame, inset, radius);
+  ctx.closePath();
+  ctx.strokeStyle = 'rgba(255,255,255,.20)';
+  ctx.lineWidth = Math.max(1, size * 0.012);
+  ctx.stroke();
+  ctx.restore();
 }
 
 /** 把当前皮肤画到换装弹窗的预览上 */
@@ -5562,7 +5601,7 @@ $('openSkinFolder')?.addEventListener('click', openSkinFolder);
 $('openSkinFolderFromSkin')?.addEventListener('click', openSkinFolder);
 
 // 下载/安装页收起与展开。
-// 收起后底部那条还在，点它就能把整页叫回来（PCL 的习惯）。
+// 收起后底部那条还在，点它就能把整页叫回来。
 $('installCollapse').addEventListener('click', () => setInstallCollapsed(true));
 
 // 取消：先问一句，别让人手滑点掉跑到一半的下载。

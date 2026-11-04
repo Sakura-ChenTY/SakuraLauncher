@@ -31,7 +31,7 @@ export const DEFAULTS = {
   memoryMin: '512M',
   memoryMax: '4096M',
   javaPath: '',
-  // Java 策略，学 PCL：默认只认本机已有的 Java，不下载
+  // Java 策略：默认只认本机已有的 Java，不下载
   //   external = 只用外部 Java，缺了就报错提示用户自己装（体积最小）
   //   auto     = 缺了就自动下载对应版本的 JRE（开箱即用，但多占 ~180MB/版本）
   javaMode: 'auto',

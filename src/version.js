@@ -6,7 +6,7 @@
  * 这里实现标准合并语义，顺序是：
  *   父版本先落地 -> 子版本覆盖标量 -> libraries 累加去重 -> arguments 拼接
  *
- * 注意：PCL 的实例 JSON 往往已经是合并完的（inheritsFrom 不存在），
+ * 注意：实例 JSON 往往已经是合并完的（inheritsFrom 不存在），
  * 这时本模块退化为"只读一次"，不会出错。
  */
 import fs from 'node:fs';

@@ -338,7 +338,7 @@ export async function installVersion(opts) {
   }
 
   // ---- 8. 确保版本要求的 Java 存在 ----
-  //     external 模式（默认，学 PCL）：只查本机，缺了就报错提醒，不下载
+  //     external 模式（默认）：只查本机，缺了就报错提醒，不下载
   //     auto 模式：缺了自动下载对应 JRE
   const requiredJava = versionJson.javaVersion?.majorVersion;
   if (requiredJava) {

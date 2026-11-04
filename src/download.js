@@ -289,7 +289,7 @@ export function manualSwitchSource(source) {
  *   服务端本来就只允许一个安装任务（`if (state.installing) throw`），
  *   没有并发场景。用模块级「当前任务」能让所有下载点自动获得取消能力，
  *   不用改 installer/fabric/modpack 等每个函数的签名。
- * 取消语义（对齐 PCL）：取消 = 回滚
+ * 取消语义：取消 = 回滚
  *   取消后把本次任务写下的文件、.part 残留、本次新建的目录全部清掉，
  *   回到「任务开始前」的状态，不留半成品。
  *   只删「本次真的写过」的文件 —— 已存在而被跳过的一律不动，

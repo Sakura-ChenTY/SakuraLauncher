@@ -1,7 +1,7 @@
 /**
  * 正版皮肤获取
  *
- * 链路（PCL 也是这么走的）：
+ * 皮肤链路：
  *   sessionserver.mojang.com/session/minecraft/profile/<uuid>
  *     -> properties[textures] (base64 JSON)
  *       -> textures.SKIN.url 指向 textures.minecraft.net 的 PNG

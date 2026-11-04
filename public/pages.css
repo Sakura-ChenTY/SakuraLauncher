@@ -67,7 +67,7 @@ html[data-theme="violet"], body[data-theme="violet"] {
   --accent-2: #8465d6;
 }
 
-html[data-theme="light"], body[data-theme="light"] {
+html[data-theme="daylight"], body[data-theme="daylight"] {
   color-scheme: light;
   --bg: #ffffff;
   --bg-2: #f5f5f5;
@@ -105,51 +105,51 @@ body.theme-light {
   --glass-hi: rgba(19, 112, 243, .05);
 }
 
-/* 浅色主题下把深色玻璃换成 PCL 的蓝白层级，否则白底会被一层灰雾压暗。 */
-body[data-theme="light"] .wallpaper, body.theme-light .wallpaper {
+/* 白昼主题下把深色玻璃换成浅色层级，否则白底会被一层灰雾压暗。 */
+body[data-theme="daylight"] .wallpaper, body.theme-light .wallpaper {
   background-color: #ffffff;
   filter: blur(13px) saturate(105%) brightness(1.04);
   opacity: .18;
 }
-body[data-theme="light"] .wallpaper::after, body.theme-light .wallpaper::after {
+body[data-theme="daylight"] .wallpaper::after, body.theme-light .wallpaper::after {
   background: linear-gradient(180deg, rgba(255,255,255,.18), rgba(255,255,255,.42));
 }
-body[data-theme="light"] .topbar, body.theme-light .topbar {
+body[data-theme="daylight"] .topbar, body.theme-light .topbar {
   background: rgba(251, 251, 251, .88);
   border-bottom-color: #cccccc;
 }
-body[data-theme="light"] .sidebar, body.theme-light .sidebar {
+body[data-theme="daylight"] .sidebar, body.theme-light .sidebar {
   background: rgba(251, 251, 251, .76);
   border-right-color: #cccccc;
 }
-body[data-theme="light"] .glass,
-body[data-theme="light"] .panel,
-body[data-theme="light"] .content-panel,
+body[data-theme="daylight"] .glass,
+body[data-theme="daylight"] .panel,
+body[data-theme="daylight"] .content-panel,
 body.theme-light .glass,
 body.theme-light .panel,
 body.theme-light .content-panel {
   background: rgba(245, 245, 245, .96);
   border-color: #cccccc;
 }
-body[data-theme="light"] .btn:not(.ghost),
+body[data-theme="daylight"] .btn:not(.ghost),
 body.theme-light .btn:not(.ghost) {
   color: #ffffff;
 }
-body[data-theme="light"] .btn.ghost,
+body[data-theme="daylight"] .btn.ghost,
 body.theme-light .btn.ghost {
   background: #fbfbfb;
   color: #343d4a;
   border-color: #cccccc;
 }
-body[data-theme="light"] .btn.ghost:hover:not(:disabled),
+body[data-theme="daylight"] .btn.ghost:hover:not(:disabled),
 body.theme-light .btn.ghost:hover:not(:disabled) {
   background: #eaf2fe;
   border-color: #96c0f9;
   color: #0b5bcb;
 }
-body[data-theme="light"] .select,
-body[data-theme="light"] .input,
-body[data-theme="light"] textarea,
+body[data-theme="daylight"] .select,
+body[data-theme="daylight"] .input,
+body[data-theme="daylight"] textarea,
 body.theme-light .select,
 body.theme-light .input,
 body.theme-light textarea {
@@ -157,23 +157,23 @@ body.theme-light textarea {
   border-color: #cccccc;
   color: #343d4a;
 }
-body[data-theme="light"] .select:focus,
-body[data-theme="light"] .input:focus,
-body[data-theme="light"] textarea:focus,
+body[data-theme="daylight"] .select:focus,
+body[data-theme="daylight"] .input:focus,
+body[data-theme="daylight"] textarea:focus,
 body.theme-light .select:focus,
 body.theme-light .input:focus,
 body.theme-light textarea:focus {
   border-color: #1370f3;
 }
-body[data-theme="light"] ::-webkit-scrollbar-thumb,
+body[data-theme="daylight"] ::-webkit-scrollbar-thumb,
 body.theme-light ::-webkit-scrollbar-thumb {
   background: #cccccc;
 }
-body[data-theme="light"] ::-webkit-scrollbar-thumb:hover,
+body[data-theme="daylight"] ::-webkit-scrollbar-thumb:hover,
 body.theme-light ::-webkit-scrollbar-thumb:hover {
   background: #96c0f9;
 }
-body[data-theme="light"] .settings-tab.active,
+body[data-theme="daylight"] .settings-tab.active,
 body.theme-light .settings-tab.active {
   color: #ffffff;
 }
@@ -1042,7 +1042,7 @@ body.has-custom-bg .wallpaper {
 }
 .mem-meter-legend b { color: var(--text); font-weight: 500; }
 
-/* PCL2 风格内存分配 */
+/* 内存分配 */
 .mem-mode-row {
   display: flex;
   align-items: center;

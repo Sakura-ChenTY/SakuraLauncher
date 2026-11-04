@@ -107,7 +107,7 @@ export async function ensureJava(major, opts = {}) {
   }
 
   // 1.5 external 模式：只认本机已有的 Java，不下载。
-  //     这是 PCL 的做法 —— 启动器不带运行时，体积小；代价是缺了要用户自己装。
+  //     启动器不内置运行时，体积小；代价是缺了要用户自己装。
   //     错误信息里给出可执行的名字，而不是一个 404 一样的失败。
   if (mode === 'external') {
     const list = await scanJavas(cachePath, { force });

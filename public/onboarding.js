@@ -94,11 +94,11 @@
         <div class="ob-field">
           <label>游戏目录</label>
           <div class="ob-choice">
-            <input class="input mono grow" id="obDir" placeholder="例如 D:/PCL/.minecraft" value="${esc(chosenDir || settings?.gameDir || 'D:\\PCL\\.minecraft')}">
+            <input class="input mono grow" id="obDir" placeholder="例如 D:/Minecraft/.minecraft" value="${esc(chosenDir || settings?.gameDir || 'D:\\Minecraft\\.minecraft')}">
             <button class="btn ghost" id="obDirBrowse">浏览…</button>
           </div>
           <div class="ob-choice">
-            <button class="btn ghost" id="obDirDefault">用 D:\\PCL\\.minecraft</button>
+            <button class="btn ghost" id="obDirDefault">用 D:\\Minecraft\\.minecraft</button>
             <span class="hint">选完点「下一步」才校验并创建目录。</span>
           </div>
         </div>`;
@@ -106,8 +106,8 @@
       chosenDir = dirInput.value;
       dirInput.addEventListener('input', () => { chosenDir = dirInput.value; });
       document.getElementById('obDirDefault')?.addEventListener('click', () => {
-        document.getElementById('obDir').value = 'D:\\PCL\\.minecraft';
-        chosenDir = 'D:\\PCL\\.minecraft';
+        document.getElementById('obDir').value = 'D:\\Minecraft\\.minecraft';
+        chosenDir = 'D:\\Minecraft\\.minecraft';
       });
       document.getElementById('obDirBrowse')?.addEventListener('click', async () => {
         const p = await globalThis.mcWin?.pickFolder?.();

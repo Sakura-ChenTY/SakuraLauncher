@@ -9,7 +9,7 @@
  * 为什么要放在 versions/<实例>/ 而不是全局根目录：
  *   launch.js 的版本隔离逻辑是——实例目录里出现 mods/saves/options.txt/config
  *   就把 gameDir 指向实例目录。这样不同实例的 mod 互不污染，
- *   和 PCL 的「版本隔离」是同一个思路。
+ *   版本隔离的实现思路：每个实例独立目录。
  */
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';

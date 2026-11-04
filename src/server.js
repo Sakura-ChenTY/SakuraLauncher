@@ -1054,7 +1054,7 @@ async function handleInstall(versionId) {
       pushLog(`安装完成 ${versionId}，ok=${report.ok}`);
       try { ensureChineseLanguage(versionId); } catch { /* 不阻断安装 */ }
     } catch (e) {
-      // 取消 = 回滚（对齐 PCL）：把本次写下的文件与新建目录清干净，
+      // 取消 = 回滚：把本次写下的文件与新建目录清干净，
       // 必须赶在 endJob() 之前 —— 清空了 currentJob 就不知道删什么了。
       const cancelled = e?.cancelled || e instanceof CancelledError;
       let wiped = null;
@@ -4422,12 +4422,12 @@ function readInstanceInfo(versionId) {
   }
 
   // 游戏版本判定顺序（实测踩过坑，别改回去）：
-  //   1. clientVersion —— PCL 导出的实例会带这个字段，是最可靠的真值
+  //   1. clientVersion —— 实例信息里可能带这个字段，是最可靠的真值
   //   2. inheritsFrom  —— 标准 Fabric/Forge 实例指向父版本
   //   3. 父版本的 id
   //   4. 实例名本身（仅作最后兜底）
   //
-  // 为什么不能直接用 versionId：PCL 建实例时会取名 "26.3-Fabric 0.19.5"，
+  // 为什么不能直接用 versionId：实例名可能包含版本和加载器，
   // json 里 id 也是这个名字且没有 inheritsFrom。把它当游戏版本传给 Modrinth，
   // 会一个都匹配不上 —— 实测 15 个可更新变成 0 个。
   let gameVersion = json.clientVersion || json.inheritsFrom || null;
@@ -4487,7 +4487,7 @@ function readInstanceInfo(versionId) {
  */
 function findInstanceIcon(versionId) {
   const dir = path.join(state.gameDir, 'versions', versionId);
-  // PCL 的习惯是 <版本名>.png；有些整合包用 icon.png / pack.png
+  // 常见命名是 <版本名>.png；有些整合包用 icon.png / pack.png
   const candidates = [
     path.join(dir, `${versionId}.png`),
     path.join(dir, 'icon.png'),

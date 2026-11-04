@@ -5,7 +5,7 @@
  *   官方 api.curseforge.com 必须带 x-api-key，而 key 的申请入口只有
  *   「用 Google 登录 console.curseforge.com」这一条路 —— 本机网络下
  *   accounts.google.com 直接 ECONNABORTED，申请不了。
- *   mod.mcimirror.top 是国内公开的 CF API 镜像（PCL2 也在用），
+ *   mod.mcimirror.top 是国内公开的 CF API 镜像，
  *   接口形状与官方一致，且它返回的 downloadUrl 指向官方 CDN，
  *   文件本身仍是 CurseForge 提供。
  *

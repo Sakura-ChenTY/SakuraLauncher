@@ -128,7 +128,7 @@ export async function launch(opts = {}) {
   if (!fs.existsSync(assetsDir)) throw new Error(`找不到 assets 目录：${assetsDir}`);
 
   // 版本隔离：实例目录里若已有 mods/saves/options.txt 之类，就把 gameDir 指向实例目录。
-  // PCL 的版本隔离正是这样工作的；不做这步，模组和存档都不会被加载。
+  // 版本隔离按这个方式工作；不做这步，模组和存档都不会被加载。
   const isolationMarkers = ['mods', 'saves', 'options.txt', 'config'];
   const looksIsolated = isolationMarkers.some((m) => fs.existsSync(path.join(versionDir, m)));
   const isoMode = opts.isolated !== undefined ? (opts.isolated ? 'on' : 'off') : (s.isolated ?? 'auto');

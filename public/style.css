@@ -748,8 +748,7 @@ main { flex: 1; overflow: hidden; position: relative; min-width: 0; }
 .progress-bar {
   flex-shrink: 0;
   background: var(--bg-2);
-  /* PCL 的 MyHint 是左侧 3px 彩条 + 淡底，这里沿用同一个结构：
-     左边那条颜色跟着状态变（进行中青、成功绿、失败红）。 */
+  /* 底部状态条：左侧细色条 + 淡底，色条颜色跟随任务状态变化。 */
   border-top: 1px solid var(--line);
   border-left: 3px solid var(--accent);
   padding: 10px 20px;
@@ -765,8 +764,7 @@ main { flex: 1; overflow: hidden; position: relative; min-width: 0; }
 .progress-inner { display: flex; align-items: center; gap: 12px; }
 .progress-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 
-/* 文字和百分比同一行左右分开 —— PCL 的 Loading 是「文本 - 42%」
-   自己拼在一起；这里拆成两端对齐，进度跳的时候数字不会推着文字动。 */
+/* 文字和百分比同一行左右分开，进度跳的时候数字不会推着文字动。 */
 .progress-line { display: flex; align-items: baseline; gap: 10px; }
 
 /* 下载时在左边摇头晃脑的小女仆（24 帧透明 GIF）。
@@ -823,9 +821,8 @@ main { flex: 1; overflow: hidden; position: relative; min-width: 0; }
   transition: width .2s ease-out;
 }
 
-/* 总量未知时的「不确定态」：一条短光带来回跑。
-   PCL 遇到算不出总大小的情况也不报百分比，只是让 Loading 继续转，
-   这里用跑马灯表达同一个意思：在干活，但说不了还剩多少。 */
+/* 总量未知时的「不确定态」：一条短光带来回跑，
+   表示任务仍在进行、但暂时无法给出剩余量。 */
 .track.indeterminate .fill {
   width: 32%;
   transition: none;
@@ -2100,7 +2097,7 @@ main {
 }
 /* ===== 列表加载动画（GIF） ===== */
 /* 安装页改用 Q 版动图；普通列表仍用 loading.gif。 */
-.pcl-loading {
+.boot-loading {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -2111,7 +2108,7 @@ main {
   min-height: 220px;
 }
 
-.pcl-text {
+.boot-text {
   font-size: 13px;
   color: var(--text-dim);
   text-align: center;
@@ -2121,7 +2118,7 @@ main {
 /* 列表加载动画用的 GIF。
    原图 300×300，缩到 96px 显示：再大就把结果区顶得太高，
    再小角色表情看不清（这张图细节都在脸上和手里的本子）。 */
-.pcl-gif {
+.boot-gif {
   width: 96px;
   height: 96px;
   flex: none;
@@ -2131,13 +2128,12 @@ main {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pcl-gif { opacity: .75; }
+  .boot-gif { opacity: .75; }
 }
 
 /* ---------- 全屏安装/下载页 ---------- */
-/* 仿 PCL 的 PanLoad：安装时整个内容区让给这张卡片。
-   绝对定位盖在 main 上，不抽掉下面的面板，
-   所以装完一隐藏就回到原来的页面，不用重建 DOM。 */
+/* 安装时整个内容区让给这张卡片。绝对定位盖在 main 上，
+   不抽掉下面的面板，所以装完一隐藏就回到原来的页面，不用重建 DOM。 */
 .install-page {
   position: absolute;
   inset: 0;
@@ -2174,8 +2170,8 @@ main {
 }
 
 /* ---------- 收起按钮 ----------
-   像 PCL 那样：下载继续跑，界面让出来给人干别的。
-   收起后进度回到底部那条，点它就能再展开。 */
+   收起后下载继续跑，界面让出来给人干别的；
+   进度回到底部状态条，点它就能再展开。 */
 .install-collapse {
   position: absolute;
   top: 12px;
@@ -2385,7 +2381,7 @@ main {
    否则同一份进度在一屏里出现两次，看着像没做完的半成品。 */
 .progress-bar.stowed { display: none; }
 
-/* ---------- 收起后的右下角浮窗（照 PCL） ----------
+/* ---------- 收起后的右下角浮窗 ----------
    不占文档流：固定钉在右下角，下载照跑，随时点一下就能把整页叫回来。
    故意做得小：它只是"还在干活"的提示，不该再占半屏。 */
 .progress-bar.floating {
@@ -2443,7 +2439,7 @@ body.acrylic .progress-bar.floating {
    ------------------------------------------------------------
    启动画面现在是独立的透明窗口：electron/main.js 的 createSplashWindow
    加载 public/splash.html + splash.gif，播完（实测 43 帧 / 2.08s）才揭开主窗。
-   窗口尺寸按 PCL 的启动窗对齐（128 物理像素，按 scaleFactor 换成 DIP）。
+   启动窗按 128 物理像素设计，再按 scaleFactor 换成 DIP。
 
    所以主页面里不再有 #splash / .splash-gif 这些元素，
    对应的样式全部删掉了 —— 留着只会让人以为这里还有一层启动页。

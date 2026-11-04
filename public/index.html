@@ -12,7 +12,7 @@
   <!-- 磨砂底图：优先用当前系统壁纸，取不到由 JS 加 .fallback 退回渐变 -->
   <div class="wallpaper" id="wallpaper" aria-hidden="true"></div>
 
-  <!-- 启动动画已经搬到独立透明窗口（splash.html / splash.gif，尺寸对齐 PCL）。
+  <!-- 启动动画已经搬到独立透明窗口（splash.html / splash.gif）。
        主页面里不能再留一层 splash —— 那样主窗一亮起来就会多盖一块
        不透明底色，正是搭档截图里那个黑框。 -->
 
@@ -684,7 +684,7 @@
                   <input id="setGameDir" class="input mono" type="text" spellcheck="false">
                   <button class="btn ghost" id="browseGameDir">浏览…</button>
                 </div>
-                <div class="field-note" id="gameDirHint">所有实例、存档、mod 都放这里。默认 <code>D:/PCL/.minecraft</code></div>
+                <div class="field-note" id="gameDirHint">所有实例、存档、mod 都放这里。默认 <code>D:/Minecraft/.minecraft</code></div>
               </div>
 
               <div class="field">
@@ -762,7 +762,7 @@
                   <option value="external">只用本机已有 Java（推荐，不占空间）</option>
                   <option value="auto">缺了就自动下载（每个版本约 +180MB）</option>
                 </select>
-                <div class="field-note">「只用外部」跟 PCL 一样：启动器不带运行时，缺了会提示你装哪个版本</div>
+                <div class="field-note">「只用外部」：启动器不内置运行时，缺了会提示你安装对应版本</div>
               </div>
 
               <div class="field">
@@ -1016,12 +1016,10 @@
             <div class="settings-group">
               <div class="group-title">创作人员鸣谢</div>
               <div class="credit-block">
-                <div class="credit-title">Plain Craft Launcher 2（PCL2）</div>
+                <div class="credit-title">参考说明</div>
                 <div class="credit-body">
-                  本项目大量交互与设计参照 PCL2。原作者 <b>龙腾猫跃（Meloong-Git）</b>，
-                  以及 GitHub 上的全体贡献者：
+                  交互与设计上参考过 Plain Craft Launcher 2（作者：龙腾猫跃）。
                 </div>
-                <div class="credit-names" id="pclContributors"></div>
               </div>
 
               <div class="credit-block">
@@ -1077,12 +1075,12 @@
           </div>
         </section>
 
-        <!-- ============ 全屏安装/下载页（仿 PCL 的 PanLoad） ============ -->
+        <!-- ============ 全屏安装/下载页 ============ -->
         <!-- 安装或下载一开始，整个内容区就换成这张卡片，
              而不是只在底部挤一条进度。装完自动淡出回到原页面。 -->
         <div class="install-page" id="installPage" hidden>
           <div class="install-card">
-            <!-- 像 PCL 那样能收起：下载照跑，人可以去干别的 -->
+            <!-- 可以收起：下载继续跑，人可以去干别的 -->
             <button class="install-collapse" id="installCollapse" title="收起（下载继续，不挡着界面）">
               <span>收起</span>
               <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 10.5 8 5.5l5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
