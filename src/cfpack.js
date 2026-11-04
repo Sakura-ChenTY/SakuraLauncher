@@ -24,7 +24,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 
-import { downloadMany } from './download.js';
+import { downloadFile, downloadMany } from './download.js';
 import { listEntries, readEntry } from './zip.js';
 import { installVersion } from './installer.js';
 import { installFabric } from './fabric.js';
@@ -34,6 +34,39 @@ import { cfGet, cfPost, CF_GAME_ID } from './curseforge.js';
 import { getSettings } from './settings.js';
 
 const UA = 'mclauncher/0.1 (local)';
+
+/** CurseForge 文件直链：fileId 前四位 / 后四位路径 + 三个 CDN 域名回退。 */
+export function curseForgePackUrls(file) {
+  const id = String(file?.id || '');
+  const name = String(file?.fileName || '');
+  if (!id || !name) return [];
+  const rel = `files/${id.slice(0, 4)}/${id.slice(4)}/${encodeURIComponent(name)}`;
+  const hosts = ['edge.forgecdn.net', 'mediafilez.forgecdn.net', 'media.forgecdn.net'];
+  const urls = [file.downloadUrl, ...hosts.map((h) => `https://${h}/${rel}`)].filter(Boolean);
+  return [...new Set(urls)];
+}
+
+/** 下载整合包 zip，按候选域名逐个回退，并校验 SHA1。 */
+export async function downloadCurseForgePackZip(file, zipPath) {
+  const sha1 = (file?.hashes ?? []).find((h) => h.algo === 1)?.value;
+  const urls = curseForgePackUrls(file);
+  if (!urls.length) throw new Error('无法构造整合包下载地址');
+  let lastErr = null;
+  for (const url of urls) {
+    try {
+      await downloadFile(url, zipPath, {
+        sha1,
+        size: file.fileLength,
+        retries: 1,
+        timeout: 900000,
+      });
+      return url;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw new Error(`整合包下载失败（已尝试 ${urls.length} 个候选）：${lastErr?.message ?? '未知错误'}`);
+}
 
 function downloadConcurrency() {
   const n = Number(getSettings().concurrency);
@@ -171,7 +204,6 @@ export async function previewCurseForgePack({ modId, fileId, onStage = () => {} 
     file = list.find((f) => f.downloadUrl);
   }
   if (!file) throw new Error('这个整合包没有可下载的文件');
-  if (!file.downloadUrl) throw new Error('作者关闭了这个文件的第三方分发，只能去官网手动下载');
 
   const tmpDir = path.join(process.env.TEMP ?? '.', `cfpack-${Date.now()}`);
   await fsp.mkdir(tmpDir, { recursive: true });
@@ -179,12 +211,7 @@ export async function previewCurseForgePack({ modId, fileId, onStage = () => {} 
 
   try {
     onStage({ stage: 'cfpack', message: '下载整合包清单' });
-    const res = await fetch(file.downloadUrl, {
-      headers: { 'User-Agent': UA },
-      signal: AbortSignal.timeout(600000),
-    });
-    if (!res.ok) throw new Error(`下载整合包失败：HTTP ${res.status}`);
-    await fsp.writeFile(zipPath, Buffer.from(await res.arrayBuffer()));
+    await downloadCurseForgePackZip(file, zipPath);
 
     const buf = fs.readFileSync(zipPath);
     const entries = listEntries(buf);
@@ -257,29 +284,7 @@ export async function installCurseForgePack(opts = {}) {
 
   // ---- 2. 下载整合包 ----
   onStage({ stage: 'cfpack', message: `下载整合包（${(file.fileLength / 1024 / 1024).toFixed(1)}MB）` });
-  {
-    const res = await fetch(file.downloadUrl, {
-      headers: { 'User-Agent': UA },
-      signal: AbortSignal.timeout(900000),
-    });
-    if (!res.ok) throw new Error(`下载整合包失败：HTTP ${res.status}`);
-    const total = Number(res.headers.get('content-length') ?? 0);
-    const chunks = [];
-    let got = 0;
-    for await (const c of res.body) {
-      chunks.push(c);
-      got += c.length;
-      if (total) {
-        onProgress({
-          stage: 'cfpack',
-          done: got,
-          total,
-          message: `整合包 ${(got / 1024 / 1024).toFixed(1)}/${(total / 1024 / 1024).toFixed(1)}MB`,
-        });
-      }
-    }
-    await fsp.writeFile(zipPath, Buffer.concat(chunks));
-  }
+  await downloadCurseForgePackZip(file, zipPath);
 
   // ---- 3. 解析 manifest ----
   const buf = fs.readFileSync(zipPath);
@@ -451,6 +456,7 @@ export async function installCurseForgePack(opts = {}) {
       failed: r.errors.length,
       notDistributable: skipped.length,
     },
+    failedFiles: r.errors.map((e) => ({ name: e.item?.name || e.item?.url || '', error: e.error })),
     skipped: skipped.slice(0, 20),
     overrides: ovCount,
     instanceDir,
