@@ -63,9 +63,11 @@ import {
   onlineSnapshot,
   detectLanPort,
   setSakuraTunnelLocalPort,
+  setTunnelLogger,
 } from './online.js';
 import { startRoom, stopRoom, getRoomState, setRoomFrp, failRoom, attachHostGame, onHostGameExit, getWorldSettings, saveWorldSettings } from './gameserver.js';
 import { readRecent, saveRecent, clearRecent, validateRecent } from './recent-play.js';
+import { resolveRoomPort } from './room-port.js';
 import { openPort as openUpnp, closePort as closeUpnp, mappingState as upnpState } from './upnp.js';
 import { installContent, listInstalled, removeContent, toggleContent } from './content.js';
 import { checkModUpdates, applyModUpdates } from './modupdate.js';
@@ -896,6 +898,14 @@ function pushLog(line) {
     /* 文件日志失败不影响运行 */
   }
 }
+
+setTunnelLogger((e) => {
+  const remote = e.remotePort ? `:${e.remotePort}` : '';
+  pushLog(
+    `[隧道] ${e.action} ${e.provider || '?'}/${e.tunnelId || '?'} ${e.name || ''}`.trim() +
+    ` local=${e.localPort ?? '?'} remote=${e.address || remote || '?'} ${e.detail || ''}`.trim()
+  );
+});
 
 /**
  * 等一个可能很慢的异步（比如测速），但一旦用户取消就立即抛 CancelledError。
@@ -2978,16 +2988,33 @@ const server = http.createServer(async (req, res) => {
           onLog: (line) => emit('room-log', { line }),
         });
 
+        let roomPortInfo;
+        try {
+          roomPortInfo = resolveRoomPort({
+            gameDir: state.gameDir,
+            versionId: body.versionId,
+            serverDir: room.serverDir,
+            roomLogs: room.logs,
+          });
+        } catch (e) {
+          await stopRoom({ keepWorld: true, onLog: (line) => emit('room-log', { line }) });
+          const failed = failRoom(`无法确定房间监听端口：${e.message}`);
+          emit('room-state', { room: failed });
+          return json(res, 400, { error: failed.error, room: failed });
+        }
+        const roomPort = roomPortInfo.port;
+        pushLog(`[room] 实际监听端口 ${roomPort}（${roomPortInfo.source}）`);
+
         let frp = null;
         let sakuraPortInfo = null;
         try {
           if (!body.provider) throw new Error('没有选择 frp provider');
           if (!body.tunnelId && body.provider !== 'custom') throw new Error('没有选择隧道');
           if (body.provider === 'sakura') {
-            sakuraPortInfo = await setSakuraTunnelLocalPort(body.tunnelId, 25565);
-            pushLog(`Sakura 隧道 ${body.tunnelId} local_port → 25565${sakuraPortInfo.changed ? `（原 ${sakuraPortInfo.previousLocalPort}）` : ''}`);
+            sakuraPortInfo = await setSakuraTunnelLocalPort(body.tunnelId, roomPort);
+            pushLog(`Sakura 隧道 ${body.tunnelId} local_port → ${roomPort}${sakuraPortInfo.changed ? `（原 ${sakuraPortInfo.previousLocalPort}）` : ''}`);
           }
-          const r = await startTunnel(body.provider, body.tunnelId, 25565);
+          const r = await startTunnel(body.provider, body.tunnelId, roomPort);
           if (!r?.address) throw new Error('frpc 已启动但没有拿到公网地址');
           frp = {
             provider: body.provider,
@@ -2995,7 +3022,7 @@ const server = http.createServer(async (req, res) => {
             address: r.address,
             ipAddress: r.ipAddress || '',
             pid: r.pid || null,
-            localPort: 25565,
+            localPort: roomPort,
             originalLocalPort: sakuraPortInfo?.previousLocalPort ?? null,
           };
           setRoomFrp(frp);
@@ -3006,7 +3033,7 @@ const server = http.createServer(async (req, res) => {
           // 隧道挂到 25565，则复用它的真实地址，否则必须报错。
           const external = onlineSnapshot()[body.provider]?.tunnels
             ?.find((t) => String(t.id) === String(body.tunnelId));
-          if (external?.online && external.address && Number(external.localPort) === 25565) {
+          if (external?.online && external.address && Number(external.localPort) === roomPort) {
             frp = {
               provider: body.provider,
               tunnelId: body.tunnelId || '',
@@ -3014,7 +3041,7 @@ const server = http.createServer(async (req, res) => {
               ipAddress: external.ipAddress || '',
               pid: null,
               external: true,
-              localPort: 25565,
+              localPort: roomPort,
               originalLocalPort: sakuraPortInfo?.previousLocalPort ?? null,
             };
             setRoomFrp(frp);
@@ -3026,9 +3053,10 @@ const server = http.createServer(async (req, res) => {
               provider: body.provider,
               tunnelId: body.tunnelId,
               originalLocalPort: sakuraPortInfo?.previousLocalPort,
-              localPort: 25565,
+              localPort: roomPort,
             });
             await stopRoom({ keepWorld: true, onLog: (line) => emit('room-log', { line }) });
+            pushLog(`[隧道] failed ${body.provider || '?'}/${body.tunnelId || '?'} local=${roomPort} remote=? ${e.message}`);
             const failed = failRoom(`frpc 启动失败：${e.message}${restoreError ? `；还原隧道端口失败：${restoreError}` : ''}`);
             emit('room-state', { room: failed });
             return json(res, 400, { error: failed.error, room: failed });
@@ -3063,7 +3091,7 @@ const server = http.createServer(async (req, res) => {
           try {
             await handleLaunch({
               versionId: body.versionId,
-              joinAddress: '127.0.0.1:25565',
+              joinAddress: `127.0.0.1:${roomPort}`,
               recentMeta: {
                 mode: 'multiplayer',
                 role: 'host',
@@ -3168,13 +3196,30 @@ const server = http.createServer(async (req, res) => {
             },
             onLog: (line) => emit('room-log', { line }),
           });
+          let roomPortInfo;
+          try {
+            roomPortInfo = resolveRoomPort({
+              gameDir: state.gameDir,
+              versionId: recent.versionId,
+              serverDir: room.serverDir,
+              roomLogs: room.logs,
+            });
+          } catch (e) {
+            await stopRoom({ keepWorld: true, onLog: (line) => emit('room-log', { line }) });
+            const failed = failRoom(`无法确定房间监听端口：${e.message}`);
+            emit('room-state', { room: failed });
+            return json(res, 400, { error: failed.error, room: failed });
+          }
+          const roomPort = roomPortInfo.port;
+          pushLog(`[room] 实际监听端口 ${roomPort}（${roomPortInfo.source}）`);
+
           let frp = null;
           try {
             let sakuraPortInfo = null;
             if (provider === 'sakura') {
-              sakuraPortInfo = await setSakuraTunnelLocalPort(recent.room?.tunnelId || '', 25565);
+              sakuraPortInfo = await setSakuraTunnelLocalPort(recent.room?.tunnelId || '', roomPort);
             }
-            const r = await startTunnel(provider, recent.room?.tunnelId || '', 25565);
+            const r = await startTunnel(provider, recent.room?.tunnelId || '', roomPort);
             if (!r?.address) throw new Error('frpc 已启动但没有拿到公网地址');
             frp = {
               provider,
@@ -3182,7 +3227,7 @@ const server = http.createServer(async (req, res) => {
               address: r.address,
               ipAddress: r.ipAddress || '',
               pid: r.pid || null,
-              localPort: 25565,
+              localPort: roomPort,
               originalLocalPort: sakuraPortInfo?.previousLocalPort ?? null,
             };
             setRoomFrp(frp);
@@ -3190,7 +3235,7 @@ const server = http.createServer(async (req, res) => {
           } catch (e) {
             const external = onlineSnapshot()[provider]?.tunnels
               ?.find((t) => String(t.id) === String(recent.room?.tunnelId));
-            if (external?.online && external.address && Number(external.localPort) === 25565) {
+            if (external?.online && external.address && Number(external.localPort) === roomPort) {
               frp = {
                 provider,
                 tunnelId: recent.room?.tunnelId || '',
@@ -3198,7 +3243,7 @@ const server = http.createServer(async (req, res) => {
                 ipAddress: external.ipAddress || '',
                 pid: null,
                 external: true,
-                localPort: 25565,
+                localPort: roomPort,
                 originalLocalPort: null,
               };
               setRoomFrp(frp);
@@ -3206,6 +3251,7 @@ const server = http.createServer(async (req, res) => {
             } else {
               try { stopTunnel(provider); } catch { /* ignore */ }
               await stopRoom({ keepWorld: true, onLog: (line) => emit('room-log', { line }) });
+              pushLog(`[隧道] failed ${provider || '?'}/${recent.room?.tunnelId || '?'} local=${roomPort} remote=? ${e.message}`);
               const failed = failRoom(`frpc 启动失败：${e.message}`);
               emit('room-state', { room: failed });
               return json(res, 400, { error: failed.error, room: failed });
@@ -3223,7 +3269,7 @@ const server = http.createServer(async (req, res) => {
           if (recent.hostJoined) {
             launch = await handleLaunch({
               versionId: recent.versionId,
-              joinAddress: '127.0.0.1:25565',
+              joinAddress: `127.0.0.1:${roomPort}`,
               recentMeta: { ...recent, room: roomMeta },
             });
           }
