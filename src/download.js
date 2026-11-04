@@ -571,6 +571,7 @@ function requestOnce(url, { timeout = 30000, headers = {}, redirects = 0, deadli
     const onAbort = (event) => {
       const reason = event?.target?.reason;
       if (reason instanceof SourceSwitchError) req.destroy(reason);
+      else if (String(reason?.message || '').startsWith('STALL_TIMEOUT')) req.destroy(reason);
       else req.destroy(new CancelledError(currentJob?.reason || '已取消'));
     };
     for (const signal of signals) signal.addEventListener('abort', onAbort, { once: true });
