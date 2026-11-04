@@ -1082,6 +1082,25 @@ body.has-custom-bg .wallpaper {
 .mem-optimize input { accent-color: var(--accent); }
 .mem-system { margin-top: 7px; }
 
+.memory-tools { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.memory-stats { margin: 7px 0 9px; color: var(--text); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.memory-result { min-height: 18px; color: var(--text-dim); font-size: 11px; line-height: 1.5; white-space: pre-wrap; }
+.memory-process-list { display: flex; flex-direction: column; gap: 5px; max-height: 230px; overflow-y: auto; margin-top: 9px; }
+.memory-process-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 11px;
+  background: var(--bg-2);
+}
+.memory-process-row .memory-process-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 70px; }
+.memory-process-row .memory-process-size { margin-left: auto; color: var(--text-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.memory-process-row button { padding: 1px 7px; font-size: 10px; }
+
 /* 未选 MC 版本时，加载器版本下拉只作为占位符 */
 .select:disabled {
   opacity: .42;

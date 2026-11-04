@@ -3453,6 +3453,9 @@ async function loadSystemMemory() {
     systemMemory = null;
   }
   renderMemoryStatus();
+  if (systemMemory) {
+    renderMemoryStats(systemMemory.free * 1024 * 1024, systemMemory.total * 1024 * 1024);
+  }
   syncMemRange();
 }
 
@@ -3480,7 +3483,8 @@ function renderMemoryMeter() {
 
 function recommendedMemoryMb() {
   if (!systemMemory) return 4096;
-  const raw = Math.min(Number(systemMemory.total) * 0.4, 8192);
+  if (Number(systemMemory.recommendedMax) > 0) return Number(systemMemory.recommendedMax);
+  const raw = Math.min(Number(systemMemory.total) * 0.25, 8192);
   return Math.max(512, Math.floor(raw / 512) * 512);
 }
 
@@ -3525,7 +3529,120 @@ function renderMemoryStatus() {
     : (overSoft ? '超过建议值，可能和系统抢内存' : '');
   el.classList.toggle('over', overCap);
   el.classList.toggle('warn', overSoft);
+  const hint = $('memRecommendHint');
+  if (hint) {
+    const totalG = (systemMemory.total / 1024).toFixed(1);
+    const suggestG = (recommendedMemoryMb() / 1024).toFixed(1);
+    hint.textContent = `物理内存 ${totalG}G；建议游戏分配 ${suggestG}G（约 1/4，给系统留余量）。滑块可手动覆盖。`;
+  }
   updateSettingsSaveState();
+}
+
+function memoryMbText(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 MB';
+  const mb = bytes / 1024 / 1024;
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`;
+}
+
+let memoryCooldownUntil = 0;
+let memoryCooldownTimer = 0;
+
+function renderMemoryStats(freeBytes, totalBytes) {
+  const el = $('memoryStats');
+  if (!el) return;
+  const total = Number(totalBytes) || Number(systemMemory?.total) * 1024 * 1024;
+  const free = Number(freeBytes) || Number(systemMemory?.free) * 1024 * 1024;
+  const rec = recommendedMemoryMb();
+  el.textContent = `物理内存 ${memoryMbText(total)} · 当前可用 ${memoryMbText(free)} · 游戏建议 ${(rec / 1024).toFixed(1)} GB`;
+}
+
+function updateMemoryCooldown() {
+  const remain = Math.max(0, memoryCooldownUntil - Date.now());
+  const label = $('memoryCooldown');
+  const all = $('memoryOptimizeAll');
+  if (label) label.textContent = remain > 0 ? `冷却中，${Math.ceil(remain / 1000)} 秒后可再操作` : '';
+  if (all) all.disabled = remain > 0;
+  document.querySelectorAll('[data-mem-pid]').forEach((btn) => { btn.disabled = remain > 0; });
+  clearTimeout(memoryCooldownTimer);
+  if (remain > 0) memoryCooldownTimer = setTimeout(updateMemoryCooldown, 1000);
+}
+
+function startMemoryCooldown(ms = 60000) {
+  memoryCooldownUntil = Date.now() + Math.max(0, Number(ms) || 60000);
+  updateMemoryCooldown();
+}
+
+function renderMemoryProcesses(list) {
+  const box = $('memoryProcessList');
+  if (!box) return;
+  const rows = Array.isArray(list) ? list : [];
+  if (!rows.length) {
+    box.innerHTML = '<div class="field-note">没有可优化的进程。</div>';
+    return;
+  }
+  box.innerHTML = rows.map((p) => `
+    <div class="memory-process-row" data-row-pid="${p.pid}">
+      <span class="memory-process-name" title="${escapeHtml(p.name)} (PID ${p.pid})">${escapeHtml(p.name)} <span class="hint">#${p.pid}</span></span>
+      <span class="memory-process-size">工作集 ${memoryMbText(p.workingSet)} · 最多可回收</span>
+      <button class="btn ghost" type="button" data-mem-pid="${p.pid}">优化</button>
+    </div>`).join('');
+  box.querySelectorAll('[data-mem-pid]').forEach((btn) => {
+    btn.addEventListener('click', () => optimizeMemoryProcess(Number(btn.dataset.memPid)));
+  });
+  updateMemoryCooldown();
+}
+
+async function loadMemoryProcesses() {
+  const box = $('memoryProcessList');
+  if (box) box.innerHTML = '<div class="field-note">正在读取进程…</div>';
+  try {
+    const data = await api('/api/system/memory/processes');
+    renderMemoryProcesses(data.processes || []);
+    const mem = await api('/api/system/memory');
+    systemMemory = mem;
+    renderMemoryStats(mem.free * 1024 * 1024, mem.total * 1024 * 1024);
+    renderMemoryStatus();
+  } catch (e) {
+    if (box) box.innerHTML = `<div class="field-note">读取进程失败：${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function showMemoryResult(result) {
+  const el = $('memoryResult');
+  if (!el) return;
+  const before = memoryMbText(result.freeBefore);
+  const after = memoryMbText(result.freeAfter);
+  const delta = Number(result.totalFreeDelta) || 0;
+  const deltaText = delta >= 0 ? `+${memoryMbText(delta)}` : `-${memoryMbText(Math.abs(delta))}`;
+  const released = Number(result.released) || 0;
+  const failedRows = (result.processes || []).filter((p) => p.result !== 'ok');
+  const failedText = failedRows.length
+    ? `；未处理：${failedRows.slice(0, 5).map((p) => `${p.name} #${p.pid}（${p.result}）`).join('、')}${failedRows.length > 5 ? ' 等' : ''}`
+    : '';
+  el.textContent = `优化前可用 ${before} → 优化后可用 ${after}（${deltaText}）。工作集减少 ${memoryMbText(released)}${failedText}。\n注意：这里的数字是工作集变化，不等于永久空闲内存；系统和程序之后可能重新占用。`;
+  renderMemoryStats(result.freeAfter, result.total);
+}
+
+async function optimizeMemoryProcess(pid) {
+  if (Date.now() < memoryCooldownUntil) return;
+  const result = $('memoryResult');
+  if (result) result.textContent = pid ? '正在处理该进程…' : '正在处理可回收进程…';
+  const all = $('memoryOptimizeAll');
+  if (all) all.disabled = true;
+  try {
+    const r = await api('/api/system/memory/optimize', {
+      method: 'POST',
+      body: JSON.stringify(pid ? { pid } : {}),
+    });
+    showMemoryResult(r);
+    startMemoryCooldown(r.cooldownMs || 60000);
+    await loadMemoryProcesses();
+  } catch (e) {
+    if (result) result.textContent = `处理失败：${e.message}`;
+    if (/冷却/.test(e.message)) startMemoryCooldown(60000);
+  } finally {
+    updateMemoryCooldown();
+  }
 }
 
 function updateMemTotal() {
@@ -5095,6 +5212,7 @@ document.querySelectorAll('.nav-item').forEach((tab) => {
     tab.classList.add('active');
     $('panel-' + tab.dataset.tab).classList.add('active');
     if (tab.dataset.tab === 'saves') loadSavesPage();
+    if (tab.dataset.tab === 'settings') loadMemoryProcesses();
   });
 });
 
@@ -5415,6 +5533,8 @@ $('setMemMaxRange').addEventListener('input', (e) => {
   $('setMemMax').value = `${e.target.value}M`;
   updateMemTotal();
 });
+$('memoryRefresh')?.addEventListener('click', loadMemoryProcesses);
+$('memoryOptimizeAll')?.addEventListener('click', () => optimizeMemoryProcess(0));
 // 透明度滑块：拖的时候实时预览，不用等点保存。
 $('setGlass').addEventListener('input', (e) => applyGlassAlpha(Number(e.target.value)));
 
