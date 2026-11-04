@@ -14,6 +14,7 @@ import https from 'node:https';
 import http from 'node:http';
 
 import { candidateUrls } from './sources.js';
+import { getSettings } from './settings.js';
 
 const agents = {
   'https:': new https.Agent({ keepAlive: true, maxSockets: 256 }),
@@ -46,6 +47,21 @@ function hostLabel(value) {
   }
 }
 
+/**
+ * split 模式：用目标路径做稳定哈希，同一个文件每次落到同一个主源。
+ * mirrorShare 是分给 BMCLAPI 的百分比；0 = 全官方，100 = 全镜像。
+ */
+function splitSourceFor(url, destPath) {
+  const raw = Number(getSettings().mirrorShare);
+  const share = Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : 50;
+  if (share <= 0) return 'official';
+  if (share >= 100) return 'bmclapi';
+  const key = `${url}\0${path.resolve(destPath).toLowerCase()}`;
+  const digest = crypto.createHash('sha1').update(key).digest();
+  const bucket = ((digest[0] << 8) | digest[1]) % 100;
+  return bucket < share ? 'bmclapi' : 'official';
+}
+
 /* ---------------- 取消 ----------------
  * 为什么用模块级单例而不是层层传 signal：
  *   服务端本来就只允许一个安装任务（`if (state.installing) throw`），
@@ -66,9 +82,48 @@ export class CancelledError extends Error {
 
 let currentJob = null; // { ctrl, reason, files:Set, dirs:[] }
 
+/*
+ * split 模式的源健康状态。
+ * BMCLAPI 的 assets 偶尔会一直慢或连续断连；连续失败后暂时把它降级到
+ * 官方源，避免每个文件都等满一次超时。只在 split 模式生效。
+ */
+const splitHealth = new Map(); // source -> { failures, cooldownUntil }
+const SPLIT_FAILURES_BEFORE_COOLDOWN = 2;
+const SPLIT_COOLDOWN_MS = 5 * 60_000;
+const SPLIT_MIRROR_TIMEOUT_MS = 20_000;
+
+function sourceHealth(id) {
+  if (!splitHealth.has(id)) splitHealth.set(id, { failures: 0, cooldownUntil: 0 });
+  return splitHealth.get(id);
+}
+
+function sourceAvailable(id) {
+  const h = sourceHealth(id);
+  if (h.cooldownUntil && Date.now() >= h.cooldownUntil) {
+    h.cooldownUntil = 0;
+    h.failures = 0;
+  }
+  return !h.cooldownUntil;
+}
+
+function noteSourceFailure(id) {
+  const h = sourceHealth(id);
+  h.failures += 1;
+  if (h.failures >= SPLIT_FAILURES_BEFORE_COOLDOWN && !h.cooldownUntil) {
+    h.cooldownUntil = Date.now() + SPLIT_COOLDOWN_MS;
+    logDownload(`[源降级] ${id} 连续失败 ${h.failures} 次，接下来 5 分钟改用另一源`);
+  }
+}
+
+function noteSourceSuccess(id) {
+  const h = sourceHealth(id);
+  if (!h.cooldownUntil) h.failures = 0;
+}
+
 /** 开一个新任务，返回前一个若存在则先收尾 */
 export function startJob() {
   endJob();
+  splitHealth.clear();
   currentJob = { ctrl: new AbortController(), reason: '', files: new Set(), dirs: [] };
   return currentJob.ctrl.signal;
 }
@@ -170,7 +225,7 @@ export function cancelJob(reason = '用户取消') {
 }
 
 /** 单次 GET，跟随重定向。取消信号来自模块级当前任务，自动生效 */
-function requestOnce(url, { timeout = 30000, headers = {}, redirects = 0 } = {}) {
+function requestOnce(url, { timeout = 30000, headers = {}, redirects = 0, deadlineMs = 0 } = {}) {
   if (isCancelled()) return Promise.reject(new CancelledError());
 
   return new Promise((resolve, reject) => {
@@ -198,13 +253,18 @@ function requestOnce(url, { timeout = 30000, headers = {}, redirects = 0 } = {})
           res.resume();
           if (redirects >= 5) return reject(new Error('重定向次数过多'));
           const next = new URL(h.location, url).toString();
-          return requestOnce(next, { timeout, headers, redirects: redirects + 1 })
+          return requestOnce(next, { timeout, headers, redirects: redirects + 1, deadlineMs })
             .then(resolve)
             .catch(reject);
         }
         resolve({ res, url });
       }
     );
+
+    // 总时限：用于 split 时防止某个源虽然不断流但持续拖慢整个 assets 阶段
+    const deadline = deadlineMs > 0
+      ? setTimeout(() => req.destroy(new Error('下载超过总时限')), deadlineMs)
+      : null;
 
     // 取消：把在飞的请求直接掐断，而不是等它下完再看标志位
     const signal = currentJob?.ctrl.signal;
@@ -213,6 +273,7 @@ function requestOnce(url, { timeout = 30000, headers = {}, redirects = 0 } = {})
     };
     if (signal) signal.addEventListener('abort', onAbort, { once: true });
     req.on('close', () => {
+      if (deadline) clearTimeout(deadline);
       if (signal) signal.removeEventListener('abort', onAbort);
     });
 
@@ -270,7 +331,7 @@ async function isComplete(filePath, expectedSha1, expectedSize) {
 /**
  * 下载单个文件。
  * opts: { sha1, size, retries, timeout, preferMirror, source, onSkip, onDone }
- *   source: 'official' | 'bmclapi' —— 主选源；另一个源自动作兜底
+ *   source: 'official' | 'bmclapi' | 'split' —— 主选源；split 按文件稳定分流
  *   preferMirror: 旧参数，等价于 source='bmclapi'
  * 返回 'skipped' | 'downloaded'
  */
@@ -300,7 +361,11 @@ export async function downloadFile(url, destPath, opts = {}) {
     await fsp.rm(destPath, { force: true });
   }
 
-  const urls = candidateUrls(url, { preferMirror, source });
+  let effectiveSource = source === 'split' ? splitSourceFor(url, destPath) : source;
+  if (source === 'split' && !sourceAvailable(effectiveSource)) {
+    effectiveSource = effectiveSource === 'bmclapi' ? 'official' : 'bmclapi';
+  }
+  const urls = candidateUrls(url, { preferMirror, source: effectiveSource });
   let lastErr = null;
   let previousTarget = null;
 
@@ -329,7 +394,11 @@ export async function downloadFile(url, destPath, opts = {}) {
       const headers = {};
       if (startAt > 0) headers.Range = `bytes=${startAt}-`;
 
-      const { res } = await requestOnce(target, { headers, timeout });
+      const requestTimeout = source === 'split' && attempt === 0 && effectiveSource === 'bmclapi'
+        ? Math.min(timeout, SPLIT_MIRROR_TIMEOUT_MS)
+        : timeout;
+      const deadlineMs = source === 'split' ? 30000 : 0;
+      const { res } = await requestOnce(target, { headers, timeout: requestTimeout, deadlineMs });
 
       if (res.statusCode === 416) {
         // Range 越界，说明 .part 已经完整或过大，重来
@@ -362,6 +431,7 @@ export async function downloadFile(url, destPath, opts = {}) {
       }
 
       await fsp.rename(partPath, destPath);
+      if (source === 'split') noteSourceSuccess(effectiveSource);
       return 'downloaded';
     } catch (e) {
       // 取消不是「下载出错」，不该进重试，也不该把 .part 删掉
@@ -370,10 +440,12 @@ export async function downloadFile(url, destPath, opts = {}) {
         throw new CancelledError(e?.message || '已取消');
       }
       lastErr = e;
+      if (source === 'split' && attempt === 0) noteSourceFailure(effectiveSource);
       await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
     }
   }
 
+  if (source === 'split') noteSourceFailure(effectiveSource);
   throw new Error(`下载失败 ${path.basename(destPath)}: ${lastErr?.message ?? '未知错误'}`);
 }
 

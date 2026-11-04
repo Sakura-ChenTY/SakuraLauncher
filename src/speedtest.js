@@ -191,6 +191,9 @@ export function clearSourceCache() {
  * 返回 { source, reason, measured? }
  */
 export async function resolveSource(setting) {
+  if (setting === 'split') {
+    return { source: 'split', reason: '官方与 BMCLAPI 双源分流' };
+  }
   if (SOURCE_IDS.includes(setting)) {
     return { source: setting, reason: '手动指定' };
   }

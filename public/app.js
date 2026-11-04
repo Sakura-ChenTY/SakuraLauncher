@@ -3757,7 +3757,8 @@ function applySettingsToForm(s) {
   if ($('roomMemory')) $('roomMemory').value = String(Number(s.roomMemoryMb) > 0 ? s.roomMemoryMb : 2048);
   syncMemoryMode(false);
   $('setConcurrency').value = s.concurrency ?? 64;
-  $('setDownloadSource').value = s.downloadSource ?? (s.preferMirror ? 'bmclapi' : 'auto');
+  $('setDownloadSource').value = s.downloadSource ?? (s.preferMirror ? 'bmclapi' : 'split');
+  if ($('setMirrorShare')) $('setMirrorShare').value = String(s.mirrorShare ?? 50);
   $('setJavaMode').value = s.javaMode === 'auto' ? 'auto' : 'external';
   $('setIsolated').value = s.isolated ?? 'auto';
   if ($('setUpdateUrl')) $('setUpdateUrl').value = s.updateUrl ?? '';
@@ -3791,6 +3792,7 @@ function readSettingsForm() {
     autoDiagnostic: Boolean($('setAutoDiagnostic')?.checked),
     concurrency: Number($('setConcurrency').value),
     downloadSource: $('setDownloadSource').value,
+    mirrorShare: Number($('setMirrorShare')?.value ?? 50),
     isolated: $('setIsolated').value,
     javaPath: $('setJavaPath').value,
     javaMode: $('setJavaMode').value,

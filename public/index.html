@@ -797,6 +797,7 @@
                 <label for="setDownloadSource">下载源（镜像源）</label>
                 <div class="field-line">
                   <select id="setDownloadSource" class="select grow">
+                    <option value="split">官方 + BMCLAPI 分流（默认）</option>
                     <option value="auto">自动测速（推荐）</option>
                     <option value="official">官方源（Mojang）</option>
                     <option value="bmclapi">BMCLAPI 国内镜像</option>
@@ -804,8 +805,17 @@
                   <button class="btn ghost" id="btnTestSource">测速</button>
                 </div>
                 <div class="field-note" id="sourceNote">
-                  自动测速会在安装前实测各源，挑实际最快的；安装时始终保留另一源作失败兜底
+                  分流模式按文件稳定分配到官方和 BMCLAPI；任一源失败会自动切到另一源并记录降级原因
                 </div>
+              </div>
+
+              <div class="field">
+                <label for="setMirrorShare">BMCLAPI 分流比例</label>
+                <div class="field-line">
+                  <input id="setMirrorShare" class="input narrow mono" type="number" min="0" max="100" step="1">
+                  <span class="field-note">%</span>
+                </div>
+                <div class="field-note">0 = 全官方，100 = 全 BMCLAPI，默认 50；仅在分流模式下生效</div>
               </div>
 
               <div class="field">

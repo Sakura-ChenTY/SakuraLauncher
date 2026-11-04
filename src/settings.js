@@ -36,7 +36,8 @@ export const DEFAULTS = {
   //   auto     = 缺了就自动下载对应版本的 JRE（开箱即用，但多占 ~180MB/版本）
   javaMode: 'auto',
   concurrency: 64,
-  downloadSource: 'auto', // auto | official | bmclapi
+  downloadSource: 'split', // auto | official | bmclapi | split
+  mirrorShare: 50, // split 模式下分给 BMCLAPI 的百分比
   preferMirror: false, // 旧字段，仅为兼容老 settings.json，保存时与 downloadSource 同步
   isolated: 'on', // auto | on | off —— 默认总是隔离，每个实例独立存档与 mod
   extraJvm: '',
@@ -133,6 +134,10 @@ export function normalize(raw = {}, base = DEFAULTS) {
   }
   // 旧字段始终与主字段同步，避免两处不一致造成误解
   out.preferMirror = out.downloadSource === 'bmclapi';
+
+  const mirrorShare = Number(raw.mirrorShare);
+  if (Number.isFinite(mirrorShare) && mirrorShare >= 0 && mirrorShare <= 100) out.mirrorShare = Math.round(mirrorShare);
+  else if (raw.mirrorShare !== undefined) notes.push('分流比例需在 0-100，已保留原值');
 
   if (['auto', 'on', 'off'].includes(raw.isolated)) out.isolated = raw.isolated;
 
