@@ -182,40 +182,60 @@ function chooseAlternate() {
   return sourceState.active === 'official' ? 'bmclapi' : 'official';
 }
 
+/** 探测官方的候选地址；edge/media 实际常由 mediafilez 提供，不能只探 edge。 */
+function officialProbeUrls(rawUrl) {
+  const urls = [rawUrl];
+  try {
+    const u = new URL(rawUrl);
+    if (u.hostname === 'edge.forgecdn.net' || u.hostname === 'media.forgecdn.net') {
+      u.hostname = 'mediafilez.forgecdn.net';
+      urls.push(u.toString());
+    }
+  } catch {
+    /* 非标准 URL 只探原地址 */
+  }
+  return [...new Set(urls)];
+}
+
 /** 以 1MB Range 探测某个源的即时吞吐；不会占用 .part，也不写盘 */
 async function probeSource(rawUrl, sourceId) {
-  const target = sourceId === 'official' ? rawUrl : toMirror(rawUrl, sourceId);
-  if (!target) return null;
+  const targets = sourceId === 'official'
+    ? officialProbeUrls(rawUrl)
+    : [toMirror(rawUrl, sourceId)].filter(Boolean);
+  if (!targets.length) return null;
 
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(new Error('PROBE_TIMEOUT')), PROBE_TIMEOUT_MS);
-  const started = Date.now();
-  let bytes = 0;
-  try {
-    const { res } = await requestOnce(target, {
-      timeout: PROBE_TIMEOUT_MS,
-      headers: { Range: `bytes=0-${PROBE_BYTES - 1}` },
-      signal: ctrl.signal,
-    });
-    if (res.statusCode !== 200 && res.statusCode !== 206) {
-      res.resume();
-      return null;
-    }
-    for await (const chunk of res) {
-      bytes += chunk.length;
-      if (bytes >= PROBE_BYTES) {
-        res.destroy();
-        break;
+  for (const target of targets) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(new Error('PROBE_TIMEOUT')), PROBE_TIMEOUT_MS);
+    const started = Date.now();
+    let bytes = 0;
+    try {
+      const { res } = await requestOnce(target, {
+        timeout: PROBE_TIMEOUT_MS,
+        headers: { Range: `bytes=0-${PROBE_BYTES - 1}` },
+        signal: ctrl.signal,
+      });
+      if (res.statusCode !== 200 && res.statusCode !== 206) {
+        res.resume();
+        continue;
       }
+      for await (const chunk of res) {
+        bytes += chunk.length;
+        if (bytes >= PROBE_BYTES) {
+          res.destroy();
+          break;
+        }
+      }
+      const ms = Math.max(1, Date.now() - started);
+      return { source: sourceId, bytes, ms, kbps: Math.round(bytes / 1024 / (ms / 1000)) };
+    } catch {
+      /* 这个候选探测失败，继续试官方回退地址 */
+    } finally {
+      clearTimeout(timer);
+      ctrl.abort();
     }
-    const ms = Math.max(1, Date.now() - started);
-    return { source: sourceId, bytes, ms, kbps: Math.round(bytes / 1024 / (ms / 1000)) };
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-    ctrl.abort();
   }
+  return null;
 }
 
 async function maybeAutoSwitch() {
