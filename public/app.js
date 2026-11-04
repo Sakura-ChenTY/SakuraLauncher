@@ -3671,6 +3671,19 @@ function memoryScheduleTime(ms) {
   return new Date(ms).toLocaleString('zh-CN', { hour12: false });
 }
 
+function setMemoryScheduleCustomHint(text = '') {
+  const el = $('memoryScheduleCustomHint');
+  if (el) el.textContent = text;
+}
+
+function readMemoryScheduleCustomMinutes() {
+  const raw = String($('memoryScheduleCustom')?.value ?? '').trim();
+  if (!raw) return 30;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 30;
+  return Math.round(n);
+}
+
 function renderMemoryScheduleControls() {
   const cfg = readMemoryScheduleLocal();
   const enabled = $('memoryScheduleEnabled');
@@ -3690,6 +3703,7 @@ function renderMemoryScheduleControls() {
     custom.disabled = !cfg.enabled || select?.value !== 'custom';
   }
   if (select) select.disabled = !cfg.enabled;
+  setMemoryScheduleCustomHint('');
 }
 
 function syncMemoryScheduleInputState() {
@@ -3730,10 +3744,18 @@ async function refreshMemoryScheduleStatus() {
 async function saveMemorySchedule() {
   const enabled = Boolean($('memoryScheduleEnabled')?.checked);
   const select = $('memoryScheduleInterval');
-  let minutes = Number($('memoryScheduleCustom')?.value || 30);
-  if (select?.value !== 'custom') minutes = Number(select?.value || 30);
-  minutes = Math.max(30, Math.min(1440, Number.isFinite(minutes) ? Math.round(minutes) : 30));
+  const rawMinutes = select?.value === 'custom'
+    ? readMemoryScheduleCustomMinutes()
+    : Number(select?.value || 30);
+  const minutes = Math.max(30, Math.min(1440, Number.isFinite(rawMinutes) ? Math.round(rawMinutes) : 30));
   if ($('memoryScheduleCustom')) $('memoryScheduleCustom').value = String(minutes);
+  if (select?.value === 'custom' && rawMinutes < 30) {
+    setMemoryScheduleCustomHint('不能小于 30 分钟，已按 30 分钟执行');
+  } else if (select?.value === 'custom' && rawMinutes > 1440) {
+    setMemoryScheduleCustomHint('最大 1440 分钟，已按 1440 分钟执行');
+  } else {
+    setMemoryScheduleCustomHint('');
+  }
 
   const cfg = { enabled, intervalMinutes: minutes };
   try { localStorage.setItem(MEMORY_SCHEDULE_KEY, JSON.stringify(cfg)); } catch { /* 无痕模式 */ }
@@ -5671,7 +5693,29 @@ $('memoryScheduleInterval')?.addEventListener('change', () => {
   if ($('memoryScheduleInterval')?.value === 'custom') $('memoryScheduleCustom')?.focus();
   queueMemoryScheduleSave();
 });
-$('memoryScheduleCustom')?.addEventListener('input', queueMemoryScheduleSave);
+$('memoryScheduleCustom')?.addEventListener('input', () => {
+  const input = $('memoryScheduleCustom');
+  if (!input) return;
+  const n = Number(input.value);
+  if (Number.isFinite(n) && n > 0 && n < 30) {
+    setMemoryScheduleCustomHint('不能小于 30 分钟，保存时会按 30 分钟执行');
+  } else if (Number.isFinite(n) && n > 1440) {
+    setMemoryScheduleCustomHint('最大 1440 分钟，保存时会按 1440 分钟执行');
+  } else {
+    setMemoryScheduleCustomHint('');
+  }
+  queueMemoryScheduleSave();
+});
+$('memoryScheduleCustom')?.addEventListener('blur', () => {
+  const input = $('memoryScheduleCustom');
+  if (!input) return;
+  const n = Number(input.value);
+  if (Number.isFinite(n) && n > 0 && n < 30) {
+    input.value = '30';
+    setMemoryScheduleCustomHint('不能小于 30 分钟，已按 30 分钟填写');
+    queueMemoryScheduleSave();
+  }
+});
 initMemorySchedule();
 // 透明度滑块：拖的时候实时预览，不用等点保存。
 $('setGlass').addEventListener('input', (e) => applyGlassAlpha(Number(e.target.value)));
