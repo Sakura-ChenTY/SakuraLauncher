@@ -18,6 +18,7 @@ import { pipeline } from 'node:stream/promises';
 
 import { candidateUrls, toMirror } from './sources.js';
 import { getSettings } from './settings.js';
+import { HOME_DIR } from './paths.js';
 
 const agents = {
   'https:': new https.Agent({ keepAlive: true, maxSockets: 64, maxFreeSockets: 64 }),
@@ -80,6 +81,7 @@ const PROBE_BYTES = 1024 * 1024;
 const PROBE_TIMEOUT_MS = 3000;
 const STALL_TIMEOUT_MS = 30_000;
 const REQUEST_LIMIT = 66;
+const MOD_CACHE_DIR = process.env.MCLAUNCHER_MOD_CACHE || path.join(HOME_DIR, 'cache', 'mods');
 
 const requestStats = {
   active: 0,
@@ -986,6 +988,35 @@ async function probeFileCandidates(url, opts, key) {
   return m.preferred;
 }
 
+function isModPath(filePath) {
+  return /(^|[\\/])mods([\\/])/i.test(String(filePath || ''));
+}
+
+function modCachePath(destPath, opts) {
+  if (opts.cachePool === false) return null;
+  if (opts.cachePool !== true && !isModPath(destPath)) return null;
+  const ext = path.extname(destPath).toLowerCase() || '.jar';
+  const sha1 = String(opts.sha1 || '').toLowerCase();
+  if (sha1) {
+    return path.join(MOD_CACHE_DIR, sha1.slice(0, 2), sha1 + ext);
+  }
+  const projectId = String(opts.projectId || '').replace(/[^\w.-]/g, '');
+  const fileId = String(opts.fileId || '').replace(/[^\w.-]/g, '');
+  if (projectId && fileId) {
+    return path.join(MOD_CACHE_DIR, 'cf', projectId, fileId + ext);
+  }
+  return null;
+}
+
+async function copyOrLinkCachedFile(cachePath, destPath) {
+  await mkdirTracked(path.dirname(destPath));
+  try {
+    await fsp.link(cachePath, destPath);
+  } catch {
+    await fsp.copyFile(cachePath, destPath);
+  }
+}
+
 export async function downloadFile(url, destPath, opts = {}) {
   const {
     sha1,
@@ -999,7 +1030,34 @@ export async function downloadFile(url, destPath, opts = {}) {
     onThrottle,
     ranged = true,
     sourceKey: explicitSourceKey,
+    cachePool,
   } = opts;
+
+  // 全局 mod 缓存池：命中就直接放进实例；未命中先下到池里，再拷/硬链接进实例。
+  const pooledPath = modCachePath(destPath, { ...opts, cachePool });
+  if (pooledPath && path.resolve(pooledPath) !== path.resolve(destPath)) {
+    if (await isComplete(pooledPath, sha1, size)) {
+      try {
+        await copyOrLinkCachedFile(pooledPath, destPath);
+        return 'cached';
+      } catch (e) {
+        // 缓存文件在但放不进实例（权限/硬链接不支持），退回正常下载。
+      }
+    }
+    try {
+      const cacheResult = await downloadFile(url, pooledPath, {
+        ...opts,
+        cachePool: false,
+        sourceKey: explicitSourceKey,
+      });
+      await copyOrLinkCachedFile(pooledPath, destPath);
+      // 只有真正命中已有池文件才算 cached；本次刚下到池里的仍算 downloaded。
+      return cacheResult === 'skipped' ? 'skipped' : 'downloaded';
+    } catch (e) {
+      if (e?.cancelled || e instanceof CancelledError) throw e;
+      // 池写入失败不阻断安装，继续走实例直下。
+    }
+  }
 
   await mkdirTracked(path.dirname(destPath));
   const sourceKey = sourceKeyFor(url, { ...opts, sourceKey: explicitSourceKey });
@@ -1263,6 +1321,7 @@ export async function downloadMany(items, {
   let done = 0;
   let skipped = 0;
   let downloaded = 0;
+  let cached = 0;
   let doneBytes = 0;
   const totalBytes = items.reduce((n, it) => n + (Number(it.size) || 0), 0);
   const errors = [];
@@ -1319,6 +1378,7 @@ export async function downloadMany(items, {
           onThrottle: reduceConcurrency,
         });
         if (r === 'skipped') skipped++;
+        else if (r === 'cached') cached++;
         else downloaded++;
       } catch (e) {
         // 取消不算失败条目，否则浮窗上会出现“失败 N 个”的误导计数
@@ -1332,7 +1392,7 @@ export async function downloadMany(items, {
         if (onProgress) {
           try {
             onProgress({
-              done, total: items.length, skipped, downloaded, errors: errors.length, current: it,
+              done, total: items.length, skipped, downloaded, cached, errors: errors.length, current: it,
               bytes: doneBytes, totalBytes,
             });
           } catch {
@@ -1349,5 +1409,5 @@ export async function downloadMany(items, {
   if (isCancelled()) throw new CancelledError();
 
   badDomains.clear();
-  return { total: items.length, skipped, downloaded, errors };
+  return { total: items.length, skipped, downloaded, cached, errors };
 }
