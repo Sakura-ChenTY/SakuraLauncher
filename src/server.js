@@ -83,6 +83,7 @@ import {
 } from './curseforge.js';
 import { installCurseForgePack, previewCurseForgePack } from './cfpack.js';
 import { createSession, getSession, chatSession } from './assistant-session.js';
+import { collectRuntimeSnapshot } from './runtime-snapshot.js';
 import { detectSymptom, guessSymptom, collectSymptomContext, SYMPTOMS, IMPLEMENTATION_NOTES } from './assistant-diagnostics.js';
 import { previewDiagnosticPackage, createDiagnosticPackage, createCrashDiagnosticPackage, sanitizeDiagnostic } from './diagnostic-package.js';
 import { snapshotCrashArtifacts, newCrashArtifacts } from './crash-watch.js';
@@ -861,6 +862,7 @@ export const state = {
   running: null,      // { versionId, pid, startedAt }
   lanPort: null,      // 从游戏 stdout 抓到的「对局域网开放」端口
   lastFailure: null,  // 最近一次非 0 退出的摘要
+  lastExit: null,     // 最近一次启动的退出码（含正常退出）
   lastLaunch: null,   // 最近一次实际启动命令与进程信息
   crashBaseline: null, // 本次启动前的 crash/hs_err 文件快照
   crashIncident: null, // 最近一次自动崩溃提示
@@ -1462,6 +1464,7 @@ async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta 
     state.running = null;
     void runAutoBackup(versionId, 'afterExit');
     const uiCode = forcedExit ? 0 : code;
+    state.lastExit = { versionId, code: uiCode, at: Date.now() };
     const recent = state.logs.slice(-120).map((x) => String(x.line ?? x));
     const reasonLine = [...recent].reverse().find((line) =>
       /insufficient memory|Native memory allocation|malloc failed|Unsupported JNI|hs_err_pid|Exception in thread|Could not find or load|Error:|错误|失败/i.test(line)
@@ -3970,7 +3973,26 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/assistant/chat' && req.method === 'POST') {
       const body = await readBody(req);
       try {
-        const result = await chatSession({ id: body.sessionId, message: body.message, mode: body.mode, diagnosticsState: state });
+        // 关闭开关时连采集都不做；快照只用于本次对话，不落盘。
+        let runtimeSnapshot = null;
+        if (getSettings().assistantRuntimeState !== false) {
+          try {
+            runtimeSnapshot = collectRuntimeSnapshot({
+              state,
+              room: getRoomState(),
+              online: onlineSnapshot(),
+            });
+          } catch {
+            // 快照失败不能阻断正常对话。
+          }
+        }
+        const result = await chatSession({
+          id: body.sessionId,
+          message: body.message,
+          mode: body.mode,
+          diagnosticsState: state,
+          runtimeSnapshot,
+        });
         return json(res, 200, result);
       } catch (e) {
         return json(res, 400, { error: e.message });
