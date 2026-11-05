@@ -860,9 +860,9 @@
               <div class="field">
                 <label for="setConcurrency">下载并发数</label>
                 <div class="field-line">
-                  <input id="setConcurrency" class="input narrow mono" type="number" min="1" max="256" step="1">
+                  <input id="setConcurrency" class="input narrow mono" type="number" min="1" max="128" step="1">
                 </div>
-                <div class="field-note">1-256，默认 64。安装一个版本要下几千个小文件；弱网可以调到 8</div>
+                <div class="field-note">1-128，默认 64。安装一个版本要下几千个小文件；弱网可以调到 8</div>
               </div>
             </div>
 
@@ -1142,6 +1142,14 @@
             <div class="install-foot">
               <span class="install-meta" id="installMeta"></span>
               <span class="install-pct" id="installPct"></span>
+            </div>
+
+            <div class="install-stages" id="installStages" aria-label="安装阶段">
+              <div class="install-stage" data-stage="pack"><span class="install-stage-name">整合包</span><span class="install-stage-info">等待</span></div>
+              <div class="install-stage" data-stage="vanilla"><span class="install-stage-name">原版</span><span class="install-stage-info">等待</span></div>
+              <div class="install-stage" data-stage="assets"><span class="install-stage-name">资源</span><span class="install-stage-info">等待</span></div>
+              <div class="install-stage" data-stage="neoforge"><span class="install-stage-name">NeoForge</span><span class="install-stage-info">等待</span></div>
+              <div class="install-stage" data-stage="mod"><span class="install-stage-name">mod</span><span class="install-stage-info">等待</span></div>
             </div>
 
             <div class="install-source" id="installSource">

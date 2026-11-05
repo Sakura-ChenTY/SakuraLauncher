@@ -119,8 +119,8 @@ export function normalize(raw = {}, base = DEFAULTS) {
   else if (raw.javaMode !== undefined) notes.push('javaMode 只能是 external / auto，已保留原值');
 
   const n = Number(raw.concurrency);
-  if (Number.isFinite(n) && n >= 1 && n <= 256) out.concurrency = Math.floor(n);
-  else if (raw.concurrency !== undefined) notes.push('并发数需在 1-256，已保留原值');
+  if (Number.isFinite(n) && n >= 1 && n <= 128) out.concurrency = Math.floor(n);
+  else if (raw.concurrency !== undefined) notes.push('并发数需在 1-128，已保留原值');
 
   // ---- 下载源 ----
   // 新字段 downloadSource 为准；旧的 auto / split 统一迁移到官方优先。

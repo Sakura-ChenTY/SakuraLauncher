@@ -2298,6 +2298,14 @@ main {
   height: 8px;
 }
 
+.install-stages { display: flex; flex-direction: column; gap: 3px; margin: 9px 0 4px; width: 100%; }
+.install-stage { display: flex; justify-content: space-between; gap: 10px; padding: 3px 7px; border-radius: 5px; color: var(--text-dim); font-size: 10.5px; }
+.install-stage.active { color: var(--text); background: var(--bg-3); }
+.install-stage.done { color: #35d07f; }
+.install-stage.error { color: var(--err); }
+.install-stage-name { font-weight: 600; }
+.install-stage-info { font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .install-foot {
   width: 100%;
   display: flex;

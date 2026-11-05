@@ -24,15 +24,61 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 
-import { downloadMany } from './download.js';
+import { downloadFile, downloadMany } from './download.js';
 import { listEntries, readEntry } from './zip.js';
 import { installVersion } from './installer.js';
 import { installFabric } from './fabric.js';
 import { installForge, installNeoForge } from './forge.js';
 import { savePackIcon } from './modpack.js';
 import { cfGet, cfPost, CF_GAME_ID } from './curseforge.js';
+import { getSettings } from './settings.js';
 
 const UA = 'mclauncher/0.1 (local)';
+
+/** CurseForge 文件直链：fileId 前四位 / 后四位路径 + 三个 CDN 域名回退。 */
+export function curseForgePackUrls(file) {
+  const id = String(file?.id || '');
+  const name = String(file?.fileName || '');
+  if (!id || !name) return [];
+  const rel = `files/${id.slice(0, 4)}/${id.slice(4)}/${encodeURIComponent(name)}`;
+  // 这轮实测 edge 大量 404/aborted；mediafilez 放第一，edge 最后。
+  const urls = [
+    `https://mediafilez.forgecdn.net/${rel}`,
+    `https://media.forgecdn.net/${rel}`,
+    file.downloadUrl,
+    `https://edge.forgecdn.net/${rel}`,
+  ].filter(Boolean);
+  return [...new Set(urls)];
+}
+
+/** 下载整合包 zip，按候选域名逐个回退，并校验 SHA1。 */
+export async function downloadCurseForgePackZip(file, zipPath) {
+  const sha1 = (file?.hashes ?? []).find((h) => h.algo === 1)?.value;
+  const urls = curseForgePackUrls(file);
+  if (!urls.length) throw new Error('无法构造整合包下载地址');
+  let lastErr = null;
+  for (const url of urls) {
+    try {
+      await downloadFile(url, zipPath, {
+        sha1,
+        size: file.fileLength,
+        retries: 1,
+        timeout: 900000,
+        // 196MB zip 的 8 段 Range 在部分 CDN 会只回部分段；整包改用单流，mod 仍用 8 段。
+        ranged: false,
+      });
+      return url;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw new Error(`整合包下载失败（已尝试 ${urls.length} 个候选）：${lastErr?.message ?? '未知错误'}`);
+}
+
+function downloadConcurrency() {
+  const n = Number(getSettings().concurrency);
+  return Math.max(1, Math.min(128, Number.isFinite(n) ? Math.round(n) : 64));
+}
 
 /** 批量接口一次最多 50 个 id，超了服务端会拒 */
 const BATCH = 50;
@@ -165,7 +211,6 @@ export async function previewCurseForgePack({ modId, fileId, onStage = () => {} 
     file = list.find((f) => f.downloadUrl);
   }
   if (!file) throw new Error('这个整合包没有可下载的文件');
-  if (!file.downloadUrl) throw new Error('作者关闭了这个文件的第三方分发，只能去官网手动下载');
 
   const tmpDir = path.join(process.env.TEMP ?? '.', `cfpack-${Date.now()}`);
   await fsp.mkdir(tmpDir, { recursive: true });
@@ -173,12 +218,7 @@ export async function previewCurseForgePack({ modId, fileId, onStage = () => {} 
 
   try {
     onStage({ stage: 'cfpack', message: '下载整合包清单' });
-    const res = await fetch(file.downloadUrl, {
-      headers: { 'User-Agent': UA },
-      signal: AbortSignal.timeout(600000),
-    });
-    if (!res.ok) throw new Error(`下载整合包失败：HTTP ${res.status}`);
-    await fsp.writeFile(zipPath, Buffer.from(await res.arrayBuffer()));
+    await downloadCurseForgePackZip(file, zipPath);
 
     const buf = fs.readFileSync(zipPath);
     const entries = listEntries(buf);
@@ -251,29 +291,7 @@ export async function installCurseForgePack(opts = {}) {
 
   // ---- 2. 下载整合包 ----
   onStage({ stage: 'cfpack', message: `下载整合包（${(file.fileLength / 1024 / 1024).toFixed(1)}MB）` });
-  {
-    const res = await fetch(file.downloadUrl, {
-      headers: { 'User-Agent': UA },
-      signal: AbortSignal.timeout(900000),
-    });
-    if (!res.ok) throw new Error(`下载整合包失败：HTTP ${res.status}`);
-    const total = Number(res.headers.get('content-length') ?? 0);
-    const chunks = [];
-    let got = 0;
-    for await (const c of res.body) {
-      chunks.push(c);
-      got += c.length;
-      if (total) {
-        onProgress({
-          stage: 'cfpack',
-          done: got,
-          total,
-          message: `整合包 ${(got / 1024 / 1024).toFixed(1)}/${(total / 1024 / 1024).toFixed(1)}MB`,
-        });
-      }
-    }
-    await fsp.writeFile(zipPath, Buffer.concat(chunks));
-  }
+  await downloadCurseForgePackZip(file, zipPath);
 
   // ---- 3. 解析 manifest ----
   const buf = fs.readFileSync(zipPath);
@@ -364,10 +382,15 @@ export async function installCurseForgePack(opts = {}) {
       skipped.push({ id: f.fileID, reason: '镜像查不到这个文件' });
       continue;
     }
-    if (!meta.downloadUrl) {
-      skipped.push({ id: f.fileID, name: meta.fileName, reason: '作者关闭了第三方分发' });
+    if (!meta.fileName) {
+      skipped.push({ id: f.fileID, reason: '文件名为空，无法构造地址' });
       continue;
     }
+
+    // PCL 同款：downloadUrl 为空时按 fileId 拼 CurseForge CDN 地址。
+    // edge 已知可能 404，候选顺序交由 sources.js / downloadFile 继续换源。
+    const downloadUrl = meta.downloadUrl
+      || `https://edge.forgecdn.net/files/${String(meta.id).slice(0, 4)}/${String(meta.id).slice(4)}/${encodeURIComponent(meta.fileName)}`;
 
     const folder = CLASS_FOLDER[classOf.get(f.projectID)];
     if (!folder) {
@@ -385,7 +408,7 @@ export async function installCurseForgePack(opts = {}) {
     const sha1 = (meta.hashes ?? []).find((h) => h.algo === 1)?.value ?? undefined;
 
     items.push({
-      url: meta.downloadUrl,
+      url: downloadUrl,
       dest,
       sha1,
       size: meta.fileLength ?? undefined,
@@ -399,7 +422,7 @@ export async function installCurseForgePack(opts = {}) {
   });
 
   const r = await downloadMany(items, {
-    concurrency: 12,
+    concurrency: downloadConcurrency(),
     retries: 3,
     source,
     onProgress: (p) =>
@@ -409,6 +432,8 @@ export async function installCurseForgePack(opts = {}) {
         total: p.total,
         downloaded: p.downloaded,
         errors: p.errors,
+        bytes: p.bytes,
+        totalBytes: p.totalBytes,
         message: `整合包文件 ${p.done}/${p.total}`,
       }),
   });
@@ -443,6 +468,7 @@ export async function installCurseForgePack(opts = {}) {
       failed: r.errors.length,
       notDistributable: skipped.length,
     },
+    failedFiles: r.errors.map((e) => ({ name: e.item?.name || e.item?.url || '', error: e.error })),
     skipped: skipped.slice(0, 20),
     overrides: ovCount,
     instanceDir,

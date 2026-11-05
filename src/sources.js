@@ -38,6 +38,11 @@ const BMCLAPI_RULES = [
   [/^https?:\/\/maven\.fabricmc\.net\//, 'https://bmclapi2.bangbang93.com/maven/'],
   // 资源对象
   [/^https?:\/\/resources\.download\.minecraft\.net\//, 'https://bmclapi2.bangbang93.com/assets/'],
+  // Modrinth / CurseForge 的 mod 文件 CDN -> MCIM
+  [/^https?:\/\/cdn\.modrinth\.com\//, 'https://mod.mcimirror.top/'],
+  [/^https?:\/\/edge\.forgecdn\.net\//, 'https://mod.mcimirror.top/'],
+  [/^https?:\/\/mediafilez\.forgecdn\.net\//, 'https://mod.mcimirror.top/'],
+  [/^https?:\/\/media\.forgecdn\.net\//, 'https://mod.mcimirror.top/'],
 ];
 
 /**
@@ -95,6 +100,15 @@ export function isMirrorable(url) {
 export function candidateUrls(url, opts = {}) {
   const { preferMirror = false, source, fallback = true } = opts;
   const primaryId = source ?? (preferMirror ? 'bmclapi' : 'official');
+
+  // CurseForge mod/文件：实测 edge 大量 404/aborted。
+  // 固定顺序 mediafilez 第一，MCIM 第二，edge 最后，不再按全局主源决定顺序。
+  if (/^https?:\/\/(edge|media|mediafilez)\.forgecdn\.net\//.test(url)) {
+    const mediafilez = url.replace(/^https?:\/\/(edge|media|mediafilez)\.forgecdn\.net\//, 'https://mediafilez.forgecdn.net/');
+    const mirror = toMirror(url, 'bmclapi');
+    const edge = url.replace(/^https?:\/\/(edge|media|mediafilez)\.forgecdn\.net\//, 'https://edge.forgecdn.net/');
+    return [...new Set([mediafilez, mirror, edge].filter(Boolean))];
+  }
 
   const primary = primaryId === 'official' ? url : toMirror(url, primaryId);
   const list = [primary ?? url];

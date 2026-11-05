@@ -26,6 +26,31 @@ const sessions = {
   custom: { proc: null, address: '', ipAddress: '', tunnelId: null, lines: [], error: '', configPath: '' },
 };
 const tunnelCache = { sakura: null, openfrp: null };
+let tunnelLogger = () => {};
+export function setTunnelLogger(fn) {
+  tunnelLogger = typeof fn === 'function' ? fn : () => {};
+}
+function remotePortOf(address) {
+  const m = /:(\d{2,5})$/.exec(String(address || ''));
+  return m ? Number(m[1]) : null;
+}
+function tunnelEvent(action, provider, s, localPort, detail = '') {
+  try {
+    tunnelLogger({
+      at: new Date().toISOString(),
+      action,
+      provider,
+      tunnelId: s?.tunnelId ?? null,
+      name: s?.name ?? '',
+      localPort: Number(localPort) || null,
+      remotePort: remotePortOf(s?.address),
+      address: s?.address ?? '',
+      detail,
+    });
+  } catch {
+    /* 日志失败不能影响隧道 */
+  }
+}
 
 function providerName(p) {
   return p === 'sakura' ? 'SakuraFrp' : p === 'openfrp' ? 'OpenFrp' : p;
@@ -178,6 +203,10 @@ export async function createTunnel(provider, { name, localPort }) {
   if (!/^[\w.-]{1,32}$/.test(tunnelName)) {
     throw new Error('隧道名只能用字母/数字/下划线/点/横线，最多 32 位');
   }
+  const wantedPort = Number(localPort);
+  if (!(wantedPort > 0 && wantedPort < 65536)) {
+    throw new Error('缺少真实本地监听端口，已拒绝创建隧道（不会回退 25565）');
+  }
   const data = await fetchJson(`${SAKURA}/tunnels`, {
     token,
     method: 'POST',
@@ -186,7 +215,7 @@ export async function createTunnel(provider, { name, localPort }) {
       type: 'tcp',
       node: node.id,
       local_ip: '127.0.0.1',
-      local_port: Number(localPort) || 25565,
+      local_port: wantedPort,
     },
   });
   tunnelCache.sakura = null;
@@ -585,6 +614,10 @@ async function ensureGenericFrpc() {
 function startCustom(localPort) {
   const cfg = readCustomConfig();
   if (!cfg) throw new Error('先保存自定义 frps 配置');
+  const wantedPort = Number(localPort);
+  if (!(wantedPort > 0 && wantedPort < 65536)) {
+    throw new Error('缺少真实本地监听端口，已拒绝启动自定义隧道（不会回退 25565）');
+  }
   stopOtherProviders('custom');
   return (async () => {
     const exe = await ensureGenericFrpc();
@@ -600,7 +633,7 @@ function startCustom(localPort) {
       `[${cfg.name}]`,
       'type = tcp',
       'local_ip = 127.0.0.1',
-      `local_port = ${Number(localPort) || 25565}`,
+      `local_port = ${wantedPort}`,
       `remote_port = ${cfg.remotePort}`,
     ].join('\n');
     fs.writeFileSync(configPath, ini, { encoding: 'utf8', mode: 0o600 });
@@ -692,6 +725,9 @@ export async function startTunnel(provider, tunnelId, localPort) {
   if (!tunnel) throw new Error('找不到这条隧道，先刷新列表');
 
   const wantedPort = Number(localPort) || 0;
+  if (!(wantedPort > 0 && wantedPort < 65536)) {
+    throw new Error('缺少真实本地监听端口，已拒绝启动隧道（不会回退 25565）');
+  }
   if (provider === 'sakura' && wantedPort && tunnel.localPort && Number(tunnel.localPort) !== wantedPort) {
     // 对局域网开放的端口会变；Sakura 支持用 API 改隧道本地端口，
     // 这样“启动器里点联机”不需要玩家回官网改端口。
@@ -729,8 +765,10 @@ export async function startTunnel(provider, tunnelId, localPort) {
   s.address = tunnel.address;
   s.ipAddress = '';
   s.tunnelId = tunnel.id;
+  s.name = tunnel.name || '';
   s.error = '';
   s.lines = [];
+  tunnelEvent('connecting', provider, s, wantedPort);
 
   const onLine = (line) => {
     const m = /使用[^>]*>>\s*([^\s<]+)\s*<</.exec(line) || /tunnel\s*>>\s*([^\s<]+)\s*<</.exec(line);
@@ -745,17 +783,22 @@ export async function startTunnel(provider, tunnelId, localPort) {
   };
   attachOutput(s, proc.stdout, onLine);
   attachOutput(s, proc.stderr, onLine);
-  proc.on('error', (e) => { s.error = e.message; });
+  proc.on('error', (e) => {
+    s.error = e.message;
+    tunnelEvent('failed', provider, s, wantedPort, e.message);
+  });
   proc.on('close', (code) => {
     if (s.proc === proc) {
       s.proc = null;
       if (!s.error && code !== 0) s.error = `frpc 退出，code=${code}`;
+      tunnelEvent('disconnected', provider, s, wantedPort, code === 0 ? '正常退出' : `code=${code}`);
     }
   });
 
   // 等 1.5 秒看它有没有立刻报错（token 错误/隧道不存在）
   await new Promise((r) => setTimeout(r, 1500));
   if (!s.proc) throw new Error(s.error || 'frpc 启动后立即退出，查看日志');
+  tunnelEvent('connected', provider, s, wantedPort);
   return { ok: true, address: s.address, ipAddress: s.ipAddress, pid: proc.pid };
 }
 
@@ -785,6 +828,8 @@ export async function setSakuraTunnelLocalPort(tunnelId, localPort) {
     if (tunnel && Number(tunnel.localPort) === wanted) {
       return { previousLocalPort, changed: true, address: tunnel.address || '', tunnel };
     }
+    const sess = sessions.sakura;
+    if (sess) tunnelEvent('retry', 'sakura', { ...sess, tunnelId, address: tunnel?.address || sess.address }, wanted, `回读 ${i + 1}/12`);
   }
   throw new Error('SakuraFrp 已提交修改，但隧道列表没有回读为新端口');
 }
