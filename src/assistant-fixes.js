@@ -10,6 +10,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 
 import { HOME_DIR } from './paths.js';
 import { getSettings } from './settings.js';
@@ -69,7 +70,7 @@ function instanceDir(gameDir, versionId) {
   return versionId ? path.join(gameDir, 'versions', versionId) : gameDir;
 }
 
-function fixRecord({ action, before, after, ok, backupDir, error = '' }) {
+function fixRecord({ action, before, after, ok, backupDir, incidentId = '', error = '' }) {
   const data = readJson(FIXES_FILE, { fixes: [] });
   const list = Array.isArray(data.fixes) ? data.fixes : [];
   list.unshift({
@@ -79,6 +80,7 @@ function fixRecord({ action, before, after, ok, backupDir, error = '' }) {
     after,
     ok: Boolean(ok),
     backupDir,
+    ...(incidentId ? { incidentId } : {}),
     ...(error ? { error: String(error).slice(0, 300) } : {}),
   });
   writeJson(FIXES_FILE, { fixes: list.slice(0, MAX_RECORDS) });
@@ -106,7 +108,17 @@ function serverPortFile(snapshot, gameDir, versionId, room) {
   return candidates.find((f) => fs.existsSync(f)) || candidates[1] || candidates[2] || candidates[0];
 }
 
-function buildActions({ snapshot, gameDir, versionId, room, includeServerPort = false, serverPort = null, includeRestart = false }) {
+const CRITICAL_PROCESSES = new Set([
+  'system', 'registry', 'memory compression', 'smss', 'csrss', 'wininit', 'services',
+  'lsass', 'winlogon', 'svchost', 'dwm', 'explorer', 'msmpeng', 'securityhealthservice',
+  'sakuralauncher', 'electron', 'deepseek harness', 'node',
+]);
+
+function buildActions({
+  snapshot, gameDir, versionId, room, includeServerPort = false, serverPort = null,
+  includeRestart = false, heapTargetMb = null, closePids = [], topProcesses = [],
+  memoryPlan = null,
+}) {
   const actions = [];
   const actual = intPort(snapshot?.ports?.actual);
   const tunnel = snapshot?.tunnel ?? {};
@@ -152,20 +164,53 @@ function buildActions({ snapshot, gameDir, versionId, room, includeServerPort = 
   const currentHeap = currentHeapMb(snapshot, gameDir, versionId);
   const cap = heapCapMb();
   if (currentHeap && currentHeap <= cap) {
-    const target = Math.min(4096, cap);
-    if (target !== currentHeap) {
+    const wanted = Number(heapTargetMb) > 0
+      ? Math.max(1024, Math.min(cap, Math.round(Number(heapTargetMb))))
+      : Math.min(4096, cap);
+    if (wanted !== currentHeap) {
       actions.push({
         id: 'heap.set',
         label: '堆内存',
         before: `${currentHeap}M`,
-        after: `${target}M`,
+        after: `${wanted}M`,
         kind: 'heap',
-        targetMb: target,
+        targetMb: wanted,
         file: path.join(instanceDir(gameDir, versionId), 'launcher-instance.json'),
+        auto: true,
+        rollbackable: true,
       });
     }
   }
-  return actions;
+
+  if (memoryPlan?.pagefileShort && memoryPlan.recommendPagefileGb) {
+    actions.push({
+      id: 'pagefile.guide',
+      label: '页面文件（只给步骤）',
+      before: `${Math.round(Number(memoryPlan.pagefileMb || 0) / 1024)} GB`,
+      after: `${memoryPlan.recommendPagefileGb} GB`,
+      kind: 'pagefile-guide',
+      auto: false,
+      rollbackable: false,
+      instructions: `系统属性 → 高级 → 性能设置 → 高级 → 虚拟内存 → 更改，把 C: 页面文件设为 ${memoryPlan.recommendPagefileGb} GB；重启后生效。`,
+    });
+  }
+
+  const selected = (Array.isArray(topProcesses) ? topProcesses : [])
+    .filter((p) => closePids.map(String).includes(String(p.pid)))
+    .filter((p) => !CRITICAL_PROCESSES.has(String(p.name || '').toLowerCase()));
+  if (selected.length) {
+    actions.push({
+      id: 'process.close',
+      label: '关闭内存进程',
+      before: selected.map((p) => `${p.name}#${p.pid} ${p.workingSetMb}MB`).join('、'),
+      after: '已关闭',
+      kind: 'process-close',
+      processes: selected.map((p) => ({ name: p.name, pid: Number(p.pid), workingSetMb: Number(p.workingSetMb) || 0 })),
+      auto: true,
+      rollbackable: false,
+    });
+  }
+  return actions.map((a) => ({ auto: true, rollbackable: true, ...a }));
 }
 
 export function previewAssistantFixes(args = {}) {
@@ -177,6 +222,7 @@ export function previewAssistantFixes(args = {}) {
     actions,
     versionId: String(args.versionId || ''),
     gameDir: String(args.gameDir || ''),
+    incidentId: String(args.incidentId || ''),
     createdAt: Date.now(),
   };
   previews.set(token, preview);
@@ -191,6 +237,12 @@ function safeBackupName(action, index) {
 
 async function backupForAction(action, dir, index, manifest) {
   await fsp.mkdir(dir, { recursive: true });
+  if (action.kind === 'process-close') {
+    const file = path.join(dir, `${String(index + 1).padStart(2, '0')}-processes.json`);
+    await fsp.writeFile(file, JSON.stringify({ processes: action.processes || [] }, null, 2), 'utf8');
+    manifest.files.push({ file, existed: true, kind: 'process-state' });
+    return { file, existed: true, backup: file };
+  }
   if (action.kind === 'tunnel-local-port' || action.kind === 'tunnel-restart') {
     const file = path.join(dir, `${String(index + 1).padStart(2, '0')}-tunnel.json`);
     const before = { localPort: Number(action.before) || null, status: action.kind === 'tunnel-restart' ? 'restart' : 'set-port' };
@@ -215,6 +267,11 @@ async function verifyAction(action) {
   if (action.kind === 'server-port') {
     return portFromServerProperties(action.file) === Number(action.after);
   }
+  if (action.kind === 'process-close') {
+    return (action.processes || []).every((p) => {
+      try { process.kill(Number(p.pid), 0); return false; } catch { return true; }
+    });
+  }
   if (action.kind === 'heap') {
     const data = readJson(action.file, {});
     return memoryMb(data.memoryMax) === Number(String(action.after).replace(/\D/g, ''));
@@ -227,6 +284,15 @@ async function verifyAction(action) {
 
 async function runAction(action, backupDir, index, manifest) {
   const backup = await backupForAction(action, backupDir, index, manifest);
+  if (action.kind === 'process-close') {
+    for (const p of action.processes || []) {
+      try { execFileSync('taskkill', ['/PID', String(p.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch { /* 进程可能已退出 */ }
+    }
+    return { backup, ok: await verifyAction(action) };
+  }
+  if (action.kind === 'pagefile-guide') {
+    return { backup, ok: false, error: '页面文件只能按说明手动修改' };
+  }
   if (action.kind === 'tunnel-local-port') {
     await tunnelOps.setSakuraTunnelLocalPort(action.tunnelId, Number(action.after));
     return { backup, ok: await verifyAction(action) };
@@ -268,8 +334,8 @@ export async function applyAssistantFixes({ token, selectedIds = [], snapshot = 
   const ids = Array.isArray(selectedIds) && selectedIds.length
     ? selectedIds
     : preview.actions.map((a) => a.id);
-  const actions = preview.actions.filter((a) => ids.includes(a.id));
-  if (!actions.length) throw new Error('没有选中可执行项');
+  const actions = preview.actions.filter((a) => ids.includes(a.id) && a.auto !== false);
+  if (!actions.length) throw new Error('没有可自动执行的选中项');
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const backupDir = path.join(BACKUPS_ROOT, stamp);
@@ -289,24 +355,29 @@ export async function applyAssistantFixes({ token, selectedIds = [], snapshot = 
         unchanged = portFromServerProperties(action.file) === Number(action.before);
       } else if (action.kind === 'heap') {
         unchanged = currentHeapMb(snapshot, preview.gameDir, preview.versionId) === Number(String(action.before).replace(/\D/g, ''));
+      } else if (action.kind === 'process-close') {
+        unchanged = (action.processes || []).every((p) => {
+          try { process.kill(Number(p.pid), 0); return true; } catch { return false; }
+        });
       }
       if (!unchanged) throw new Error('状态已变化，请重新预览后再执行');
       const { backup, ok } = await runAction(action, backupDir, i, manifest);
       results.push({ ...action, backup: backup.backup, ok });
-      fixRecord({ action: action.id, before: action.before, after: action.after, ok, backupDir });
+      fixRecord({ action: action.id, before: action.before, after: action.after, ok, backupDir, incidentId: preview.incidentId });
     } catch (e) {
       results.push({ ...action, ok: false, error: e.message });
-      fixRecord({ action: action.id, before: action.before, after: action.after, ok: false, backupDir, error: e.message });
+      fixRecord({ action: action.id, before: action.before, after: action.after, ok: false, backupDir, incidentId: preview.incidentId, error: e.message });
     }
   }
   writeJson(path.join(backupDir, 'manifest.json'), manifest);
   const allOk = results.every((r) => r.ok);
-  if (allOk) {
+  const canRollback = allOk && results.every((r) => r.rollbackable !== false);
+  if (canRollback) {
     const rollbackId = crypto.randomUUID();
     rollbacks.set(rollbackId, { actions, backupDir, manifest });
     return { ok: true, backupDir, results, rollbackId };
   }
-  return { ok: false, backupDir, results, rollbackId: null };
+  return { ok: allOk, backupDir, results, rollbackId: null, irreversible: !canRollback };
 }
 
 async function restoreBackup(entry) {

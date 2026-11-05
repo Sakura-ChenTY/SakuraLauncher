@@ -1318,15 +1318,26 @@ async function toggleRoom() {
     remotePort = m ? Number(m[1]) : Number(tunnel?.remotePort) || 0;
   }
   const detail = (state.versionDetails || []).find((x) => x.id === versionId) || {};
+  const joinGame = Boolean(document.getElementById('roomJoinGame')?.checked);
+  const roomMemoryInput = () => Number(document.getElementById('roomMemory')?.value) || undefined;
   try {
+    const gate = await window.ensureMemoryPreflight({
+      mode: 'room',
+      versionId,
+      roomMemoryMb: roomMemoryInput(),
+      joinGame,
+    });
+    if (!gate.ok) return;
     const r = await api('/api/online/room/start', {
       method: 'POST',
       body: JSON.stringify({
         versionId,
-        memoryMb: Number(document.getElementById('roomMemory')?.value) || undefined,
+        memoryMb: roomMemoryInput(),
         eulaAccepted: true,
         autoStopOnExit: Boolean(document.getElementById('roomAutoStop')?.checked),
-        joinGame: Boolean(document.getElementById('roomJoinGame')?.checked),
+        joinGame,
+        memoryPreflightDone: true,
+        forceMemory: gate.force === true,
         provider: p,
         tunnelId,
         remotePort,

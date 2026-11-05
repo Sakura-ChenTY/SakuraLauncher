@@ -2299,6 +2299,90 @@ function showPreflightError(missing, message, preflight = null) {
   const modal = $('preflightModal');
   if (modal) modal.hidden = false;
 }
+function memoryMb(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.round(n) : 0;
+}
+
+function showMemoryPreflightDialog(plan, versionId = '') {
+  return new Promise((resolve) => {
+    document.getElementById('memoryPreflightDialog')?.remove();
+    const box = document.createElement('div');
+    box.id = 'memoryPreflightDialog';
+    box.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:20px;';
+    const card = document.createElement('div');
+    card.style.cssText = 'width:min(500px,94vw);background:var(--panel,#1d1f24);color:var(--text,#eee);border:1px solid rgba(255,255,255,.16);border-radius:14px;padding:18px;box-shadow:0 20px 70px rgba(0,0,0,.45);';
+    const room = plan.mode === 'room';
+    const reasons = [];
+    if (plan.reasons?.includes('physical')) reasons.push(`物理内存：可用 ${memoryMb(plan.availableMb)}M`);
+    if (plan.reasons?.includes('commit')) reasons.push(`提交额度：剩余 ${memoryMb(plan.commitHeadroomMb)}M`);
+    if (plan.reasons?.includes('pagefile')) reasons.push(`页面文件：当前 ${memoryMb(plan.pagefileMb)}M`);
+    const lines = [
+      `现在可用：${memoryMb(plan.availableMb)} MB`,
+      `这次需要：${memoryMb(plan.requiredMb)} MB${room ? `（客户端 ${memoryMb(plan.clientMb)} + 服务端 ${memoryMb(plan.serverMb)} + 2048 余量）` : '（客户端 + 2048 余量）'}`,
+      `还差：${memoryMb(plan.shortfallMb)} MB`,
+      ...(reasons.length ? [`为什么缺：${reasons.join('；')}`] : []),
+      `推荐：${room ? `客户端 ${memoryMb(plan.recommendClientMb)}M，服务端 ${memoryMb(plan.recommendServerMb)}M` : `客户端 ${memoryMb(plan.recommendClientMb)}M`}`,
+      ...(plan.recommendPagefileGb ? [`页面文件建议调到：${plan.recommendPagefileGb} GB（系统属性 → 高级 → 性能设置 → 高级 → 虚拟内存）`] : []),
+      ...((plan.topProcesses || []).slice(0, 5).map((p) => `可释放：${p.name}（${p.pid}）${p.workingSetMb} MB`)),
+    ];
+    card.innerHTML = `<div style="font-weight:700;margin-bottom:12px">内存不够，先别硬起</div>`
+      + lines.map((x) => `<div style="font-size:13px;line-height:1.9">${escapeHtml(x)}</div>`).join('')
+      + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap"></div>';
+    const row = card.lastElementChild;
+    const close = () => box.remove();
+    const cancel = document.createElement('button');
+    cancel.className = 'btn ghost'; cancel.textContent = '取消';
+    cancel.onclick = () => { close(); resolve({ ok: false }); };
+    const force = document.createElement('button');
+    force.className = 'btn ghost'; force.textContent = '还是要启动';
+    force.onclick = () => { close(); resolve({ ok: true, force: true, plan }); };
+    const reduce = document.createElement('button');
+    reduce.className = 'btn'; reduce.textContent = '按这个方案做';
+    reduce.onclick = async () => {
+      reduce.disabled = true;
+      try {
+        await api('/api/memory/apply', {
+          method: 'POST',
+          body: JSON.stringify({
+            versionId: versionId || state.selectedVersion || '',
+            clientMb: plan.recommendClientMb,
+            serverMb: plan.mode === 'room' ? plan.recommendServerMb : undefined,
+          }),
+        });
+        if (plan.mode === 'room' && $('roomMemory')) $('roomMemory').value = String(plan.recommendServerMb);
+        close();
+        resolve({ ok: true, reduced: true, plan });
+      } catch (e) {
+        reduce.disabled = false;
+        alert('写入推荐内存失败：' + e.message);
+      }
+    };
+    row.appendChild(cancel);
+    row.appendChild(force);
+    row.appendChild(reduce);
+    box.appendChild(card);
+    box.addEventListener('click', (ev) => { if (ev.target === box) { close(); resolve({ ok: false }); } });
+    document.body.appendChild(box);
+  });
+}
+
+async function ensureMemoryPreflight({ mode = 'game', versionId = '', roomMemoryMb = null, joinGame = true } = {}) {
+  let plan;
+  try {
+    plan = await api('/api/memory/preflight', {
+      method: 'POST',
+      body: JSON.stringify({ mode, versionId, roomMemoryMb, joinGame }),
+    });
+  } catch (e) {
+    alert('内存检查失败：' + e.message);
+    return { ok: false, error: e.message };
+  }
+  if (plan.ok) return { ok: true, plan };
+  return showMemoryPreflightDialog(plan, versionId);
+}
+window.ensureMemoryPreflight = ensureMemoryPreflight;
+
 async function doLaunch(versionId, joinAddress, opts = {}) {
   if (state.running) {
     alert(`游戏正在运行：${state.running.versionId}\n先关掉正在跑的游戏，再${joinAddress ? '点「加入并启动」' : '重新启动'}。`);
@@ -2312,6 +2396,11 @@ async function doLaunch(versionId, joinAddress, opts = {}) {
   const logBtn = $('openLogBtn');
   if (logBtn) logBtn.hidden = true;
   appendLog(`>>> 请求启动 ${versionId}${joinAddress ? `（加入 ${joinAddress}）` : ''}`);
+  const memoryGate = await ensureMemoryPreflight({ mode: 'game', versionId });
+  if (!memoryGate.ok) {
+    setStatus('idle', '已取消启动');
+    return;
+  }
   try {
     const r = await api('/api/launch', {
       method: 'POST',
@@ -2321,6 +2410,7 @@ async function doLaunch(versionId, joinAddress, opts = {}) {
         joinAddress,
         quickPlaySave: opts.quickPlaySave || '',
         recentMeta: opts.recentMeta || null,
+        forceMemory: memoryGate.force === true,
       }),
     });
     setStatus('running', `运行 ${versionId}`);

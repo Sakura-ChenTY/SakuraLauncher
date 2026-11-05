@@ -189,7 +189,22 @@ function portMismatchReply(snapshot, continuation = false) {
 建议：把隧道 local_port 改成 ${actual}，然后重试联机。`;
 }
 
-function localDiagnosticReply(session, message, actions, category = 'startup', preference = '', continuation = false, runtimeSnapshot = null) {
+function crashPromptBlock(crashContext) {
+  if (!crashContext) return '';
+  return `
+崩溃材料（来自本次真实退出，不是猜测）：
+${JSON.stringify({
+    oom: crashContext.oom,
+    heapMb: crashContext.heapMb,
+    serverHeapMb: crashContext.serverHeapMb,
+    memory: crashContext.memory,
+    hsErrPath: crashContext.hsErrPath,
+    hsErr: String(crashContext.hsErr || '').slice(0, 14000),
+  })}
+如果 hs_err 是 native malloc 失败：先判断是「提交额度/页面文件不够」还是「堆上限太大」，不要把答案简化成“加内存”。给出具体缺多少、改哪个数。`;
+}
+
+function localDiagnosticReply(session, message, actions, category = 'startup', preference = '', continuation = false, runtimeSnapshot = null, crashContext = null) {
   const cmd = String(session.diagnosticContext || session.context || '');
   const mem = maxMemoryIn(cmd);
   const hasInstance = hasInstanceContext(cmd);
@@ -200,6 +215,19 @@ function localDiagnosticReply(session, message, actions, category = 'startup', p
   if (/Java 版本|UnsupportedClassVersionError|class file version/i.test(cmd)) noise.push('日志里有 Java 版本提示');
   if (/mod.*版本|版本提醒/i.test(cmd)) noise.push('日志里有 mod 版本提醒');
   const noiseTail = noise.length ? `\n\n顺带看到：${noise.join('；')}。` : '';
+  if (category === 'startup' && crashContext?.oom) {
+    const mem = crashContext.memory || {};
+    const need = (Number(crashContext.heapMb) || 0) + (Number(crashContext.serverHeapMb) || 0) + 2048;
+    const headroom = Number(mem.commitLimitMb) && Number(mem.commitUsedMb)
+      ? Math.max(0, Number(mem.commitLimitMb) - Number(mem.commitUsedMb)) : null;
+    if (headroom != null && headroom < need) {
+      const page = mem.pagefileMb ? `${Math.round(mem.pagefileMb / 1024)}GB` : '未知';
+      return `原因：提交额度不够，不是单纯物理内存不够。\n依据：崩溃时堆 ${crashContext.heapMb || '?'}M + 服务端 ${crashContext.serverHeapMb || 0}M + 2GB 余量需要约 ${need}M；提交额度只剩 ${headroom}M；页面文件 ${page}。hs_err 是 native malloc 失败。\n建议：先把页面文件调大到至少 ${Math.max(16, Math.ceil((Number(mem.commitUsedMb || 0) + need) / 1024))}GB，再关闭占内存进程；不要只加堆。`;
+    }
+    if (Number(crashContext.heapMb) >= 4096) {
+      return `原因：堆上限偏大，先压缩堆再启动。\n依据：客户端 -Xmx${crashContext.heapMb}M，hs_err 是 native malloc 失败；当前物理可用 ${mem.availableMb ?? '?'}M。\n建议：把客户端堆降到 2048M 或 3072M，再关闭占内存进程。`;
+    }
+  }
   if ((category === 'online' || /联机|隧道|端口|frp/i.test(String(message))) && runtimeSnapshot?.tunnel?.localPort && runtimeSnapshot?.ports?.actual) {
     const mismatch = portMismatchReply(runtimeSnapshot, continuation);
     if (mismatch) return mismatch;
@@ -320,13 +348,13 @@ function actionsFromReply(reply, session) {
   const current = maxMemoryIn(context);
   const actions = [];
   const memory = /(?:降到|降至|改成|改为|调到|设置为)\s*(\d{3,4})\s*M/i.exec(text);
-  if (hasInstance && memory) {
+  if (memory) {
     const target = Number(memory[1]);
-    if (target >= 512 && target !== current) {
+    if (target >= 1024 && target !== current) {
       actions.push({
-        id: 'memory.set',
-        label: `把实例内存${target < current ? '降到' : '改为'} ${target}M`,
-        payload: { versionId: session.versionId, memoryMin: '512M', memoryMax: `${target}M` },
+        id: 'heap.fix',
+        label: `把堆${target < current ? '降到' : '改为'} ${target}M`,
+        payload: { versionId: session.versionId, targetMb: target },
       });
     }
   }
@@ -355,7 +383,7 @@ function historyForModel(session) {
     .map((m) => ({ role: m.role, content: m.content }));
 }
 
-export async function chatSession({ id, message, mode, diagnosticsState, runtimeSnapshot = null }) {
+export async function chatSession({ id, message, mode, diagnosticsState, runtimeSnapshot = null, crashContext = null }) {
   const data = readAll();
   const session = data.sessions.find((x) => x.id === id);
   if (!session) throw new Error('会话不存在或已过期');
@@ -400,11 +428,12 @@ export async function chatSession({ id, message, mode, diagnosticsState, runtime
 
   const cfg = loadAiConfig();
   const runtimeBlock = runtimePromptBlock(runtimeSnapshot);
+  const crashBlock = crashPromptBlock(crashContext);
   let reply = '';
   if (aiHasKey() && cfg.baseURL && !currentPreference) {
     const system = diagnostic
       ? `你是《龙族》里的上杉绘梨衣，正在帮 Sakura 排查 Minecraft 问题。说话安静、短，不卖萌。
-当前症状类别：${SYMPTOMS[category] || category}。${runtimeBlock}
+当前症状类别：${SYMPTOMS[category] || category}。${runtimeBlock}${crashBlock}
 玩家在本会话的诉求（最后一条优先）：${preference || '无'}。
 ${continuation ? '这是同一会话的追问/改口：不要从头复述上一轮原因和依据，只补充这次的新信息。' : ''}
 如果玩家改口，按他的新诉求重新排查和换方案，不要固守上一轮；如果诉求和证据冲突，先用一句话说明证据，再给出沿他方向的可行路径，不要只说不行。
@@ -431,13 +460,13 @@ ${category === 'startup' ? `当前实例最大内存：${maxMemoryIn(context) ||
     try {
       reply = await callAi({ ...cfg, messages, maxTokens: diagnostic ? 1000 : 500 });
       if (diagnostic && !/原因[:：]/.test(reply)) {
-        reply = localDiagnosticReply(session, text, candidates, category, preference, continuation, runtimeSnapshot);
+        reply = localDiagnosticReply(session, text, candidates, category, preference, continuation, runtimeSnapshot, crashContext);
       }
     } catch {
-      reply = diagnostic ? localDiagnosticReply(session, text, candidates, category, preference, continuation, runtimeSnapshot) : localChatReply(text);
+      reply = diagnostic ? localDiagnosticReply(session, text, candidates, category, preference, continuation, runtimeSnapshot, crashContext) : localChatReply(text);
     }
   } else {
-    reply = diagnostic ? localDiagnosticReply(session, text, candidates, category, preference, continuation, runtimeSnapshot) : localChatReply(text);
+    reply = diagnostic ? localDiagnosticReply(session, text, candidates, category, preference, continuation, runtimeSnapshot, crashContext) : localChatReply(text);
   }
   // 模型可能忽略快照；端口不一致是确定性事实，必须出现在回答里。
   if (diagnostic && category === 'online' && runtimeSnapshot) {

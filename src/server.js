@@ -84,6 +84,7 @@ import {
 import { installCurseForgePack, previewCurseForgePack } from './cfpack.js';
 import { createSession, getSession, chatSession } from './assistant-session.js';
 import { collectRuntimeSnapshot } from './runtime-snapshot.js';
+import { preflightMemory, applyMemoryPlan, readSystemMemory } from './memory-preflight.js';
 import {
   previewAssistantFixes,
   applyAssistantFixes,
@@ -930,8 +931,12 @@ function scheduleMemoryNext(delayMs) {
   memorySchedule.timer.unref?.();
 }
 
-async function runScheduledMemoryCleanup() {
+export async function runScheduledMemoryCleanup() {
   if (!memorySchedule.enabled || memorySchedule.suspended || memorySchedule.running) return;
+  if (state.running || ['starting', 'running'].includes(getRoomState().status)) {
+    pushLog('[定时清理] 游戏运行中，跳过');
+    return;
+  }
   memorySchedule.running = true;
   try {
     const result = await optimizeMemory();
@@ -1318,7 +1323,7 @@ async function runAutoBackup(versionId, source) {
   }
 }
 
-async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta }) {
+async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta, forceMemory = false, memoryPreflightDone = false }) {
   if (state.installing) throw new Error('正在安装，稍后再启动');
   if (state.running) throw new Error(`已有游戏在运行（PID ${state.running.pid}）`);
 
@@ -1343,6 +1348,28 @@ async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta 
   const memory = {};
   if (override.memoryMin) memory.memoryMin = override.memoryMin;
   if (override.memoryMax) memory.memoryMax = override.memoryMax;
+
+  if (!memoryPreflightDone) {
+    const room = getRoomState();
+    const plan = preflightMemory({
+      mode: room.status === 'running' || room.status === 'starting' ? 'room' : 'game',
+      gameDir: state.gameDir,
+      versionId,
+      roomMemoryMb: room.memoryMb,
+      joinGame: true,
+    });
+    if (!plan.ok) {
+      const msg = `内存不够：现在可用 ${plan.availableMb} MB，这次需要 ${plan.requiredMb} MB，差 ${plan.shortfallMb} MB`;
+      if (!forceMemory) {
+        pushLog(`[内存预检] 拒绝启动：${msg}`);
+        const e = new Error(msg);
+        e.code = 'MEMORY_PREFLIGHT';
+        e.memory = plan;
+        throw e;
+      }
+      pushLog(`[内存预检] ${msg}；用户选择仍然启动`);
+    }
+  }
 
   // 新实例或首次启动：没有 lang 就补 zh_cn；已有语言不覆盖
   try { ensureChineseLanguage(versionId); } catch { /* 不阻断启动 */ }
@@ -1480,12 +1507,15 @@ async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta 
     }
     const newArtifacts = forcedExit ? [] : newCrashArtifacts(state.gameDir, versionId, state.crashBaseline);
     if (!forcedExit && ((uiCode === null || (uiCode !== 0 && uiCode !== undefined)) || newArtifacts.length)) {
+      const oom = /insufficient memory|Native memory allocation|malloc failed|OutOfMemoryError|maximum heap/i.test(reasonLine)
+        || newArtifacts.some((a) => /hs_err_pid/i.test(a.file));
       const incident = {
         id: `crash-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
         versionId,
         code: uiCode,
         reason: sanitizeDiagnostic(reasonLine).slice(0, 500),
         artifacts: newArtifacts,
+        oom,
         at: Date.now(),
         prompted: false,
       };
@@ -1892,13 +1922,18 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       if (!body.versionId) return json(res, 400, { error: '缺少 versionId' });
       try {
-        return json(res, 200, await handleLaunch(body));
+        return json(res, 200, await handleLaunch({
+          ...body,
+          forceMemory: body.forceMemory === true,
+          memoryPreflightDone: body.memoryPreflightDone === true,
+        }));
       } catch (e) {
         return json(res, e.code === 'PREFLIGHT_MISSING' ? 409 : 400, {
           error: e.message,
           code: e.code || undefined,
           missing: e.missing || undefined,
           preflight: e.preflight || undefined,
+          memory: e.memory || undefined,
         });
       }
     }
@@ -3214,6 +3249,23 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/online/room/start' && req.method === 'POST') {
       const body = await readBody(req);
       try {
+        if (!body.memoryPreflightDone) {
+          const plan = preflightMemory({
+            mode: 'room',
+            gameDir: state.gameDir,
+            versionId: body.versionId,
+            roomMemoryMb: body.memoryMb,
+            joinGame: body.joinGame === true,
+          });
+          if (!plan.ok && body.forceMemory !== true) {
+            pushLog(`[内存预检] 拒绝开房：现在可用 ${plan.availableMb} MB，需要 ${plan.requiredMb} MB，差 ${plan.shortfallMb} MB`);
+            const e = new Error(`内存不够：现在可用 ${plan.availableMb} MB，这次需要 ${plan.requiredMb} MB，差 ${plan.shortfallMb} MB`);
+            e.code = 'MEMORY_PREFLIGHT';
+            e.memory = plan;
+            throw e;
+          }
+          if (!plan.ok) pushLog(`[内存预检] 开房内存不足，用户选择仍然启动`);
+        }
         const room = await startRoom({
           versionId: body.versionId,
           gameDir: state.gameDir,
@@ -3223,6 +3275,7 @@ const server = http.createServer(async (req, res) => {
           settings: body.settings,
           pack: body.pack || null,
           requestedFrp: { provider: body.provider || '', tunnelId: body.tunnelId || '' },
+          forceMemory: body.forceMemory === true,
           onStage: (message) => {
             emit('room-stage', { message });
             pushLog(`[room] ${message}`);
@@ -3355,6 +3408,8 @@ const server = http.createServer(async (req, res) => {
                   address: frp?.address || body.address || '',
                 },
               },
+              forceMemory: body.forceMemory === true,
+              memoryPreflightDone: body.memoryPreflightDone === true,
             });
           } catch (e) {
             gameError = e.message;
@@ -3365,7 +3420,12 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ok: true, room, gameError });
       } catch (e) {
         emit('room-state', { room: getRoomState() });
-        return json(res, 400, { error: e.message, room: getRoomState() });
+        return json(res, 400, {
+          error: e.message,
+          code: e.code || undefined,
+          memory: e.memory || undefined,
+          room: getRoomState(),
+        });
       }
     }
     if (p === '/api/online/room/stop' && req.method === 'POST') {
@@ -3807,6 +3867,39 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    if (p === '/api/memory/preflight' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const plan = preflightMemory({
+          mode: body.mode === 'room' ? 'room' : 'game',
+          gameDir: state.gameDir,
+          versionId: String(body.versionId || state.running?.versionId || '').trim(),
+          roomMemoryMb: body.roomMemoryMb,
+          joinGame: body.joinGame !== false,
+        });
+        return json(res, 200, plan);
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
+    if (p === '/api/memory/apply' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const versionId = String(body.versionId || '').trim();
+        await applyMemoryPlan({
+          gameDir: state.gameDir,
+          versionId,
+          clientMb: body.clientMb,
+          serverMb: body.serverMb,
+        });
+        pushLog(`[内存预检] 用户确认调整：客户端 ${body.clientMb ?? '原值'}M，服务端 ${body.serverMb ?? '原值'}M`);
+        return json(res, 200, { ok: true, settings: getSettings() });
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
     if (p === '/api/system/memory/processes' && req.method === 'GET') {
       try {
         const data = await listMemoryProcesses();
@@ -4017,6 +4110,13 @@ const server = http.createServer(async (req, res) => {
           room: getRoomState(),
           online: onlineSnapshot(),
         });
+        const memoryPlan = preflightMemory({
+          mode: state.running || getRoomState().status === 'running' ? 'room' : 'game',
+          gameDir: state.gameDir,
+          versionId,
+          roomMemoryMb: getRoomState().memoryMb,
+          joinGame: true,
+        });
         const result = previewAssistantFixes({
           snapshot,
           gameDir: state.gameDir,
@@ -4025,6 +4125,11 @@ const server = http.createServer(async (req, res) => {
           includeServerPort: Boolean(body.includeServerPort),
           serverPort: body.serverPort,
           includeRestart: Boolean(body.includeRestart),
+          heapTargetMb: body.heapTargetMb || memoryPlan.recommendClientMb,
+          closePids: Array.isArray(body.closePids) ? body.closePids : [],
+          topProcesses: memoryPlan.topProcesses || [],
+          memoryPlan,
+          incidentId: String(body.incidentId || state.crashIncident?.id || ''),
         });
         return json(res, 200, result);
       } catch (e) {
@@ -4073,6 +4178,24 @@ const server = http.createServer(async (req, res) => {
       if (incident.prompted) return json(res, 200, { already: true, incident });
       incident.prompted = true;
       try {
+        const hsArtifact = (incident.artifacts || []).find((a) => /hs_err_pid.*\.log$/i.test(a.file));
+        let hsErr = '';
+        if (hsArtifact?.file) {
+          try {
+            hsErr = sanitizeDiagnostic(fs.readFileSync(hsArtifact.file, 'utf8').slice(0, 20000));
+          } catch { /* ignore */ }
+        }
+        const memoryNow = readSystemMemory();
+        const heapMatch = /-Xmx(\d+)[mMgG]/i.exec(String(state.lastLaunch?.command || ''));
+        const heapMb = heapMatch ? (/-Xmx\d+[gG]/i.test(state.lastLaunch.command) ? Number(heapMatch[1]) * 1024 : Number(heapMatch[1])) : null;
+        const crashContext = {
+          oom: Boolean(incident.oom),
+          hsErrPath: hsArtifact?.file || null,
+          hsErr,
+          heapMb,
+          serverHeapMb: getRoomState().memoryMb || null,
+          memory: memoryNow,
+        };
         const session = createSession({
           gameDir: state.gameDir,
           versionId: incident.versionId,
@@ -4085,6 +4208,8 @@ const server = http.createServer(async (req, res) => {
           message: `游戏异常退出，退出码 ${incident.code ?? '未知'}。请分析原因并给下一步建议。`,
           mode: 'diagnostic',
           diagnosticsState: state,
+          runtimeSnapshot: collectRuntimeSnapshot({ state, room: getRoomState(), online: onlineSnapshot() }),
+          crashContext,
         });
         return json(res, 200, { ...result, incident });
       } catch (e) {

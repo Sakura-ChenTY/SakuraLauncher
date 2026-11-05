@@ -299,7 +299,7 @@ function waitForReady(onLog) {
   });
 }
 
-export async function startRoom({ versionId, gameDir, eulaAccepted = false, memoryMb = ROOM_MEMORY_MB, autoStopOnExit = true, settings = {}, pack = null, requestedFrp = null, onStage, onLog } = {}) {
+export async function startRoom({ versionId, gameDir, eulaAccepted = false, memoryMb = ROOM_MEMORY_MB, autoStopOnExit = true, settings = {}, pack = null, requestedFrp = null, forceMemory = false, onStage, onLog } = {}) {
   if (!versionId) throw new Error('缺少 versionId');
   if (!gameDir) throw new Error('缺少 gameDir');
   if (!eulaAccepted) throw new Error('需要先同意 Minecraft EULA');
@@ -319,7 +319,7 @@ export async function startRoom({ versionId, gameDir, eulaAccepted = false, memo
   room.requestedFrp = requestedFrp;
   try {
     const freeMb = Math.floor(os.freemem() / 1024 / 1024);
-    if (room.memoryMb > freeMb) {
+    if (room.memoryMb > freeMb && !forceMemory) {
       const suggested = Math.max(ROOM_MEMORY_MIN_MB, Math.floor((freeMb * 0.8) / 512) * 512);
       throw new Error(`内存不足：房间需要 ${room.memoryMb} MB，系统当前可用约 ${freeMb} MB；请把内存调到约 ${suggested} MB，或先关闭其他程序。`);
     }

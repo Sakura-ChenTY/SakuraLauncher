@@ -364,7 +364,7 @@
     document.body.appendChild(box);
   }
 
-  async function openFixPreview({ includeServerPort = false, serverPort = null, includeRestart = false } = {}) {
+  async function openFixPreview({ includeServerPort = false, serverPort = null, includeRestart = false, heapTargetMb = null, closePids = [] } = {}) {
     try {
       const d = await api('/api/assistant/fixes/preview', {
         method: 'POST',
@@ -373,21 +373,28 @@
           includeServerPort,
           serverPort,
           includeRestart,
+          heapTargetMb,
+          closePids,
+          incidentId: state.crashIncident?.id || '',
         }),
       });
       if (!d.actions?.length) {
         showAssistantToast('现在没有可修复项。', { timeout: 4500 });
         return;
       }
+      const autoActions = d.actions.filter((a) => a.auto !== false);
       showFixModal({
         title: '一键修复预览',
-        lines: d.actions.map((a) => `${a.label}: ${a.before} → ${a.after}`),
-        confirmText: '应用',
-        onConfirm: async () => {
+        lines: d.actions.flatMap((a) => [
+          `${a.label}: ${a.before} → ${a.after}${a.auto === false ? '（只给步骤）' : a.rollbackable === false ? '（不可撤回）' : ''}`,
+          ...(a.instructions ? [`  ${a.instructions}`] : []),
+        ]),
+        confirmText: autoActions.length ? '应用' : '知道了',
+        onConfirm: autoActions.length ? async () => {
           try {
             const r = await api('/api/assistant/fixes/apply', {
               method: 'POST',
-              body: JSON.stringify({ token: d.token }),
+              body: JSON.stringify({ token: d.token, selectedIds: autoActions.map((a) => a.id) }),
             });
             showFixModal({
               title: r.ok ? '修复完成' : '修复未全部成功',
@@ -397,10 +404,46 @@
           } catch (e) {
             showAssistantToast('修复失败：' + e.message, { timeout: 6500 });
           }
-        },
+        } : null,
       });
     } catch (e) {
       showAssistantToast('生成预览失败：' + e.message, { timeout: 6500 });
+    }
+  }
+
+  async function openProcessFix() {
+    try {
+      const plan = await api('/api/memory/preflight', {
+        method: 'POST',
+        body: JSON.stringify({ mode: 'game', versionId: targetVersion() }),
+      });
+      const critical = new Set(['system', 'registry', 'memory compression', 'smss', 'csrss', 'wininit', 'services', 'lsass', 'winlogon', 'svchost', 'dwm', 'explorer', 'msmpeng', 'securityhealthservice', 'sakuralauncher', 'electron', 'deepseek harness', 'node']);
+      const list = (plan.topProcesses || []).filter((p) => !critical.has(String(p.name || '').toLowerCase()));
+      if (!list.length) {
+        showAssistantToast('没有可安全关闭的候选进程。', { timeout: 4500 });
+        return;
+      }
+      const box = document.createElement('div');
+      box.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:20px;';
+      const card = document.createElement('div');
+      card.style.cssText = 'width:min(500px,94vw);background:var(--panel,#1d1f24);color:var(--text,#eee);border:1px solid rgba(255,255,255,.16);border-radius:14px;padding:18px;';
+      card.innerHTML = '<div style="font-weight:700;margin-bottom:10px">选择要关闭的进程</div>'
+        + list.map((p, i) => `<label style="display:flex;gap:8px;align-items:center;font-size:13px;line-height:1.9"><input type="checkbox" data-fix-pid="${p.pid}" data-i="${i}">${escapeHtml(p.name)}（${p.pid}） ${p.workingSetMb} MB</label>`).join('')
+        + '<div style="font-size:12px;opacity:.72;margin-top:10px">系统关键进程不会出现在这里。关闭后不能撤回。</div>'
+        + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn ghost" data-cancel>取消</button><button class="btn" data-ok>关闭选中项</button></div>';
+      const close = () => box.remove();
+      card.querySelector('[data-cancel]').onclick = close;
+      card.querySelector('[data-ok]').onclick = async () => {
+        const pids = [...card.querySelectorAll('[data-fix-pid]:checked')].map((x) => Number(x.dataset.fixPid));
+        if (!pids.length) { showAssistantToast('没有选择进程。', { timeout: 3000 }); return; }
+        close();
+        await openFixPreview({ closePids: pids });
+      };
+      box.appendChild(card);
+      box.addEventListener('click', (ev) => { if (ev.target === box) close(); });
+      document.body.appendChild(box);
+    } catch (e) {
+      showAssistantToast('读取进程列表失败：' + e.message, { timeout: 6000 });
     }
   }
 
@@ -432,6 +475,9 @@
 
   async function runAction(action) {
     if (!action) return;
+    if (action.id === 'heap.fix') {
+      return openFixPreview({ heapTargetMb: action.payload?.targetMb });
+    }
     if (action.id === 'memory.set') {
       const p = action.payload || {};
       const r = await askForm({
@@ -762,6 +808,7 @@
         else if (action === 'diag') openDiagnosticPreview();
         else if (action === 'fix') openFixPreview();
         else if (action === 'fix-restart') openFixPreview({ includeRestart: true });
+        else if (action === 'fix-process') openProcessFix();
         else if (action === 'fix-port') openFixServerPort();
         else if (action === 'fix-recent') openFixRecent();
         else if (action === 'new') newSession();
