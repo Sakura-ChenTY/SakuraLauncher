@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import crypto from 'node:crypto';
 import https from 'node:https';
 import http from 'node:http';
@@ -79,6 +80,59 @@ const PROBE_BYTES = 1024 * 1024;
 const PROBE_TIMEOUT_MS = 3000;
 const STALL_TIMEOUT_MS = 30_000;
 
+const sourceAffinityPath = path.join(os.homedir(), '.mclauncher', 'source-affinity.json');
+let sourceAffinity = {};
+try {
+  sourceAffinity = JSON.parse(fs.readFileSync(sourceAffinityPath, 'utf8')) || {};
+} catch {
+  sourceAffinity = {};
+}
+let saveSourceTimer = null;
+function saveSourceAffinity() {
+  clearTimeout(saveSourceTimer);
+  saveSourceTimer = setTimeout(() => {
+    try {
+      fs.mkdirSync(path.dirname(sourceAffinityPath), { recursive: true });
+      fs.writeFileSync(sourceAffinityPath, JSON.stringify(sourceAffinity, null, 2));
+    } catch {
+      /* 源记忆失败不影响下载 */
+    }
+  }, 300);
+}
+function sourceKeyFor(url, opts = {}) {
+  if (opts.sourceKey) return String(opts.sourceKey);
+  if (opts.sha1) return `sha1:${String(opts.sha1).toLowerCase()}`;
+  return `url:${String(url)}`;
+}
+function sourceHost(url) {
+  try { return new URL(url).hostname; } catch { return ''; }
+}
+function sourceMemory(key) {
+  if (!sourceAffinity[key]) sourceAffinity[key] = { preferred: null, failures: 0, failedHosts: {}, updatedAt: 0 };
+  return sourceAffinity[key];
+}
+function preferHost(urls, host) {
+  if (!host) return urls;
+  const hit = urls.find((u) => sourceHost(u) === host);
+  return hit ? [hit, ...urls.filter((u) => u !== hit)] : urls;
+}
+function rememberSourceFailure(key, target) {
+  const m = sourceMemory(key);
+  const h = sourceHost(target);
+  m.failures = (Number(m.failures) || 0) + 1;
+  m.failedHosts[h] = (Number(m.failedHosts[h]) || 0) + 1;
+  m.updatedAt = Date.now();
+  saveSourceAffinity();
+}
+function rememberSourceSuccess(key, target) {
+  const m = sourceMemory(key);
+  m.preferred = sourceHost(target);
+  m.failures = 0;
+  m.failedHosts[m.preferred] = 0;
+  m.updatedAt = Date.now();
+  saveSourceAffinity();
+}
+
 function makeStallGuard(ctrl, label) {
   let timer = null;
   const arm = () => {
@@ -128,7 +182,6 @@ function markCandidateInvalid(target) {
 function availableCandidates(url, opts) {
   return candidateUrls(url, opts).filter((candidate) => {
     if (invalidCandidates.has(candidate)) return false;
-    if (badDomains.has(hostOf(candidate))) return false;
     for (const prefix of invalidMirrorPrefixes) {
       if (candidate.startsWith(prefix)) return false;
     }
@@ -636,9 +689,13 @@ async function isComplete(filePath, expectedSha1, expectedSize) {
  * 只在全新文件、已知大小 > 8MB 时尝试；服务器不支持 Range 时返回 false，
  * 调用方退回原来的单流路径。
  */
-async function downloadRanged(url, destPath, size, sha1, source) {
+async function downloadRanged(url, destPath, size, sha1, source, sourceKey) {
   const effectiveSource = sourceState?.active ?? (source === 'bmclapi' ? 'bmclapi' : 'official');
-  const target = availableCandidates(url, { source: effectiveSource })[0];
+  const sourceMem = sourceKey ? sourceMemory(sourceKey) : null;
+  const target = preferHost(
+    availableCandidates(url, { source: effectiveSource }),
+    sourceMem?.preferred
+  )[0];
   if (!target) return false;
   const partPath = `${destPath}.part`;
   let completed = false;
@@ -731,11 +788,13 @@ async function downloadRanged(url, destPath, size, sha1, source) {
     }
     await fsp.rename(partPath, destPath);
     completed = true;
+    if (sourceKey) rememberSourceSuccess(sourceKey, target);
     return true;
   } catch (e) {
     if (e?.sourceSwitch || ctrl.signal.reason instanceof SourceSwitchError) {
       throw new SourceSwitchError();
     }
+    if (sourceKey) rememberSourceFailure(sourceKey, target);
     try { ctrl.abort(); } catch { /* ignore */ }
     return false;
   } finally {
@@ -758,6 +817,52 @@ async function downloadRanged(url, destPath, size, sha1, source) {
  *   reuseRoots: 其他 .minecraft 根目录，按相对路径找同文件后直接复制
  * 返回 'skipped' | 'downloaded'
  */
+async function probeFileCandidates(url, opts, key) {
+  const m = sourceMemory(key);
+  if ((Number(m.failures) || 0) < 2) return null;
+  if (Date.now() - Number(m.lastProbeAt || 0) < 60_000) return m.preferred || null;
+  m.lastProbeAt = Date.now();
+  const list = availableCandidates(url, opts);
+  const results = [];
+  await Promise.all(list.map(async (target) => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(new Error('PROBE_TIMEOUT')), 3000);
+    const started = Date.now();
+    let bytes = 0;
+    try {
+      const { res } = await requestOnce(target, {
+        timeout: 3000,
+        headers: { Range: 'bytes=0-1023' },
+        signal: ctrl.signal,
+      });
+      if (res.statusCode !== 200 && res.statusCode !== 206) {
+        res.resume();
+        return;
+      }
+      for await (const chunk of res) {
+        bytes += chunk.length;
+        if (bytes >= 1024) {
+          res.destroy();
+          break;
+        }
+      }
+      if (bytes > 0) results.push({ target, ms: Math.max(1, Date.now() - started) });
+    } catch {
+      /* 探测失败不阻塞下载 */
+    } finally {
+      clearTimeout(timer);
+      ctrl.abort();
+    }
+  }));
+  if (!results.length) return null;
+  results.sort((a, b) => a.ms - b.ms);
+  m.preferred = sourceHost(results[0].target);
+  m.updatedAt = Date.now();
+  saveSourceAffinity();
+  logDownload(`[源探测] ${path.basename(key)} 选中 ${m.preferred}（${results[0].ms}ms）`);
+  return m.preferred;
+}
+
 export async function downloadFile(url, destPath, opts = {}) {
   const {
     sha1,
@@ -770,9 +875,16 @@ export async function downloadFile(url, destPath, opts = {}) {
     reuseRoots = [],
     onThrottle,
     ranged = true,
+    sourceKey: explicitSourceKey,
   } = opts;
 
   await mkdirTracked(path.dirname(destPath));
+  const sourceKey = sourceKeyFor(url, { ...opts, sourceKey: explicitSourceKey });
+  const sourceMem = sourceMemory(sourceKey);
+  let preferredHost = sourceMem.preferred;
+  if (Number(sourceMem.failures) >= 2) {
+    preferredHost = (await probeFileCandidates(url, { preferMirror, source }, sourceKey)) || preferredHost;
+  }
 
   // 已存在且校验通过 -> 直接跳过，**不能登记**：
   // 它是别的任务/别的实例早先装好的，取消时去删它就是把好文件删了。
@@ -822,7 +934,7 @@ export async function downloadFile(url, destPath, opts = {}) {
       ensureNotCancelled();
 
       const effectiveSource = sourceState?.active ?? (source === 'bmclapi' ? 'bmclapi' : 'official');
-      let urls = availableCandidates(url, { preferMirror, source: effectiveSource });
+      let urls = preferHost(availableCandidates(url, { preferMirror, source: effectiveSource }), preferredHost);
       if (!urls.length && badDomains.size && !domainRetryUsed) {
         // 域名负缓存不能把整个候选集永久锁死；清零后给一次重试机会。
         badDomains.clear();
@@ -866,7 +978,7 @@ export async function downloadFile(url, destPath, opts = {}) {
         // 全新大文件先尝试 4 段 Range；镜像/服务器不支持时自动回退单流。
         if (ranged && startAt === 0 && Number(size) > 8 * 1024 * 1024) {
           try {
-            if (await downloadRanged(url, destPath, Number(size), sha1, effectiveSource)) {
+            if (await downloadRanged(url, destPath, Number(size), sha1, effectiveSource, sourceKey)) {
               return 'downloaded';
             }
           } catch (e) {
@@ -944,6 +1056,8 @@ export async function downloadFile(url, destPath, opts = {}) {
 
         await fsp.rename(partPath, destPath);
         if (sourceState) sourceState.consecutiveFailures = 0;
+        rememberSourceSuccess(sourceKey, target);
+        preferredHost = sourceHost(target);
         return 'downloaded';
       } catch (e) {
         // 取消不是「下载出错」，不该进重试，也不该把 .part 删掉
@@ -962,6 +1076,7 @@ export async function downloadFile(url, destPath, opts = {}) {
         }
 
         lastErr = e;
+        rememberSourceFailure(sourceKey, target);
         const stalled = String(e?.message ?? '').includes('STALL_TIMEOUT');
         if (stalled) {
           if (sourceState) sourceState.lastTimeoutAt = Date.now();
