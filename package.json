@@ -1,0 +1,71 @@
+{
+  "name": "sakura-launcher",
+  "productName": "Sakura Minecraft Launcher",
+  "version": "0.10.1",
+  "private": true,
+  "type": "module",
+  "description": "A from-scratch Minecraft launcher core (no third-party launcher libs).",
+  "main": "electron/main.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --win nsis --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "45.0.0"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
+  },
+  "build": {
+    "appId": "com.sakura.launcher",
+    "productName": "SakuraLauncher",
+    "directories": {
+      "output": "dist/eb",
+      "buildResources": "build"
+    },
+    "electronDist": "node_modules/electron/dist",
+    "files": [
+      "electron/**/*",
+      "public/**/*",
+      "src/**/*",
+      "package.json",
+      "!dist/**",
+      "!screenshots/**",
+      "!*.log"
+    ],
+    "extraResources": [
+      {
+        "from": "build/sakura-launcher.ico",
+        "to": "icon.ico"
+      }
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/sakura-launcher.ico",
+      "signAndEditExecutable": true,
+      "artifactName": "SakuraLauncher-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "SakuraLauncher",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

@@ -1,0 +1,1738 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sakura Minecraft Launcher</title>
+  <link rel="icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/pages.css">
+</head>
+<body data-theme="blackgold">
+  <!-- 磨砂底图：优先用当前系统壁纸，取不到由 JS 加 .fallback 退回渐变 -->
+  <div class="wallpaper" id="wallpaper" aria-hidden="true"></div>
+
+  <!-- 启动动画已经搬到独立透明窗口（splash.html / splash.gif）。
+       主页面里不能再留一层 splash —— 那样主窗一亮起来就会多盖一块
+       不透明底色，正是搭档截图里那个黑框。 -->
+
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <img class="logo" src="/icon-64.png" alt="" width="22" height="22">
+        <span class="title">Sakura Minecraft Launcher</span>
+        <span class="app-version" id="appVersion">v…</span>
+      </div>
+      <div class="gamedir" id="gameDir" title="游戏目录">-</div>
+      <div class="status" id="status">
+        <span class="dot idle" id="dot"></span>
+        <span id="statusText">空闲</span>
+        <button class="btn ghost" id="openLogBtn" hidden style="padding:1px 7px;font-size:11px">看日志</button>
+      </div>
+      <!-- 窗口按钮：只有 Electron 壳里才显示，浏览器里由 .no-shell 隐藏 -->
+      <div class="win-ctrls" id="winCtrls" hidden>
+        <button class="win-btn" id="winMin" title="最小化" aria-label="最小化">
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+            <path d="M0 5h10" stroke="currentColor" stroke-width="1" />
+          </svg>
+        </button>
+        <button class="win-btn" id="winMax" title="最大化" aria-label="最大化">
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+            <rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1" />
+          </svg>
+        </button>
+        <button class="win-btn win-close" id="winClose" title="关闭" aria-label="关闭">
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+            <path d="M0 0l10 10M10 0L0 10" stroke="currentColor" stroke-width="1.1" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="body">
+      <!-- 左侧：纯导航栏 -->
+      <aside class="sidebar">
+        <div class="account-card" id="accountCard" title="管理账号">
+          <button class="account-logout" id="accountLogout" type="button" hidden>退出登录</button>
+          <div class="account-avatar" id="accountAvatar">
+            <canvas id="accountAvatarCanvas" width="64" height="64" hidden></canvas>
+            <span id="accountAvatarLetter">?</span>
+          </div>
+          <div class="account-name" id="accountName">未登录</div>
+          <div class="account-type" id="accountType">点击添加账号</div>
+        </div>
+
+        <nav class="side-nav" id="mainNav">
+          <button class="nav-item active" data-tab="home">
+            <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z" />
+            </svg>
+            <span>主页</span>
+          </button>
+          <button class="nav-item" data-tab="download">
+            <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <path d="M7 10l5 5 5-5" /><path d="M12 15V3" />
+            </svg>
+            <span>下载</span>
+          </button>
+          <button class="nav-item" data-tab="version">
+            <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 2 2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" />
+            </svg>
+            <span>版本</span>
+          </button>
+          <button class="nav-item" data-tab="saves">
+            <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+              <path d="M17 21v-8H7v8M7 3v5h8" />
+            </svg>
+            <span>存档管理</span>
+          </button>
+          <button class="nav-item" data-tab="online">
+            <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" /><path d="M3 12h18" /><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z" />
+            </svg>
+            <span>联机</span>
+          </button>
+          <button class="nav-item" data-tab="settings">
+            <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3a1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9a1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5a1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+            </svg>
+            <span>设置</span>
+          </button>
+          <button class="nav-item" data-tab="theme">
+            <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="13.5" cy="6.5" r="1.5" /><circle cx="17.5" cy="10.5" r="1.5" />
+              <circle cx="8.5" cy="7.5" r="1.5" /><circle cx="6.5" cy="12.5" r="1.5" />
+              <path d="M12 2a10 10 0 1 0 0 20c1.4 0 2-1 2-2c0-1.6-1.4-1.6-1.4-3c0-1.1.9-2 2-2H17a5 5 0 0 0 5-5c0-4.4-4.5-8-10-8z" />
+            </svg>
+            <span>自定义</span>
+          </button>
+          <button class="nav-item" data-tab="assistant">
+            <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3a7 7 0 0 0-7 7v4a3 3 0 0 0 3 3h1l1 4 2-4h3a3 3 0 0 0 3-3v-4a7 7 0 0 0-7-7z"/><path d="M9 11h.01M15 11h.01"/>
+            </svg>
+            <span>绘梨衣小助手</span>
+          </button>
+          <button class="nav-item" data-tab="more">
+            <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="1.2" /><circle cx="19" cy="12" r="1.2" /><circle cx="5" cy="12" r="1.2" />
+            </svg>
+            <span>更多</span>
+          </button>
+        </nav>
+
+        <div class="update-badge" id="updateBadge" hidden>
+          <span id="updateBadgeText">有新版本</span>
+          <button class="btn ghost" id="updateBadgeBtn">下载</button>
+        </div>
+      </aside>
+
+      <main>
+        <!-- ============ 主页 ============ -->
+        <section class="panel active" id="panel-home">
+          <div class="home">
+            <div class="home-main">
+              <div class="home-stage" id="homeStage">
+                <div class="char-card">
+                  <canvas class="skin-canvas" id="skin3d" width="280" height="360"></canvas>
+                  <svg class="char-svg" id="skinFallback" viewBox="0 0 64 92" aria-hidden="true" hidden>
+                    <rect x="14" y="0" width="36" height="10" fill="#2b2f3a"/>
+                    <rect x="16" y="8" width="32" height="30" fill="#e8b98a"/>
+                    <rect x="16" y="8" width="32" height="8" fill="#2b2f3a"/>
+                    <rect x="23" y="22" width="5" height="6" fill="#2b2f3a"/>
+                    <rect x="36" y="22" width="5" height="6" fill="#2b2f3a"/>
+                    <rect x="29" y="32" width="6" height="2" fill="#c9905f"/>
+                    <rect x="16" y="38" width="32" height="30" fill="#39c5bb"/>
+                    <rect x="4" y="38" width="11" height="28" fill="#e8b98a"/>
+                    <rect x="49" y="38" width="11" height="28" fill="#e8b98a"/>
+                    <rect x="4" y="38" width="11" height="9" fill="#2aa39a"/>
+                    <rect x="49" y="38" width="11" height="9" fill="#2aa39a"/>
+                    <rect x="17" y="68" width="13" height="24" fill="#3d4a5c"/>
+                    <rect x="34" y="68" width="13" height="24" fill="#3d4a5c"/>
+                  </svg>
+                  <div class="skin-hint" id="skinHint" hidden>3D 皮肤预览不可用</div>
+                </div>
+
+                <div class="char-name" id="charName">Player</div>
+                <div class="char-version" id="charVersion">未选择实例</div>
+
+                <div class="account-actions">
+                  <button class="acc-act" data-acc-act="skin" title="换装">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M20.38 3.46 16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 .99.84H6v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V10h2.15a1 1 0 0 0 .99-.84l.58-3.47a2 2 0 0 0-1.34-2.23z" />
+                    </svg>
+                  </button>
+                  <button class="acc-act" data-acc-act="edit" title="编辑账号">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M12 20h9" />
+                      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" />
+                    </svg>
+                  </button>
+                  <button class="acc-act" data-acc-act="switch" title="切换账号">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="m17 2 4 4-4 4" />
+                      <path d="M3 11v-1a4 4 0 0 1 4-4h14" />
+                      <path d="m7 22-4-4 4-4" />
+                      <path d="M21 13v1a4 4 0 0 1-4 4H3" />
+                    </svg>
+                  </button>
+                </div>
+
+                <div class="cape-menu" id="capeMenu" hidden>
+                  <button type="button" data-cape-action="refresh">刷新披风</button>
+                  <button type="button" data-cape-action="list">换披风…</button>
+                  <button type="button" data-cape-action="login" hidden>去登录</button>
+                  <div class="cape-menu-hint" id="capeMenuHint"></div>
+                </div>
+              </div>
+
+              <div class="home-actions">
+                <button class="launch-btn" id="launchBtn" disabled>启动游戏</button>
+                <button class="link-btn" id="launchRetryBtn" type="button" hidden>重试启动</button>
+                <button class="recent-play-btn" id="recentPlayBtn" type="button" hidden>
+                  <span>最近游玩</span>
+                  <small id="recentPlayHint"></small>
+                </button>
+                <button class="link-btn" id="lastFailure" hidden></button>
+                <button class="link-btn" id="manageContent">管理内容</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="content-panel" id="contentPanel" hidden>
+            <div class="content-head">
+              <h3 id="contentTitle">内容</h3>
+              <div class="content-head-actions">
+                <button class="btn ghost" id="checkModUpdates" title="扫描本实例模组，去 Modrinth 比对有无新版">检查更新</button>
+                <button class="btn ghost" id="exportContentPack" type="button" title="把当前实例导出为可再次导入的 zip">导出整合包</button>
+                <button class="btn ghost" id="closeContent">关闭</button>
+              </div>
+            </div>
+            <!-- 批量更新结果面板：检查完才出现 -->
+            <div class="mod-updates" id="modUpdates" hidden></div>
+            <div class="content-groups" id="contentGroups"></div>
+          </div>
+
+          <!-- 更新预览 -->
+          <div class="modal" id="modUpdatePreviewModal" hidden>
+            <div class="modal-box mod-update-preview-box">
+              <div class="modal-head">
+                <h3>更新预览</h3>
+                <button class="btn ghost" id="modUpdatePreviewClose" type="button">✕</button>
+              </div>
+              <div class="modal-body">
+                <div id="modUpdatePreviewGroups" class="mod-update-preview-groups"></div>
+                <div class="field-line" style="margin-top:12px;justify-content:flex-end">
+                  <button class="btn ghost" id="modUpdatePreviewCancel" type="button">取消</button>
+                  <button class="btn" id="modUpdatePreviewConfirm" type="button">更新 N 个文件</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 主页常驻小助手：默认收起，用户可自行展开 -->
+          <aside class="home-assistant is-collapsed is-collapse-done" id="homeAssistant">
+            <div class="assistant-expand" id="assistantExpand">
+              <div class="assistant-expand-inner">
+                <div class="assistant-result home-assistant-log" id="aiResult">
+                  <div class="empty">问吧。我会带着这次启动的上下文回答。</div>
+                </div>
+                <div class="hint home-assistant-hint">同一会话保留上下文。</div>
+              </div>
+            </div>
+            <div class="home-assistant-bar" id="homeAssistantBar">
+              <div class="home-assistant-head">
+                <div class="home-assistant-title">
+                  <b>绘梨衣小助手</b>
+                  <span class="hint" id="aiTarget"></span>
+                </div>
+                <div class="home-assistant-actions">
+                  <button class="btn ghost" id="aiAnalyze" type="button">分析最近失败</button>
+                  <button class="btn ghost" id="homeDiagBtn" type="button">收集诊断信息</button>
+                  <button class="btn ghost" id="homeAssistantMore" type="button" hidden>更多</button>
+                  <button class="btn ghost" id="homeAssistantToggle" type="button" aria-expanded="true">收起</button>
+                </div>
+              </div>
+              <div class="field-line assistant-chat-line">
+                <input id="aiChatInput" class="input grow" type="text" placeholder="问：为什么进不去游戏？" autocomplete="off">
+                <button class="btn" id="aiChatSend" type="button">发送</button>
+                <button class="btn ghost" id="aiChatNew" type="button">新会话</button>
+              </div>
+            </div>
+            <div class="home-assistant-more-menu" id="homeAssistantMoreMenu" hidden>
+              <button class="btn ghost" type="button" data-more-action="analyze">分析最近失败</button>
+              <button class="btn ghost" type="button" data-more-action="diag">收集诊断信息</button>
+              <button class="btn ghost" type="button" data-more-action="new">新会话</button>
+            </div>
+          </aside>
+        </section>
+
+        <!-- ============ 下载 ============ -->
+        <section class="panel" id="panel-download">
+          <div class="dl-head">
+            <div class="sub-nav" id="downloadSubNav">
+              <button class="sub-item active" data-sub="vanilla">原版</button>
+              <button class="sub-item" data-sub="mod">模组</button>
+              <button class="sub-item" data-sub="modpack">整合包</button>
+              <button class="sub-item" data-sub="shader">光影包</button>
+              <button class="sub-item" data-sub="resourcepack">资源包</button>
+            </div>
+            <div class="dl-search">
+              <input id="dlQuery" class="input grow" type="search" placeholder="搜索内容…（回车）" autocomplete="off" spellcheck="false">
+              <button class="btn" id="dlSearch">搜索</button>
+            </div>
+          </div>
+
+          <!-- 原版 -->
+          <div class="sub-panel active" id="sub-vanilla">
+            <div class="dl-bar">
+              <span class="hint" id="vanillaHint">游戏本体版本清单，选一个就能装</span>
+              <button class="btn ghost" id="refreshRemote">刷新清单</button>
+            </div>
+            <div class="list" id="remoteList">
+              <div class="empty">点「刷新清单」加载</div>
+            </div>
+
+            <div class="track-box">
+              <div class="track-head">
+                <b>安装游戏 / 加载器</b>
+                <span class="hint" id="fabricHint">选加载器和 MC 版本；装完会多出一个可启动的实例</span>
+              </div>
+              <div class="store-bar">
+                <select id="loaderType" class="select" title="装什么">
+                  <option value="vanilla">原版</option>
+                  <option value="fabric" selected>Fabric</option>
+                  <option value="forge">Forge</option>
+                  <option value="neoforge">NeoForge</option>
+                </select>
+                <select id="fabricGame" class="select" title="基于哪个 Minecraft 版本">
+                  <option value="">选择 MC 版本…</option>
+                </select>
+                <select id="fabricLoader" class="select" title="加载器版本" disabled>
+                  <option value="">—</option>
+                </select>
+                <input id="fabricName" class="input grow" type="text" placeholder="实例名（留空自动生成）" autocomplete="off" spellcheck="false">
+                <button class="btn" id="fabricInstall">安装</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 模组 / 光影包 / 资源包 共用这一块 -->
+          <div class="sub-panel" id="sub-store">
+            <div class="dl-bar">
+              <select id="storeInstance" class="select" title="装到哪个实例（同时用于版本过滤）">
+                <option value="">选择实例…</option>
+              </select>
+              <select id="storeType" class="select" hidden>
+                <option value="mod">Mod</option>
+                <option value="shader">光影包</option>
+                <option value="resourcepack">资源包</option>
+              </select>
+              <select id="storeSort" class="select">
+                <option value="relevance">相关度</option>
+                <option value="downloads">下载量</option>
+                <option value="follows">收藏</option>
+                <option value="updated">最近更新</option>
+                <option value="newest">最新发布</option>
+              </select>
+              <button class="btn" id="storeSearch" hidden>搜索</button>
+              <span class="hint" id="storeHint"></span>
+            </div>
+            <div class="list" id="storeResults">
+              <div class="empty">选一个子分类，然后搜索</div>
+            </div>
+            <div class="pager" id="storePager" hidden>
+              <button class="btn ghost" id="storePrev">上一页</button>
+              <span class="pager-info" id="storePageInfo"></span>
+              <button class="btn ghost" id="storeNext">下一页</button>
+            </div>
+          </div>
+
+          <!-- 整合包 -->
+          <div class="sub-panel" id="sub-modpack">
+            <div class="dl-bar">
+              <!-- 来源多选：换成勾选式，可以同时搜两个站点。
+                   用自绘下拉而不是 <select multiple> —— 原生多选框在 Windows 上
+                   是白底蓝选中，跟这套深色皮肤完全打架，而且高度不可控。 -->
+              <div class="msel" id="packSourceBox">
+                <button class="select msel-btn" id="packSourceBtn" type="button"
+                        aria-haspopup="true" aria-expanded="false" aria-controls="packSourcePanel"
+                        title="从哪里找整合包，可以多选">
+                  <span id="packSourceLabel">全部</span>
+                  <svg class="msel-caret" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                    <path d="M1 3.5L5 7.5L9 3.5" fill="none" stroke="currentColor"
+                          stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </button>
+                <div class="msel-panel" id="packSourcePanel" hidden>
+                  <label class="msel-item" data-src="all">
+                    <input type="checkbox" id="packSrcAll" checked>
+                    <span class="msel-check" aria-hidden="true"></span>
+                    <span>全部</span>
+                  </label>
+                  <div class="msel-sep"></div>
+                  <label class="msel-item" data-src="modrinth">
+                    <input type="checkbox" id="packSrcModrinth" checked>
+                    <span class="msel-check" aria-hidden="true"></span>
+                    <span>Modrinth</span>
+                  </label>
+                  <label class="msel-item" data-src="curseforge">
+                    <input type="checkbox" id="packSrcCurseforge" checked>
+                    <span class="msel-check" aria-hidden="true"></span>
+                    <span>CurseForge</span>
+                  </label>
+                </div>
+              </div>
+              <div class="hint" id="packCfKeyHint" hidden></div>
+              <select id="packSort" class="select">
+                <option value="downloads">下载量</option>
+                <option value="updated">最近更新</option>
+                <option value="relevance">相关度</option>
+                <option value="newest">最新发布</option>
+              </select>
+              <button class="btn" id="packSearch" hidden>搜索</button>
+              <span class="hint" id="packHint">整合包会创建独立实例，自带 mod 与配置</span>
+            </div>
+            <div class="list" id="packResults">
+              <div class="empty">搜一下看看有什么</div>
+            </div>
+            <div class="pager" id="packPager" hidden>
+              <button class="btn ghost" id="packPrev">上一页</button>
+              <span class="pager-info" id="packPageInfo"></span>
+              <button class="btn ghost" id="packNext">下一页</button>
+            </div>
+
+            <!-- 追更：全部压成一行。
+                 以前是「标题一行 + 输入框一行 + 空状态一行」共三行，
+                 在这个 906 宽的窗口里占了太多竖向空间。
+                 现在标题、输入框、选项、按钮、状态提示同排；
+                 没有追更项目时列表整块隐藏，不再单独占一行说“还没有”。 -->
+            <div class="track-box">
+              <div class="track-row">
+                <b class="track-title">追更</b>
+                <input id="trackQuery" class="input grow" type="text" placeholder="整合包名字或 Modrinth 链接（回车添加）" autocomplete="off" spellcheck="false">
+                <label class="track-check" title="勾上后只提示正式版，忽略 beta/alpha">
+                  <input type="checkbox" id="trackReleaseOnly"> 只看正式版
+                </label>
+                <button class="btn" id="trackAdd">添加</button>
+                <button class="btn ghost" id="trackCheck">立即检查</button>
+                <span class="track-status" id="trackHint"></span>
+              </div>
+              <div class="track-list" id="trackList" hidden></div>
+            </div>
+          </div>
+
+          <!-- 隐藏的兼容输入框：app.js 里绑定过 keydown 事件 -->
+          <input id="storeQuery" class="input" type="search" hidden>
+          <input id="packQuery" class="input" type="search" hidden>
+        </section>
+
+        <!-- ============ 版本 ============ -->
+        <section class="panel" id="panel-version">
+          <div class="panel-head">
+            <h2>已安装版本</h2>
+            <div class="row-actions">
+              <span class="count" id="installedCount">0</span>
+              <button class="btn ghost" id="trashBtn" hidden>最近删除 <span id="trashCount"></span></button>
+              <button class="btn ghost" id="updatePackBtn" type="button">更新整合包</button>
+              <button class="btn ghost" id="refreshInstalled">刷新列表</button>
+            </div>
+          </div>
+          <div class="ver-tools">
+            <input id="verSearch" class="input" type="search" placeholder="搜实例名…" autocomplete="off" spellcheck="false">
+            <select id="verLoader" class="select" title="按加载器筛选">
+              <option value="">全部加载器</option>
+              <option value="vanilla">原版</option>
+              <option value="fabric">Fabric</option>
+              <option value="forge">Forge</option>
+              <option value="neoforge">NeoForge</option>
+              <option value="quilt">Quilt</option>
+            </select>
+            <span class="ver-hint" id="verHint">选中后双击启动，右键更多</span>
+          </div>
+          <div class="ver-list" id="installedList">
+            <div class="empty">正在读取…</div>
+          </div>
+        </section>
+
+        <!-- ============ 存档管理 ============ -->
+        <section class="panel" id="panel-saves">
+          <div class="panel-head">
+            <h2>存档管理</h2>
+            <span class="hint">按实例查看、备份和恢复世界。</span>
+          </div>
+          <div class="saves-page">
+            <div class="saves-page-toolbar">
+              <label class="saves-page-label" for="savesPageInstance">实例</label>
+              <select class="select" id="savesPageInstance"></select>
+              <button class="btn ghost" id="savesPageRefresh" type="button">刷新</button>
+              <button class="btn ghost" id="savesPageBackupAll" type="button">备份全部</button>
+              <button class="btn ghost" id="savesPageImport" type="button">导入存档</button>
+              <button class="btn ghost" id="savesPageCancel" type="button" hidden>取消</button>
+              <span class="hint" id="savesPageRunHint" hidden>游戏运行中，先退出游戏</span>
+            </div>
+            <div class="saves-progress" id="savesPageProgress"></div>
+            <div class="saves-list" id="savesPageList"></div>
+            <div class="content-backups" id="savesContentBackups"></div>
+          </div>
+        </section>
+        <!-- ============ 联机 ============ -->
+                <section class="panel" id="panel-online">
+          <div class="panel-head">
+            <h2>联机</h2>
+            <span class="hint" id="frpcHint">正在探测本机 frpc…</span>
+          </div>
+
+          <div class="frp-config">
+            <div class="frp-config-head">
+              <span class="frp-config-title">frp 配置</span>
+              <span class="online-status" id="frpConfigStatus">未配置</span>
+            </div>
+            <div class="frp-provider-line">
+              <select id="onlineProvider" class="select" title="选择联机服务">
+                <option value="sakura">SakuraFrp</option>
+                <option value="openfrp">OpenFrp</option>
+                <option value="custom">自定义 frps</option>
+              </select>
+              <span class="hint" id="frpProviderHint">选一个服务，填一次凭据。</span>
+            </div>
+            <div class="online-address" id="onlineResult" hidden></div>
+
+            <div class="frp-provider" id="providerSakura">
+              <div class="tool-line">
+                <input id="sakuraToken" class="input grow" type="password" placeholder="SakuraFrp 访问 token" autocomplete="off" spellcheck="false">
+                <button class="btn ghost" id="sakuraDetect">识别本机</button>
+                <button class="btn" id="sakuraSave">保存</button>
+                <button class="btn ghost" id="sakuraRefresh">刷新隧道</button>
+                <button class="btn ghost" id="sakuraCreate">新建隧道</button>
+                <button class="btn ghost" id="sakuraRegister">去注册</button>
+              </div>
+              <div class="tool-line">
+                <select id="sakuraTunnel" class="select grow"><option value="">先保存 token</option></select>
+                <span class="online-status" id="sakuraStatus">未配置</span>
+              </div>
+              <div class="online-address" id="sakuraAddress" hidden></div>
+              <div class="hint" id="sakuraHint"></div>
+            </div>
+
+            <div class="frp-provider" id="providerOpenfrp" hidden>
+              <div class="tool-line">
+                <input id="openfrpToken" class="input grow" type="password" placeholder="OpenFrp 用户 token" autocomplete="off" spellcheck="false">
+                <button class="btn ghost" id="openfrpDetect">识别本机</button>
+                <button class="btn" id="openfrpSave">保存</button>
+                <button class="btn ghost" id="openfrpRefresh">刷新隧道</button>
+                <button class="btn ghost" id="openfrpCreate">新建隧道</button>
+                <button class="btn ghost" id="openfrpRegister">去注册</button>
+              </div>
+              <div class="tool-line">
+                <select id="openfrpTunnel" class="select grow"><option value="">先保存 token</option></select>
+                <span class="online-status" id="openfrpStatus">未配置</span>
+              </div>
+              <div class="online-address" id="openfrpAddress" hidden></div>
+              <div class="hint" id="openfrpHint"></div>
+            </div>
+
+            <div class="frp-provider" id="providerCustom" hidden>
+              <div class="tool-line">
+                <input id="customServer" class="input grow" type="text" placeholder="frps 地址，例如 frp.example.com" spellcheck="false">
+                <input id="customPort" class="input" style="width:78px" type="number" value="7000" min="1" max="65535" placeholder="7000">
+                <input id="customRemote" class="input" style="width:92px" type="number" value="25565" min="1" max="65535" placeholder="远端端口">
+              </div>
+              <div class="tool-line">
+                <input id="customToken" class="input grow" type="password" placeholder="frps token（没有就留空）" autocomplete="off" spellcheck="false">
+                <button class="btn" id="customSave">保存</button>
+              </div>
+              <div class="online-address" id="customAddress" hidden></div>
+              <div class="hint" id="customHint"></div>
+            </div>
+          </div>
+
+          <div class="room-card" id="roomCard">
+            <div class="room-head">
+              <div>
+                <div class="room-eyebrow">原版服务端 · 固定端口 25565</div>
+                <div class="room-title">开房间</div>
+              </div>
+              <div class="room-head-actions">
+                <button class="btn ghost" id="worldParamsBtn" type="button">世界参数</button>
+                <span class="online-status" id="roomStatus">未开房</span>
+              </div>
+            </div>
+
+            <div class="room-version-line">
+              <span class="hint">房间版本</span>
+              <select id="roomVersion" class="select" title="用哪个原版版本开服"></select>
+              <label class="room-eula"><input id="roomEula" type="checkbox"> 我同意 Minecraft EULA</label>
+            </div>
+            <div class="room-options">
+              <label class="room-eula"><input id="roomJoinGame" type="checkbox" checked> 开房后同时进入游戏</label>
+              <label class="room-eula"><input id="roomAutoStop" type="checkbox" checked> 退出游戏后自动关服</label>
+            </div>
+            <div class="room-memory-row">
+              <label for="roomMemory">服务端内存</label>
+              <input id="roomMemory" class="input narrow mono" type="number" min="256" max="16384" step="512" value="2048">
+              <span class="hint">MB</span>
+              <span class="hint">太大可能开不起来，先按推荐值</span>
+            </div>
+
+            <button class="room-open-btn" id="roomToggle" type="button" disabled>先配置 frp</button>
+            <div class="room-hint-row">
+              <div class="hint" id="roomHint">先在顶部配置 frp，再开房间。</div>
+              <button class="btn ghost room-fallback-btn" id="roomFallbackBtn" type="button" hidden>改用局域网 / frp 联机</button>
+              <button class="btn ghost room-fallback-btn" id="roomCfKeyBtn" type="button" hidden>去填 CurseForge Key</button>
+            </div>
+
+            <div class="room-fields" id="roomFields" hidden>
+              <div><span>服务端版本</span><b id="roomVersionValue">—</b></div>
+              <div><span>本地端口</span><b id="roomPortValue">25565</b></div>
+              <div><span>frp</span><b id="roomProviderValue">—</b></div>
+              <div><span>隧道</span><b id="roomTunnelValue">—</b></div>
+              <div class="room-field-address"><span>公网地址</span><b id="roomAddressValue">—</b><button class="btn ghost room-copy-btn" id="roomAddressCopy" type="button" hidden>复制</button></div>
+              <div><span>world 目录</span><b id="roomWorldValue">—</b></div>
+            </div>
+          </div>
+
+          <div class="join-block">
+            <div class="join-block-head">
+              <span>加入房间</span>
+              <span class="hint">不用分房主/朋友，粘贴地址直接进</span>
+            </div>
+            <div class="join-bar">
+              <select id="recentAddresses" class="select" style="max-width:210px">
+                <option value="">最近连接…</option>
+              </select>
+              <input id="joinAddress" class="input grow" type="text" placeholder="粘贴朋友给的地址，例如 frp-top.com:48501" spellcheck="false">
+              <button class="btn" id="joinConnect">加入并启动</button>
+            </div>
+            <div class="hint" id="joinHint">朋友端不用装 frp；先在「版本」页装一个同版本实例，再粘贴地址加入。</div>
+          </div>
+
+          <details class="online-advanced">
+            <summary>高级：局域网与自动识别</summary>
+            <div class="online-grid">
+              <div class="tool-card">
+                <div class="tool-ico">LAN</div>
+                <div class="tool-main">
+                  <div class="tool-title">局域网联机</div>
+                  <div class="tool-desc">同一个路由器下最省事：游戏里按「对局域网开放」，把端口填这里，朋友用地址进来</div>
+                  <div class="tool-line">
+                    <input id="lanPort" class="input narrow mono" type="number" min="1" max="65535" value="25565" title="游戏对局域网开放的端口">
+                    <button class="btn ghost" id="lanDetect">读游戏端口</button>
+                  </div>
+                  <div id="lanAddr" class="lan-list">读取中…</div>
+                  <div class="hint" id="lanHint">步骤：进游戏 → ESC → 对局域网开放 → 把端口填到上面。</div>
+                  <div class="tool-line">
+                    <button class="btn ghost" id="upnpConnect">尝试公网直连（UPnP）</button>
+                    <span class="hint" id="upnpHint"></span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="tool-card">
+                <div class="tool-ico">SRV</div>
+                <div class="tool-main">
+                  <div class="tool-title">服务器地址速查</div>
+                  <div class="tool-desc">填一个服务器地址，真做 Minecraft status 查询（SRV、版本、MOTD、玩家数、延迟）</div>
+                  <div class="tool-line">
+                    <input id="mcHost" class="input grow" type="text" placeholder="play.example.com 或 IP:端口" spellcheck="false">
+                    <button class="btn" id="mcPingBtn">测试</button>
+                  </div>
+                  <div class="hint" id="mcPingResult"></div>
+                </div>
+              </div>
+            </div>
+          </details>
+        </section>
+<!-- ============ 设置 ============ -->
+        <section class="panel" id="panel-settings">
+          <div class="panel-head">
+            <h2>设置</h2>
+            <div class="row-actions">
+              <button class="btn ghost" id="updateCheckTop">检查更新</button>
+              <button class="btn ghost" id="settingsReset">恢复默认</button>
+              <button class="btn" id="settingsSave">保存</button>
+            </div>
+          </div>
+
+          <div class="settings-tabs" id="settingsTabs" role="tablist" aria-label="设置分类">
+            <button class="settings-tab active" type="button" data-settings-cat="all">全部</button>
+            <button class="settings-tab" type="button" data-settings-cat="game">游戏</button>
+            <button class="settings-tab" type="button" data-settings-cat="download">下载与更新</button>
+            <button class="settings-tab" type="button" data-settings-cat="launcher">启动器</button>
+            <button class="settings-tab" type="button" data-settings-cat="advanced">高级</button>
+          </div>
+
+          <div class="settings-scroll">
+            <!-- 游戏设置 -->
+            <div class="settings-group">
+              <div class="group-title">游戏设置</div>
+
+              <div class="field">
+                <label>游戏内选项</label>
+                <div class="field-line">
+                  <button class="btn" id="openGameOptions">打开游戏设置</button>
+                </div>
+                <div class="field-note" id="gameOptionsHint">读取当前实例的 versions/&lt;版本&gt;/options.txt</div>
+              </div>
+
+              <div class="field">
+                <label for="setGameDir">游戏目录</label>
+                <div class="field-line">
+                  <input id="setGameDir" class="input mono" type="text" spellcheck="false">
+                  <button class="btn ghost" id="browseGameDir">浏览…</button>
+                </div>
+                <div class="field-note" id="gameDirHint">所有实例、存档、mod 都放这里。默认 <code>D:/Minecraft/.minecraft</code></div>
+              </div>
+
+              <div class="field">
+                <label for="setUsername">无账号时的兜底玩家名</label>
+                <div class="field-line">
+                  <input id="setUsername" class="input" type="text" maxlength="16" spellcheck="false" placeholder="Player">
+                </div>
+                <div class="field-note">字母、数字、下划线，3-16 位；左上角已选账号时以账号卡为准，这里只在本机没有账号时使用。</div>
+              </div>
+
+              <div class="field">
+                <label>自动备份</label>
+                <label class="mem-optimize"><input id="setAutoBackup" type="checkbox"> 开启自动备份</label>
+                <div class="field-line" style="gap:16px">
+                  <label><input id="setAutoBackupBefore" type="checkbox" checked> 进游戏前</label>
+                  <label><input id="setAutoBackupAfter" type="checkbox" checked> 游戏退出后</label>
+                </div>
+                <div class="field-line">
+                  <label for="setAutoBackupKeep">每个世界保留份数</label>
+                  <input id="setAutoBackupKeep" class="input narrow" type="number" min="1" max="50" value="5">
+                </div>
+                <div class="field-note">只清理自动备份，手动备份不会被删除。</div>
+              </div>
+              <div class="field">
+                <label>崩溃诊断</label>
+                <label class="mem-optimize"><input id="setAutoDiagnostic" type="checkbox" checked> 崩溃后自动生成诊断包</label>
+                <div class="field-note">诊断包放在桌面，不含存档、配置、账号信息。</div>
+              </div>
+              <div class="field">
+                <label>内存</label>
+                <div class="mem-mode-row">
+                  <label class="mem-mode"><input id="memModeAuto" type="radio" name="memMode" value="auto"> 自动配置</label>
+                  <label class="mem-mode"><input id="memModeCustom" type="radio" name="memMode" value="custom"> 自定义</label>
+                </div>
+                <div class="field-line">
+                  <input id="setMemMin" class="input narrow mono" type="text" placeholder="512M">
+                  <span class="sep">~</span>
+                  <input id="setMemMax" class="input narrow mono" type="text" placeholder="4096M">
+                </div>
+                <div class="mem-range-row">
+                  <input id="setMemMaxRange" type="range" min="512" max="8192" step="512" value="4096">
+                  <span class="unit-hint" id="memMaxLabel">4G</span>
+                  <button class="btn ghost mem-recommend" id="memRecommend" type="button">用推荐值</button>
+                </div>
+                <div class="field-note" id="memRecommendHint">读取物理内存后给出约 1/4 的建议值，留出系统余量。</div>
+                <div class="mem-system" id="memSystem" hidden></div>
+                <div class="mem-meter-labels">
+                  <span>已使用内存</span><span>游戏分配</span>
+                </div>
+                <div class="mem-meter" id="memMeter" aria-hidden="true">
+                  <div class="mem-meter-used" id="memMeterUsed"></div>
+                  <div class="mem-meter-alloc" id="memMeterAlloc"></div>
+                </div>
+                <div class="mem-meter-values">
+                  <span>已用 <b id="memUsedText">—</b> / <b id="memTotalText">—</b></span>
+                  <span>分配 <b id="memAllocText">—</b></span>
+                </div>
+                <label class="mem-optimize"><input id="setMemoryOptimize" type="checkbox"> 启动游戏前进行内存优化</label>
+              </div>
+
+              <div class="field memory-tools" id="memoryTools">
+                <label>系统内存</label>
+                <div class="field-note">
+                  让程序把暂时不用的内存还给系统，之后可能被重新占用。不会关闭程序，也不保证游戏变快。
+                </div>
+                <div class="memory-stats" id="memoryStats">正在读取…</div>
+                <div class="field-line">
+                  <button class="btn ghost" id="memoryRefresh" type="button">刷新进程</button>
+                  <button class="btn" id="memoryOptimizeAll" type="button">优化可回收进程</button>
+                  <span class="hint" id="memoryCooldown"></span>
+                </div>
+                <div class="memory-result" id="memoryResult"></div>
+                <div class="memory-process-list" id="memoryProcessList"></div>
+                <div class="field-note">
+                  自动排除系统关键进程、启动器自身、Java/Minecraft 进程；部分受限进程需要管理员权限，失败会在结果里标出。
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="setJavaPath">Java 路径</label>
+                <div class="field-line">
+                  <select id="setJavaPath" class="select grow">
+                    <option value="">自动选择（按版本要求扫描）</option>
+                  </select>
+                  <button class="btn ghost" id="browseJava">浏览…</button>
+                  <button class="btn ghost" id="rescanJava">重新扫描</button>
+                </div>
+                <div class="field-note" id="javaPathHint">留空就按每个版本声明的 Java 主版本自动挑</div>
+              </div>
+
+              <div class="field">
+                <label for="setJavaMode">Java 来源</label>
+                <select id="setJavaMode" class="select grow">
+                  <option value="external">只用本机已有 Java（推荐，不占空间）</option>
+                  <option value="auto">缺了就自动下载（每个版本约 +180MB）</option>
+                </select>
+                <div class="field-note">「只用外部」：启动器不内置运行时，缺了会提示你安装对应版本</div>
+              </div>
+
+              <div class="field">
+                <label>版本隔离</label>
+                <div class="field-line">
+                  <select id="setIsolated" class="select">
+                    <option value="auto">自动（实例里有 mods/saves 就隔离）</option>
+                    <option value="on">总是隔离（每个实例独立存档与 mod）</option>
+                    <option value="off">不隔离（所有实例共用 .minecraft）</option>
+                  </select>
+                </div>
+                <div class="field-note">隔离后每个版本的存档、mod、配置互不干扰</div>
+              </div>
+            </div>
+
+            <!-- 更新检查 -->
+            <div class="settings-group">
+              <div class="group-title">更新检查</div>
+              <div class="field">
+                <label for="setUpdateUrl">latest.json 地址</label>
+                <input id="setUpdateUrl" class="input mono" type="text" placeholder="留空使用 gh-proxy.com 镜像地址" spellcheck="false">
+                <div class="field-note">留空使用 https://gh-proxy.com/https://github.com/Sakura-ChenTY/SakuraLauncher/releases/latest/download/latest.json；先试镜像，失败再试 GitHub 直连，最后试 ghproxy.net。</div>
+                <div class="field-line" style="justify-content:flex-start">
+                  <button class="btn ghost" id="updateCheck">立即检查更新</button>
+                  <span class="hint" id="updateStatus"></span>
+                </div>
+              </div>
+              <div class="update-notice" id="updateNotice" hidden>
+                <span>有新版本 <b id="updateVersion"></b></span>
+                <div class="field-line" style="justify-content:flex-start">
+                  <button class="btn" id="updateDownload">浏览器下载</button>
+                  <button class="btn" id="updateInstall">一键更新</button>
+                  <button class="btn ghost" id="updateSkip">跳过此版本</button>
+                </div>
+                <div class="hint" id="updateNotes"></div>
+                <div class="hint">一键更新会下载安装包并静默运行；安装在 Program Files 时可能弹一次 UAC 授权。失败会自动改用浏览器下载。</div>
+              </div>
+            </div>
+
+            <!-- 下载设置 -->
+            <div class="settings-group">
+              <div class="group-title">下载设置</div>
+
+              <div class="field">
+                <label for="setDownloadSource">下载源</label>
+                <div class="field-line">
+                  <select id="setDownloadSource" class="select grow">
+                    <option value="official">优先官方（默认）</option>
+                    <option value="bmclapi">优先镜像（BMCLAPI）</option>
+                  </select>
+                  <button class="btn ghost" id="btnTestSource">测速</button>
+                </div>
+                <div class="field-note" id="sourceNote">
+                  先走所选源；下载过程中如果持续偏慢或连续超时，会自动测速并切换到当时更快的一边，正在下载的文件也会立即续传。
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="setConcurrency">下载并发数</label>
+                <div class="field-line">
+                  <input id="setConcurrency" class="input narrow mono" type="number" min="1" max="256" step="1">
+                </div>
+                <div class="field-note">1-256，默认 64。安装一个版本要下几千个小文件；弱网可以调到 8</div>
+              </div>
+            </div>
+
+            <!-- 启动器设置 -->
+            <div class="settings-group">
+              <div class="group-title">启动器设置</div>
+
+              <div class="field">
+                <label>壁纸</label>
+                <div class="field-line">
+                  <select id="setWallpaper" class="select grow">
+                    <option value="on">跟随系统壁纸（磨砂）</option>
+                    <option value="off">关闭壁纸（纯色背景）</option>
+                  </select>
+                </div>
+                <div class="field-note">关掉更省一点显存，老机器可以试试</div>
+              </div>
+
+              <div class="field">
+                <label for="setGlass">界面透明度</label>
+                <div class="field-line">
+                  <input id="setGlass" class="input narrow mono" type="range" min="30" max="90" step="1">
+                  <span class="unit-hint" id="glassVal">46%</span>
+                </div>
+                <div class="field-note">磨砂面板的不透明度，越低越透（30 = 几乎全透，90 = 接近实心）</div>
+              </div>
+
+              <div class="field">
+                <label for="setJvmPreset">JVM 参数预设</label>
+                <div class="field-line">
+                  <select id="setJvmPreset" class="select grow">
+                    <option value="default">默认</option>
+                    <option value="smooth">流畅</option>
+                    <option value="lowmem">省内存</option>
+                  </select>
+                </div>
+                <div class="field-note">流畅：G1 低停顿；省内存：Serial GC。预设只追加启动参数，下面手填的参数仍保留并排在其后。</div>
+              </div>
+
+              <div class="field">
+                <label>额外 JVM 参数</label>
+                <div class="field-line">
+                  <input id="setExtraJvm" class="input mono" type="text" spellcheck="false" placeholder="-XX:+UseG1GC -Dfile.encoding=UTF-8">
+                </div>
+                <div class="field-note">直接拼到 java 命令里，空格分隔。不确定就别填</div>
+              </div>
+
+              <div class="field">
+                <label>额外游戏参数</label>
+                <div class="field-line">
+                  <input id="setExtraGame" class="input mono" type="text" spellcheck="false" placeholder="--width 1280 --height 720">
+                </div>
+                <div class="field-note">拼在游戏参数后面，例如窗口大小、<code>--demo</code></div>
+              </div>
+            </div>
+
+            <!-- 高级配置 -->
+            <div class="settings-group">
+              <div class="group-title">高级配置（插件）</div>
+
+              <div class="field">
+                <label>插件</label>
+                <div class="field-note">
+                  写一小段 JS，返回要追加的启动参数。适合做一键优化、特定显卡参数这类私人调整。
+                  插件只在本机运行，改动只影响启动参数，不会上传
+                </div>
+                <div class="plugin-list" id="pluginList"></div>
+                <div class="field-line">
+                  <input id="pluginName" class="input grow" type="text" placeholder="插件名，例如 高帧率优化" spellcheck="false">
+                  <button class="btn ghost" id="pluginNew">新建插件</button>
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="pluginCode">插件代码</label>
+                <div class="field-line">
+                  <textarea id="pluginCode" class="input mono plugin-code" spellcheck="false" rows="9" placeholder="// 例：给 4G 以上内存的机器加 G1 参数&#10;// 可用 api.memoryMax（字符串，如 '4096M'）&#10;return {&#10;  extraJvm: ['-XX:+UseG1GC'],&#10;  extraGame: []&#10;};"></textarea>
+                </div>
+                <div class="field-line">
+                  <button class="btn" id="pluginSave">保存插件</button>
+                  <button class="btn ghost" id="pluginRun">试运行</button>
+                  <button class="btn ghost" id="pluginDelete">删除</button>
+                </div>
+                <div class="hint" id="pluginStatus"></div>
+              </div>
+            </div>
+
+            <div class="settings-group">
+              <div class="group-title">CurseForge API</div>
+              <div class="field">
+                <label for="cfApiKey">CurseForge API Key</label>
+                <div class="field-line">
+                  <input id="cfApiKey" class="input grow mono" type="password" placeholder="粘贴 CurseForge API Key" autocomplete="off" spellcheck="false">
+                  <button class="btn" id="cfApiKeySave">保存</button>
+                  <button class="btn ghost" id="cfApiKeyClear">清除</button>
+                </div>
+                <div class="field-note" id="cfApiKeyHint">未配置；CurseForge 搜索、安装和更新会跳过，只用 Modrinth</div>
+                <div class="field-note">
+                  <a id="cfApiKeyLink" href="https://forms.monday.com/forms/dce5ccb7afda9a1c21dab1a1aa1d84eb?r=use1" target="_blank" rel="noreferrer">获取 Key（CurseForge 官方申请表单）</a>
+                  · 只保存在本机安全存储
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-foot" id="settingsFoot">
+              设置保存在 <code id="settingsFile">settings.json</code>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ 自定义 ============ -->
+        <section class="panel" id="panel-theme">
+          <div class="panel-head">
+            <h2>自定义</h2>
+            <span class="hint">换个配色，或者用自己的图当壁纸</span>
+          </div>
+
+          <div class="theme-scroll">
+            <div class="settings-group">
+              <div class="group-title">配色</div>
+              <div class="theme-grid" id="themeGrid"></div>
+            </div>
+
+            <div class="settings-group">
+              <div class="group-title">自定义</div>
+
+              <div class="field">
+                <label>主题色</label>
+                <div class="field-line">
+                  <div class="color-picker-slot" id="colorPickerAccent"></div>
+                  <span class="hint">按钮、高亮、开关都会跟着变</span>
+                </div>
+              </div>
+
+              <div class="field">
+                <label>背景色</label>
+                <div class="field-line">
+                  <div class="color-picker-slot" id="colorPickerBg"></div>
+                  <span class="hint">自定义底色，浅色深色都可以</span>
+                </div>
+              </div>
+
+              <div class="field">
+                <label>文字色</label>
+                <div class="field-line">
+                  <div class="color-picker-slot" id="colorPickerText"></div>
+                  <span class="hint">建议和背景色保持足够对比</span>
+                </div>
+              </div>
+
+              <div class="field">
+                <label>背景图</label>
+                <div class="field-line">
+                  <button class="btn ghost" id="bgPick">选择图片</button>
+                  <button class="btn ghost" id="bgClear">恢复默认</button>
+                  <input id="bgFile" type="file" accept="image/*" hidden>
+                </div>
+                <div class="field-note">图片路径和主题都只保存在本机，不会上传；太大的图会拖慢启动</div>
+              </div>
+
+              <div class="field">
+                <label for="bgFit">填充方式</label>
+                <div class="field-line">
+                  <select id="bgFit" class="select">
+                    <option value="cover">铺满裁切</option>
+                    <option value="contain">完整显示</option>
+                    <option value="tile">平铺</option>
+                    <option value="center">居中</option>
+                    <option value="stretch">拉伸铺满</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="field">
+                <div class="bg-preview" id="bgPreview">当前使用：跟随系统壁纸</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ 更多 ============ -->
+        <section class="panel" id="panel-more">
+          <div class="panel-head">
+            <h2>更多</h2>
+          </div>
+
+          <div class="more-scroll">
+            <div class="settings-group">
+              <div class="group-title">创作人员鸣谢</div>
+              <div class="credit-block">
+                <div class="credit-title">参考说明</div>
+                <div class="credit-body">
+                  交互与设计上参考过 Plain Craft Launcher 2（作者：龙腾猫跃）。
+                </div>
+              </div>
+
+              <div class="credit-block">
+                <div class="credit-title">卡慕sama 启动器</div>
+                <div class="credit-body">
+                  联机模块与配色思路参考了 <b>卡慕sama</b> 的启动器。
+                </div>
+              </div>
+
+              <div class="credit-block">
+                <div class="credit-title">开源依赖</div>
+                <div class="credit-body">
+                  Electron · Node.js · Modrinth API · BMCLAPI · Minecraft 由 Mojang Studios 出品
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-group">
+              <div class="group-title">绘梨衣の本子</div>
+              <div class="notebook-card" id="notebookCard" role="button" tabindex="0" aria-label="绘梨衣の本子，点一下换一条">
+                <div class="notebook-message" id="notebookMessage">正在翻本子…</div>
+                <div class="notebook-hint">点一下换一条</div>
+              </div>
+            </div>
+
+            <div class="settings-group">
+              <div class="group-title">百宝箱</div>
+              <div class="tool-grid">
+                <button class="tool-tile" id="tbOpenContent">
+                  <b>管理实例内容</b><span>看当前实例装了什么 mod</span>
+                </button>
+                <button class="tool-tile" id="tbOpenDir">
+                  <b>打开游戏目录</b><span id="tbDirPath">-</span>
+                </button>
+                <button class="tool-tile" id="tbLogs">
+                  <b>运行日志</b><span>排查启动失败</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="settings-group" id="logsGroup">
+              <div class="group-title">运行日志</div>
+              <div class="field-line">
+                <button class="btn ghost" id="clearLogs">清屏</button>
+                <button class="btn ghost" id="loadLatestLog" title="读取游戏目录里的 logs/latest.log">读取 latest.log</button>
+              </div>
+              <pre class="logs" id="logBox"></pre>
+            </div>
+
+            <div class="settings-foot">
+              Sakura Minecraft Launcher · 当前版本 <span id="aboutVersion">—</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ 全屏安装/下载页 ============ -->
+        <!-- 安装或下载一开始，整个内容区就换成这张卡片，
+             而不是只在底部挤一条进度。装完自动淡出回到原页面。 -->
+        <div class="install-page" id="installPage" hidden>
+          <div class="install-card">
+            <!-- 可以收起：下载继续跑，人可以去干别的 -->
+            <button class="install-collapse" id="installCollapse" title="收起（下载继续，不挡着界面）">
+              <span>收起</span>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 10.5 8 5.5l5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <!-- 中途不要了：掐断下载，已下好的文件保留 -->
+            <button class="install-cancel" id="installCancel" title="取消这次安装（已下载的文件会保留）">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+              <span>取消</span>
+            </button>
+            <div class="install-head">
+              <div class="install-loader-art" aria-hidden="true">
+                <picture>
+                  <source media="(prefers-reduced-motion: reduce)" srcset="mascot/erii-writing-static.png">
+                  <img class="install-loader-img" src="mascot/erii-writing.gif" alt="">
+                </picture>
+              </div>
+              <div class="install-title" id="installTitle">准备中…</div>
+            </div>
+
+            <div class="track install-track"><div class="fill" id="installFill"></div></div>
+
+            <div class="install-foot">
+              <span class="install-meta" id="installMeta"></span>
+              <span class="install-pct" id="installPct"></span>
+            </div>
+
+            <div class="install-source" id="installSource">
+              <span class="install-source-label">下载源</span>
+              <div class="install-source-switch" role="group" aria-label="下载源">
+                <button type="button" data-install-source="official">官方</button>
+                <button type="button" data-install-source="bmclapi">镜像</button>
+              </div>
+              <span class="install-source-state" id="installSourceState">自动</span>
+            </div>
+          </div>
+        </div>
+        <!-- ============ 绘梨衣小助手 ============ -->
+        <section class="panel" id="panel-assistant">
+          <div class="panel-head">
+            <h2>绘梨衣小助手</h2>
+            <span class="hint">看日志，说人话。不念堆栈。</span>
+          </div>
+          <div class="assistant-layout">
+            <div class="assistant-config">
+              <div class="group-title">模型接口</div>
+              <div class="field">
+                <label for="aiProvider">厂商</label>
+                <select id="aiProvider" class="select">
+                  <option value="deepseek">DeepSeek</option>
+                  <option value="kimi">Kimi / Moonshot</option>
+                  <option value="zhipu">智谱 GLM</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="qwen">通义千问</option>
+                  <option value="siliconflow">硅基流动</option>
+                  <option value="custom">自定义</option>
+                </select>
+              </div>
+              <div class="ai-provider-info hint" id="aiProviderInfo"></div>
+              <div class="ai-custom-fields" id="aiCustomFields" hidden>
+                <div class="field">
+                  <label for="aiBase">baseURL</label>
+                  <input id="aiBase" class="input mono" type="text" placeholder="https://api.deepseek.com/v1" spellcheck="false">
+                </div>
+                <div class="field">
+                  <label for="aiModel">model</label>
+                  <input id="aiModel" class="input mono" type="text" placeholder="deepseek-chat" spellcheck="false">
+                </div>
+              </div>
+              <div class="field">
+                <label for="aiKey">API 密钥</label>
+                <input id="aiKey" class="input mono" type="password" placeholder="只填这个就行" autocomplete="off">
+                <div class="hint" id="aiKeyHint">未保存</div>
+              </div>
+              <div class="field-line">
+                <button class="btn ghost" id="aiSave">保存</button>
+                <button class="btn ghost" id="aiTest">测试连接</button>
+              </div>
+              <div class="hint" id="aiStatus"></div>
+              <div class="field-note">密钥用系统加密保存在本机；日志脱敏后才发给模型。</div>
+            </div>
+            <div class="assistant-main">
+              <div class="field-note assistant-moved-note">对话区已经移到主页右下角，常驻显示。模型配置仍在这里。</div>
+            </div>          </div>
+        </section>
+
+      </main>
+    </div>
+
+    <footer class="progress-bar" id="progressBar">
+      <div class="progress-inner">
+        <img class="progress-buddy" id="progressBuddy" src="download-buddy.gif" alt="">
+        <div class="progress-main">
+          <div class="progress-line">
+            <span class="progress-label" id="progressLabel">准备中…</span>
+            <span class="progress-pct" id="progressPct"></span>
+          </div>
+          <div class="track"><div class="fill" id="progressFill"></div></div>
+          <div class="progress-meta" id="progressMeta"></div>
+        </div>
+        <button class="btn ghost task-cancel" id="taskCancel" type="button" hidden>取消</button>
+      </div>
+    </footer>
+  </div>
+
+  <!-- 诊断信息收集 -->
+  <div class="modal" id="diagModal" hidden>
+    <div class="modal-box diag-box">
+      <div class="modal-head">
+        <h3 id="diagTitle">诊断信息</h3>
+        <button class="btn ghost" id="diagClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <pre class="diag-text" id="diagText"></pre>
+        <div class="field-line" style="margin-top:12px;justify-content:flex-end">
+          <button class="btn" id="diagPackBtn" hidden>开始打包</button>
+          <button class="btn ghost" id="diagCopyPath" hidden>复制路径</button>
+          <button class="btn ghost" id="diagOpenBtn" hidden>打开所在文件夹</button>
+          <button class="btn ghost" id="diagCopy">复制</button>
+          <button class="btn" id="diagDone">关闭</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- 自动崩溃提示 -->
+  <div class="crash-notice" id="crashNotice" hidden>
+    <div class="crash-notice-head">绘梨衣</div>
+    <div class="crash-notice-text" id="crashNoticeText"></div>
+    <div class="crash-notice-actions">
+      <button class="btn ghost" id="crashOpenDiag" type="button">打开文件夹</button>
+      <button class="btn ghost" id="crashAnalyze" type="button">交给小助手分析</button>
+      <button class="btn ghost" id="crashNoticeDismiss" type="button">不用了</button>
+    </div>
+  </div>
+  <!-- 导出整合包 -->
+  <div class="modal" id="exportModal" hidden>
+    <div class="modal-box export-box">
+      <div class="modal-head">
+        <h3 id="exportTitle">导出实例</h3>
+        <button class="btn ghost" id="exportClose" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="exportInfo" class="export-info"></div>
+        <div class="field-line export-format-line">
+          <label for="exportFormat">格式</label>
+          <select class="select" id="exportFormat">
+            <option value="sakura">自家格式（.zip）</option>
+            <option value="mrpack">Modrinth 整合包（.mrpack）</option>
+          </select>
+          <label for="exportVersion">版本</label>
+          <input id="exportVersion" class="input narrow" type="text" placeholder="整合包版本号" autocomplete="off">
+        </div>
+        <div class="export-options">
+          <label><input type="checkbox" id="exportMods" checked> Mod</label>
+          <label><input type="checkbox" id="exportConfig" checked> 配置</label>
+          <label><input type="checkbox" id="exportResourcepacks" checked> 资源包</label>
+          <label><input type="checkbox" id="exportShaderpacks"> 光影</label>
+          <label><input type="checkbox" id="exportSaves"> 存档</label>
+          <label><input type="checkbox" id="exportScreenshots"> 截图</label>
+        </div>
+        <div class="hint export-saves-note">游戏开着时存档会被跳过</div>
+        <div class="field-line export-dest-line">
+          <input class="input grow mono" id="exportDest" readonly>
+          <button class="btn ghost" id="exportPickDest" type="button">选择位置</button>
+        </div>
+        <div class="export-progress" id="exportProgress"></div>
+        <pre class="diag-text export-result" id="exportResult"></pre>
+        <div class="field-line" style="margin-top:10px;justify-content:flex-end">
+          <button class="btn ghost" id="exportCopyPath" type="button" hidden>复制路径</button>
+          <button class="btn ghost" id="exportShareInfo" type="button" hidden>复制分享信息</button>
+          <button class="btn ghost" id="exportOpenFolder" type="button" hidden>打开所在文件夹</button>
+          <button class="btn ghost" id="exportCancel" type="button" hidden>取消</button>
+          <button class="btn" id="exportStart" type="button">开始导出</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- 导入存档来源 -->
+  <div class="modal" id="saveImportChoiceModal" hidden>
+    <div class="modal-box save-import-choice-box">
+      <div class="modal-head">
+        <h3>导入存档</h3>
+        <button class="btn ghost" id="saveImportChoiceCancel" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="hint">选择一个含 level.dat 的世界文件夹，或一个世界 zip。</div>
+        <div class="field-line" style="margin-top:14px;justify-content:flex-end;flex-wrap:wrap">
+          <button class="btn ghost" id="saveImportFolder" type="button">选择世界文件夹</button>
+          <button class="btn" id="saveImportZip" type="button">选择 .zip</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+  <!-- 更新整合包 -->
+  <div class="modal" id="packUpdateModal" hidden>
+    <div class="modal-box pack-update-box">
+      <div class="modal-head">
+        <h3>更新整合包</h3>
+        <button class="btn ghost" id="packUpdateClose" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="packUpdateGroups" class="pack-update-groups"></div>
+        <div id="packUpdateText" class="hint"></div>
+        <label class="pack-update-config"><input id="packUpdateConfig" type="checkbox"> 覆盖配置</label>
+        <div id="packUpdateNotice" class="hint">存档和配置没动</div>
+        <div id="packUpdateResult" class="pack-update-result"></div>
+        <div class="field-line" style="margin-top:12px;justify-content:flex-end">
+          <button class="btn ghost" id="packUpdateCancel" type="button">取消</button>
+          <button class="btn" id="packUpdateStart" type="button">开始更新</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- 导入确认 -->
+  <div class="modal" id="importConfirmModal" hidden>
+    <div class="modal-box import-confirm-box">
+      <div class="modal-head">
+        <h3>导入确认</h3>
+        <button class="btn ghost" id="importCancelX" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="importConfirmText" class="import-confirm-text"></div>
+        <div id="importConflictList" class="import-conflict-list"></div>
+        <div class="field-line import-confirm-actions">
+          <button class="btn ghost" id="importCancel" type="button">取消</button>
+          <button class="btn" id="importDirect" type="button">直接导入</button>
+          <button class="btn ghost" id="importBackup" type="button">先备份存档再导入</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- 存档管理 -->
+  <div class="modal" id="savesModal" hidden>
+    <div class="modal-box saves-box">
+      <div class="modal-head">
+        <h3 id="savesTitle">存档管理</h3>
+        <button class="btn ghost" id="savesCancel" type="button" hidden>取消</button>
+        <button class="btn ghost" id="savesClose" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="saves-head">
+          <div class="saves-info" id="savesInfo"></div>
+          <div class="field-line">
+            <button class="btn ghost" id="savesBackupAll" type="button">备份全部</button>
+            <button class="btn ghost" id="savesOpenFolder" type="button">打开存档文件夹</button>
+            <button class="btn ghost" id="savesOpenBackups" type="button">打开备份文件夹</button>
+            <span class="hint" id="savesRunHint" hidden>游戏运行中，先退出游戏</span>
+          </div>
+        </div>
+        <div class="saves-progress" id="savesProgress"></div>
+        <h4 class="saves-subtitle">存档</h4>
+        <div id="savesList" class="saves-list"></div>
+        <h4 class="saves-subtitle">本地备份</h4>
+        <div id="savesBackupList" class="saves-list"></div>
+      </div>
+    </div>
+  </div>
+  <!-- 启动前文件检查失败 -->
+  <div class="modal" id="preflightModal" hidden>
+    <div class="modal-box preflight-box">
+      <div class="modal-head">
+        <h3>启动前检查</h3>
+        <button class="btn ghost" id="preflightClose" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="preflightStructured" class="preflight-structured"></div>
+        <p id="preflightMessage" class="preflight-message" hidden></p>
+        <ul id="preflightList" class="preflight-list"></ul>
+        <div class="field-line" style="margin-top:12px;justify-content:flex-end">
+          <button class="btn ghost" id="preflightAssistant" type="button">交给小助手</button>
+          <button class="btn ghost" id="preflightOpenLog" type="button">打开日志</button>
+          <button class="btn" id="preflightRetry" type="button">重试</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- 最近删除 -->
+  <div class="modal" id="trashModal" hidden>
+    <div class="modal-box trash-box">
+      <div class="modal-head">
+        <h3>最近删除</h3>
+        <button class="btn ghost" id="trashClose" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="trashList" class="trash-list"></div>
+        <div class="trash-foot">
+          <span class="hint">删除的实例会留在 .trash，不会自动清理。</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- 版本选择弹窗 -->
+  <div class="modal" id="versionModal" hidden>
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3 id="modalTitle">选择版本</h3>
+        <button class="btn ghost" id="modalClose">✕</button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+    </div>
+  </div>
+
+  <!-- 账号弹窗 -->
+  <div class="modal" id="accountModal" hidden>
+    <div class="modal-box account-box">
+      <div class="modal-head">
+        <h3>账号</h3>
+        <button class="btn ghost" id="accountClose">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="avatar-tools">
+          <button class="btn ghost" id="avatarPick" type="button">设置头像</button>
+          <button class="btn ghost" id="avatarClear" type="button">移除头像</button>
+          <button class="btn ghost" id="openSkinFolder" type="button">打开皮肤文件夹</button>
+          <span class="hint">把 skin.png 放进文件夹，会自动刷新</span>
+        </div>
+        <input id="avatarFile" type="file" accept="image/*" hidden>
+
+        <div class="acc-list" id="accList"></div>
+
+        <div class="acc-add">
+          <div class="acc-tabs">
+            <button class="acc-tab active" data-mode="offline">离线</button>
+            <button class="acc-tab" data-mode="ms">正版</button>
+            <button class="acc-tab" data-mode="ygg">第三方</button>
+          </div>
+
+          <div class="acc-pane active" id="pane-offline">
+            <div class="field-line">
+              <input id="offlineName" class="input grow" type="text" maxlength="16" placeholder="玩家名（字母/数字/下划线）" spellcheck="false">
+              <button class="btn" id="offlineAdd">添加</button>
+            </div>
+            <div class="field-note">离线登录不需要密码，只能进离线服或单人游戏</div>
+          </div>
+
+          <div class="acc-pane" id="pane-ms">
+            <div id="msIdle">
+              <button class="btn wide" id="msStart">登录微软账号</button>
+              <div class="field-note">需要已购买 Minecraft 的微软账号。会打开浏览器让你输一次性验证码</div>
+            </div>
+
+            <div id="msPending" hidden>
+              <div class="code-box">
+                <div class="code-label">在浏览器打开下面的地址，输入这个验证码：</div>
+                <div class="code-value" id="msCode">--------</div>
+                <div class="code-link"><a id="msLink" href="#" target="_blank" rel="noopener">www.microsoft.com/link</a></div>
+              </div>
+              <div class="field-line">
+                <button class="btn grow" id="msOpen">打开验证页面</button>
+                <button class="btn ghost" id="msCancel">取消</button>
+              </div>
+              <div class="hint" id="msStatus">等待你在浏览器完成授权…</div>
+            </div>
+          </div>
+
+          <div class="acc-pane" id="pane-ygg">
+            <div class="field-line">
+              <select id="yggPreset" class="select grow">
+                <option value="">选择认证服务器…</option>
+              </select>
+              <button class="btn ghost" id="yggRename" title="给已保存的站点改名">改名</button>
+              <button class="btn ghost" id="yggDelete" title="删除已保存的站点">删除</button>
+            </div>
+            <div class="field-line">
+              <input id="yggServer" class="input grow mono" type="text" value="https://littleskin.cn/api/yggdrasil" placeholder="认证服务器地址（以 /api/yggdrasil 结尾）" spellcheck="false">
+            </div>
+            <div class="field-line">
+              <button class="btn ghost" id="yggCheck">检测服务器</button>
+              <button class="btn ghost" id="yggPaste">从剪贴板识别</button>
+              <span class="hint" id="yggMeta"></span>
+            </div>
+            <div class="field-note">也可以把皮肤站的 API 地址直接拖进窗口；首页会自动补 /api/yggdrasil</div>
+            <div class="field-line">
+              <input id="yggUser" class="input grow" type="text" placeholder="邮箱或用户名" autocomplete="username" spellcheck="false">
+            </div>
+            <div class="field-line">
+              <input id="yggPass" class="input grow" type="password" placeholder="密码" autocomplete="current-password">
+              <button class="btn" id="yggLogin">登录</button>
+            </div>
+            <div class="field-note" id="yggNote">密码只发给你填的这个认证服务器，启动器不保存密码，只存返回的令牌</div>
+            <div id="yggProfiles" hidden>
+              <div class="ygg-profile-head">
+                <span class="field-note">选择一个角色</span>
+                <button class="btn ghost" id="yggProfilesRefresh" type="button">刷新角色列表</button>
+              </div>
+              <div class="ygg-profile-list" id="yggProfileList"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 头像裁切 -->
+  <div class="modal" id="avatarModal" hidden>
+    <div class="modal-box avatar-box">
+      <div class="modal-head">
+        <h3>设置头像</h3>
+        <button class="btn ghost" id="avatarClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <canvas id="avatarCropCanvas" width="256" height="256"></canvas>
+        <div class="field-line">
+          <label class="field-note" for="avatarZoom">缩放</label>
+          <input id="avatarZoom" class="grow" type="range" min="1" max="3" step="0.01" value="1">
+        </div>
+        <div class="avatar-shape-tabs">
+          <button class="btn ghost active" data-avatar-shape="circle" type="button">圆形</button>
+          <button class="btn ghost" data-avatar-shape="rounded" type="button">圆角方形</button>
+        </div>
+        <div class="field-line" style="justify-content:flex-end;margin-top:12px">
+          <button class="btn ghost" id="avatarCancel" type="button">取消</button>
+          <button class="btn" id="avatarSave" type="button">保存</button>
+        </div>
+        <div class="hint" id="avatarStatus"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 头像裁切预览 -->
+  <div class="modal" id="avatarPreviewModal" hidden>
+    <div class="modal-box avatar-preview-box">
+      <div class="modal-head">
+        <h3>头像裁切预览</h3>
+        <button class="btn ghost" id="avatarPreviewClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="avatar-preview-grid">
+          <div>
+            <div class="field-note">主舞台裁切原图</div>
+            <canvas id="avatarPreviewCrop" width="256" height="256"></canvas>
+          </div>
+          <div>
+            <div class="field-note">最终 64×64</div>
+            <canvas id="avatarPreviewFinal" width="64" height="64"></canvas>
+          </div>
+        </div>
+        <div class="hint" id="avatarPreviewMeta"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 披风列表 -->
+  <div class="modal" id="capeModal" hidden>
+    <div class="modal-box cape-box">
+      <div class="modal-head">
+        <h3>披风</h3>
+        <button class="btn ghost" id="capeClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="capeList" class="cape-list"></div>
+        <div class="hint" id="capeStatus"></div>
+        <div class="field-line" style="justify-content:flex-end;margin-top:12px">
+          <button class="btn ghost" id="capeCancel" type="button">取消</button>
+          <button class="btn" id="capeConfirm" type="button">确认</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 换装弹窗 -->
+  <div class="modal" id="skinModal" hidden>
+    <div class="modal-box skin-box">
+      <div class="modal-head">
+        <h3>换装</h3>
+        <button class="btn ghost" id="skinClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="skin-preview">
+          <canvas id="skinPreviewCanvas" width="128" height="128"></canvas>
+          <div class="skin-preview-name" id="skinPreviewName">未登录</div>
+        </div>
+
+        <div class="field-line">
+          <button class="btn grow" id="skinPick">选择皮肤图（PNG）</button>
+          <button class="btn ghost" id="openSkinFolderFromSkin" type="button">打开皮肤文件夹</button>
+          <input id="skinFile" type="file" accept="image/png" hidden>
+        </div>
+        <div class="field-note">
+          选一张 64×64 的皮肤 PNG，或点“打开皮肤文件夹”把 skin.png 放进去；只在本机生效
+        </div>
+
+        <div class="field-line">
+          <button class="btn ghost grow" id="skinReset">恢复官方皮肤</button>
+        </div>
+        <div class="hint" id="skinStatus"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 编辑账号弹窗 -->
+  <div class="modal" id="editModal" hidden>
+    <div class="modal-box edit-box">
+      <div class="modal-head">
+        <h3>编辑账号</h3>
+        <button class="btn ghost" id="editClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="field-line">
+          <input id="editName" class="input grow" type="text" maxlength="16" placeholder="玩家名" spellcheck="false">
+          <button class="btn" id="editSave">保存</button>
+        </div>
+        <div class="field-note" id="editNote">离线账号改的就是游戏里的名字</div>
+        <div class="hint" id="editStatus"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 版本右键菜单 -->
+  <div class="ver-menu" id="verMenu" hidden></div>
+
+  <!-- 通用表单弹窗：替代 Electron 不支持的 prompt() -->
+  <div class="modal" id="formModal" hidden>
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3 id="formTitle">填写</h3>
+        <button class="btn ghost" id="formClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="formFields"></div>
+        <div class="field-line" style="margin-top:14px;justify-content:flex-end">
+          <button class="btn ghost" id="formCancel">取消</button>
+          <button class="btn" id="formSave">确定</button>
+        </div>
+        <div class="hint" id="formHint"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 首次安装引导 -->
+  <div class="onboarding-overlay" id="onboarding" hidden>
+    <div class="onboarding-card">
+      <div class="onboarding-top">
+        <div class="onboarding-brand">Sakura Launcher</div>
+        <div class="onboarding-dots" id="obDots"></div>
+      </div>
+      <div class="onboarding-body" id="obBody"></div>
+      <div class="onboarding-actions">
+        <button class="btn ghost" id="obBack">上一步</button>
+        <button class="btn ghost" id="obSkip">跳过</button>
+        <button class="btn" id="obNext">下一步</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 游戏内选项 -->
+  <div class="modal" id="gameOptionsModal" hidden>
+    <div class="modal-box game-options-box">
+      <div class="modal-head">
+        <h3>游戏设置</h3>
+        <button class="btn ghost" id="gameOptionsClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="field-note" id="gameOptionsPath">选择实例后读取 options.txt</div>
+        <div class="game-options-grid" id="gameOptionsFields"></div>
+        <label class="game-options-all">
+          <input type="checkbox" id="gameOptionsAll"> 应用到所有版本
+        </label>
+        <div class="field-note">只改下面这些已知键，其它行和顺序保留；写入前备份为 options.txt.bak。</div>
+        <div class="field-line" style="margin-top:14px;justify-content:flex-end">
+          <button class="btn ghost" id="gameOptionsReset">重置为默认</button>
+          <button class="btn ghost" id="gameOptionsRestore">恢复上次备份</button>
+          <button class="btn ghost" id="gameOptionsCancel">取消</button>
+          <button class="btn" id="gameOptionsSave">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="assistant-bubble" id="assistantBubble" hidden>
+    <button class="assistant-bubble-close" id="assistantBubbleClose" aria-label="关闭">✕</button>
+    <img class="assistant-bubble-char" src="splash.gif" alt="">
+    <div class="assistant-bubble-title">启动失败了。</div>
+    <div class="assistant-bubble-text">要我看看日志吗？</div>
+    <button class="btn" id="assistantBubbleAnalyze">看看</button>
+  </div>
+
+  <!-- 世界参数 -->
+  <div class="modal" id="worldParamsModal" hidden>
+    <div class="modal-box world-params-box">
+      <div class="modal-head">
+        <h3>世界参数</h3>
+        <button class="btn ghost" id="worldParamsClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="world-params-grid">
+          <label class="world-param-check"><input type="checkbox" id="wpKeepInventory"> 死亡不掉落（keepInventory）</label>
+          <div class="field compact">
+            <label for="wpDifficulty">难度</label>
+            <select id="wpDifficulty" class="select">
+              <option value="peaceful">和平</option>
+              <option value="easy">简单</option>
+              <option value="normal">普通</option>
+              <option value="hard">困难</option>
+            </select>
+          </div>
+          <label class="world-param-check"><input type="checkbox" id="wpOnlineMode" checked> 正版验证（online-mode）</label>
+          <div class="field compact">
+            <label for="wpMaxPlayers">最大人数</label>
+            <input id="wpMaxPlayers" class="input" type="number" min="1" max="100" value="20">
+          </div>
+          <div class="field compact">
+            <label for="wpViewDistance">视距</label>
+            <input id="wpViewDistance" class="input" type="number" min="2" max="32" value="10">
+          </div>
+          <label class="world-param-check"><input type="checkbox" id="wpPvp" checked> PvP</label>
+          <div class="field compact">
+            <label for="wpSpawnProtection">出生点保护</label>
+            <input id="wpSpawnProtection" class="input" type="number" min="0" max="1000" value="16">
+          </div>
+        </div>
+        <div class="field-note">难度和死亡不掉落会尝试通过服务器命令立即生效；正版验证、最大人数、视距、PvP、出生点保护需要重开房间生效。</div>
+        <div class="hint" id="worldParamsNote"></div>
+        <div class="field-line" style="margin-top:14px;justify-content:flex-end">
+          <button class="btn ghost" id="worldParamsCancel">取消</button>
+          <button class="btn" id="worldParamsSave">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <div class="assistant-toast" id="assistantToast" hidden></div>
+  <script src="/vendor/skinview3d.bundle.js"></script>
+  <script src="/head-renderer.js"></script>
+  <script src="/head3d.js"></script>
+  <script src="/skin3d.js"></script>
+  <script src="/huiliyi-notebook.js"></script>
+  <script src="/app.js"></script>
+  <script src="/pages.js"></script>
+  <script src="/assistant.js"></script>
+  <script src="/update.js"></script>
+  <script src="/onboarding.js"></script>
+</body>
+</html>

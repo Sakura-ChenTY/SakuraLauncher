@@ -1,0 +1,2852 @@
+/* Sakura Minecraft Launcher 前端逻辑：原生 JS，无构建步骤 */
+
+const $ = (id) => document.getElementById(id);
+
+const state = {
+  gameDir: '',
+  versions: [],
+  remote: [],
+  installing: null,
+  running: null,
+  storeType: 'mod',
+  storeInstance: '',
+  storeHits: [],
+  packs: [],
+  // 整合包从哪找：modrinth | curseforge
+  packSource: 'modrinth',
+  contentVersion: null,
+  // 分页：每页多少条 + 当前页 + 后端报的总数
+  storePage: { offset: 0, limit: 24, total: 0 },
+  packPage: { offset: 0, limit: 24, total: 0 },
+  // 左侧选中哪个实例（主页大按钮启动它）
+  selectedVersion: '',
+  // 每个实例的 loader / 游戏版本，版本列表画图标用
+  versionDetails: [],
+  username: 'Player',
+  // 账号
+  accounts: [],
+  selectedAccount: null,
+  // 追更
+  tracked: [],
+  trackIntervalMs: 0,
+};
+
+/* ---------------- 工具 ---------------- */
+
+function api(path, opts) {
+  return fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  }).then(async (r) => {
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    return data;
+  });
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+function fmtDate(iso) {
+  if (!iso) return '';
+  return iso.slice(0, 10);
+}
+
+/**
+ * 把时间转成「几分前 / 几小时前」这种一眼能看出新鲜度的形式。
+ * 追整合包时，光看日期不够 —— 差 10 分钟就是真新鲜，差 10 天就是旧包。
+ */
+function fmtAge(iso) {
+  if (!iso) return '';
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return '';
+  const s = Math.round((Date.now() - t) / 1000);
+  if (s < 0) return '刚刚';
+  if (s < 60) return '刚刚';
+  if (s < 3600) return Math.round(s / 60) + ' 分钟前';
+  if (s < 86400) return (s / 3600).toFixed(1) + ' 小时前';
+  if (s < 86400 * 30) return Math.round(s / 86400) + ' 天前';
+  if (s < 86400 * 365) return (s / 86400 / 30).toFixed(1) + ' 个月前';
+  return (s / 86400 / 365).toFixed(1) + ' 年前';
+}
+
+function fmtSize(bytes) {
+  if (!bytes || bytes < 0) return '';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
+  return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+function fmtNum(n) {
+  if (n == null) return '';
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return (n / 1000).toFixed(1) + 'k';
+  return (n / 1_000_000).toFixed(1) + 'M';
+}
+
+/* ---------------- 状态显示 ---------------- */
+
+function setStatus(kind, text) {
+  $('dot').className = 'dot ' + kind;
+  $('statusText').textContent = text;
+}
+
+function refreshStatus() {
+  if (state.installing) {
+    setStatus('busy', `安装 ${state.installing.versionId ?? ''}`);
+  } else if (state.running) {
+    setStatus('running', `运行 ${state.running.versionId}`);
+  } else {
+    setStatus('idle', '空闲');
+  }
+  // 主页大按钮跟着安装/运行状态变
+  if (typeof updateHome === 'function') updateHome();
+}
+
+/* ---------------- 进度 ---------------- */
+
+let installRevealTimer = null;
+
+/* 用户主动收起：下载/安装照继续，只是不再占着整屏。
+   把这个状态记在模块级，showProgress(true) 反复被调时不能又把整页掀开 ——
+   否则每来一条进度事件就弹一次，收起等于没用。 */
+let installCollapsed = false;
+
+function setInstallCollapsed(collapsed) {
+  installCollapsed = collapsed;
+  const page = $('installPage');
+  const bar = $('progressBar');
+
+  if (collapsed) {
+    page.classList.remove('show');
+    // 收起后变成右下角的小浮窗：照 PCL，随时点一下就能回来
+    bar.classList.remove('stowed');
+    bar.classList.add('floating');
+    // 等淡出走完再 hidden
+    setTimeout(() => {
+      if (!page.classList.contains('show')) page.hidden = true;
+    }, 220);
+  } else {
+    // 只在一个活真在跑时才掀开；已完成的不该被点一下就弹个空卡片
+    if (!bar.classList.contains('show')) return;
+    bar.classList.remove('floating');
+    page.hidden = false;
+    requestAnimationFrame(() => page.classList.add('show'));
+    bar.classList.add('stowed');
+  }
+}
+
+/* 取消后的提示文案。
+   msg.message 本身就是「已取消」，直接拼成「已取消 — ${msg.message}」
+   会变成「已取消 — 已取消」（已实测踩过）。这里统一判定，只保留一份。 */
+function cancelText(message) {
+  const keep = '已下载的文件会保留，下次接着下';
+  const m = String(message ?? '').trim();
+  if (!m || /^已取消$/.test(m)) return `已取消 — ${keep}`;
+  return `已取消 — ${m}`;
+}
+
+/* 取消按钮的三个状态：可点 / 转圈等 / 已失效。
+   抽成函数是因为安装开始、完成、失败、取消四处都要管它，
+   散着写很容易漏一处，留下一个“点了没反应”的按钮。 */
+function resetCancelButton() {
+  const btn = $('installCancel');
+  if (!btn) return;
+  btn.disabled = false;
+  btn.classList.remove('busy');
+  btn.hidden = false;
+}
+
+function disableCancelButton() {
+  const btn = $('installCancel');
+  if (!btn) return;
+  btn.classList.remove('busy');
+  btn.disabled = true;
+}
+
+function showProgress(show) {
+  const bar = $('progressBar');
+  bar.classList.toggle('show', show);
+  if (!show) bar.removeAttribute('data-state');
+
+  const page = $('installPage');
+  if (show) {
+    // 用户已经收起了：只留右下角浮窗，不要再把整页弹回来
+    if (installCollapsed) {
+      clearTimeout(installRevealTimer);
+      installRevealTimer = null;
+      page.classList.remove('show');
+      bar.classList.remove('stowed');
+      bar.classList.add('floating');
+      return;
+    }
+    // 太快的操作（比如只装一个小文件）不该闪一整屏，
+    // 等它真跑够 250ms 再掀开整页。
+    if (!page.classList.contains('show') && !installRevealTimer) {
+      installRevealTimer = setTimeout(() => {
+        installRevealTimer = null;
+        page.hidden = false;
+        // 先去掉 hidden 再下一帧加 show，否则过渡不会触发
+        requestAnimationFrame(() => page.classList.add('show'));
+        // 整页已经承担进度展示，底部条收起来，不然同一份进度在一屏里出现两次
+        bar.classList.add('stowed');
+      }, 250);
+    }
+  } else {
+    clearTimeout(installRevealTimer);
+    installRevealTimer = null;
+    // 一次安装结束，收起状态自动复位，下一次才开始时还是完整卡片
+    installCollapsed = false;
+    page.classList.remove('show');
+    bar.classList.remove('stowed');
+    bar.classList.remove('floating');
+    // 等淡出走完再 hidden，否则看不到过渡
+    setTimeout(() => {
+      if (!page.classList.contains('show')) page.hidden = true;
+    }, 220);
+  }
+}
+
+function updateProgress({ stage, message, done, total, downloaded, errors }) {
+  const bar = $('progressBar');
+  const fill = $('progressFill');
+  const pctEl = $('progressPct');
+  const track = fill.parentElement;
+
+  const page = $('installPage');
+  const card = page.firstElementChild;
+  const iFill = $('installFill');
+  const iTrack = iFill.parentElement;
+  const iPct = $('installPct');
+
+  if (message) {
+    $('progressLabel').textContent = message;
+    $('installTitle').textContent = message;
+  }
+
+  // 状态色跟着走：PCL 也是跑完变绿、报错变红
+  const state = stage === 'done' ? 'done' : stage === 'error' ? 'error' : 'run';
+  bar.dataset.state = state;
+  card.dataset.state = state;
+
+  if (total) {
+    // 已有总量：正常进度 + 百分比（PCL 的「文本 - 42%」）
+    const pct = Math.min(100, (done / total) * 100);
+    track.classList.remove('indeterminate');
+    iTrack.classList.remove('indeterminate');
+    fill.style.width = pct.toFixed(1) + '%';
+    iFill.style.width = pct.toFixed(1) + '%';
+    pctEl.textContent = `${pct.toFixed(0)}%`;
+    iPct.textContent = `${pct.toFixed(0)}%`;
+    pctEl.classList.add('show');
+    iPct.classList.add('show');
+    const meta = `${done}/${total}  新下载 ${downloaded ?? 0}  失败 ${errors ?? 0}`;
+    $('progressMeta').textContent = meta;
+    $('installMeta').textContent = meta;
+  } else if (stage === 'done') {
+    // 完成但没有具体总量：满条，百分比给 100%
+    track.classList.remove('indeterminate');
+    iTrack.classList.remove('indeterminate');
+    fill.style.width = '100%';
+    iFill.style.width = '100%';
+    pctEl.textContent = '100%';
+    iPct.textContent = '100%';
+    pctEl.classList.add('show');
+    iPct.classList.add('show');
+    $('progressMeta').textContent = '';
+    $('installMeta').textContent = '';
+  } else if (stage === 'error') {
+    // 失败：条停在当前位置不假装跑完，颜色变红已足够
+    track.classList.remove('indeterminate');
+    iTrack.classList.remove('indeterminate');
+    pctEl.classList.remove('show');
+    iPct.classList.remove('show');
+    $('progressMeta').textContent = '';
+    $('installMeta').textContent = '';
+  } else if (stage) {
+    // 总量未知：PCL 也是不报百分比，改成来回跑的条，
+    // 比一条死钉在 0% 的空条更能说明「它在干活」
+    track.classList.add('indeterminate');
+    iTrack.classList.add('indeterminate');
+    fill.style.width = '';
+    iFill.style.width = '';
+    pctEl.classList.remove('show');
+    iPct.classList.remove('show');
+    pctEl.textContent = '';
+    iPct.textContent = '';
+    $('progressMeta').textContent = '';
+    $('installMeta').textContent = '';
+  }
+}
+
+/* ---------------- 渲染：实例 ---------------- */
+
+function renderInstalled() {
+  const box = $('installedList');
+  const versions = state.versions;
+  $('installedCount').textContent = versions.length;
+
+  if (!versions.length) {
+    box.innerHTML = '<div class="empty">还没有实例，去「下载」装一个</div>';
+    updateHome();
+    return;
+  }
+
+  // 之前选中的实例不在了，就回到第一个
+  if (!versions.includes(state.selectedVersion)) {
+    state.selectedVersion = versions[0];
+  }
+
+  box.innerHTML = versions.map((v) => {
+    const isRunning = state.running?.versionId === v;
+    const d = (state.versionDetails || []).find((x) => x.id === v) || {};
+    const kind = d.loader || 'vanilla';
+    const label = LOADER_LABEL[kind] ?? '原版';
+    const game = d.gameVersion && d.gameVersion !== v ? d.gameVersion : '';
+
+    const cls = [
+      'ver-row',
+      v === state.selectedVersion ? 'active' : '',
+      isRunning ? 'running' : '',
+    ].filter(Boolean).join(' ');
+
+    return `<div class="${cls}" data-select="${escapeHtml(v)}" title="${escapeHtml(v)}">
+      <img class="ver-ico-img" src="${escapeHtml(d.iconUrl || '')}" alt="" loading="lazy"
+           onerror="this.style.visibility='hidden'">
+      <div class="ver-main">
+        <div class="ver-name">${escapeHtml(v)}</div>
+        <div class="ver-sub">
+          ${game ? `<span>MC ${escapeHtml(game)}</span>` : ''}
+          <span class="ver-tag">${escapeHtml(label)}</span>
+          ${isRunning ? '<span class="ver-tag" style="color:var(--ok)">运行中</span>' : ''}
+        </div>
+      </div>
+      <button class="btn ghost ver-icon-btn" data-icon="${escapeHtml(v)}" title="换图标">换图标</button>
+    </div>`;
+  }).join('');
+
+  box.querySelectorAll('[data-select]').forEach((el) => {
+    el.addEventListener('click', () => selectVersion(el.dataset.select));
+  });
+
+  // 换图标：自动取封面只能覆盖 Modrinth 的包，
+  // CurseForge / 自制 / 手动导入的实例靠这个入口。
+  box.querySelectorAll('[data-icon]').forEach((btn) => {
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      pickIconFor(btn.dataset.icon);
+    });
+  });
+
+  updateHome();
+  syncInstanceSelect();
+}
+
+/** 版本类型的中文名，列表图标上用 */
+const LOADER_LABEL = {
+  vanilla: '原版',
+  forge: 'Forge',
+  fabric: 'Fabric',
+  quilt: 'Quilt',
+  neoforge: 'Neo',
+};
+
+/** 选中实例：高亮 + 刷新中间名字和版本 */
+function selectVersion(versionId) {
+  state.selectedVersion = versionId;
+  document.querySelectorAll('[data-select]').forEach((el) => {
+    el.classList.toggle('active', el.dataset.select === versionId);
+  });
+  updateHome();
+}
+
+/** 中间的人物名、副标题、启动按钮状态 */
+function updateHome() {
+  const v = state.selectedVersion;
+  const running = state.running?.versionId === v;
+  const busy = Boolean(state.installing);
+
+  $('charName').textContent = state.username || 'Player';
+  $('charVersion').textContent = v || '还没有实例，去「安装版本」下一个';
+
+  const btn = $('launchBtn');
+  btn.classList.toggle('busy', running || busy);
+
+  if (running) {
+    btn.disabled = true;
+    btn.textContent = '游戏运行中';
+  } else if (busy) {
+    btn.disabled = true;
+    btn.textContent = '安装中…';
+  } else if (!v) {
+    btn.disabled = true;
+    btn.textContent = '启动游戏';
+  } else {
+    btn.disabled = false;
+    btn.textContent = '启动游戏';
+  }
+
+  $('manageContent').hidden = !v;
+}
+
+function syncInstanceSelect() {
+  const sel = $('storeInstance');
+  const prev = sel.value;
+  sel.innerHTML =
+    '<option value="">全局（不过滤）</option>' +
+    state.versions.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+
+  if (state.versions.includes(prev)) sel.value = prev;
+  else if (state.versions.length === 1) sel.value = state.versions[0];
+
+  state.storeInstance = sel.value;
+  updateStoreHint();
+}
+
+/* ---------------- 渲染：远程版本 ---------------- */
+
+function renderRemote() {
+  const box = $('remoteList');
+  if (!state.remote.length) {
+    box.innerHTML = '<div class="empty">点右上角「刷新清单」加载</div>';
+    return;
+  }
+
+  box.innerHTML = state.remote.map((v) => `
+    <div class="row">
+      <div class="row-main">
+        <div class="row-name">${escapeHtml(v.id)}</div>
+        <div class="row-sub">${fmtDate(v.releaseTime)}</div>
+      </div>
+      <div class="row-actions">
+        ${v.installed
+          ? '<span class="badge ok">已安装</span>'
+          : `<button class="btn" data-install="${escapeHtml(v.id)}">安装</button>`}
+      </div>
+    </div>`).join('');
+
+  box.querySelectorAll('[data-install]').forEach((btn) => {
+    btn.addEventListener('click', () => doInstall(btn.dataset.install));
+  });
+}
+
+/* ---------------- 渲染：商店 ---------------- */
+
+function updateStoreHint() {
+  const el = $('storeHint');
+  const inst = state.storeInstance;
+
+  if (!inst) {
+    el.innerHTML =
+      '未选择实例：显示所有版本的内容。<b>选一个实例</b>可以只显示兼容该版本的条目，并直接装进去。';
+    return;
+  }
+
+  el.innerHTML = `目标实例 <b>${escapeHtml(inst)}</b>：只显示兼容该版本的内容，点「装」直接安装到该实例。`;
+}
+
+/**
+ * 列表加载中的动画。
+ * 仿 PCL 的 Loading 控件：一把会挥的矿镐 + 一行文字。
+ * 只画动画，不碰数据；真正的列表回来时整块被 innerHTML 覆盖掉。
+ *
+ * path 数据直接取自 PCL 的 Controls/MyLoading.xaml，viewBox 是 1024，
+ * 所以描边用 vector-effect="non-scaling-stroke" 才不会缩到看不见。
+ */
+function renderSkeleton(boxId, count = 6, label = '正在加载…') {
+  const box = $(boxId);
+  if (!box) return;
+  box.innerHTML = `
+      <div class="pcl-loading">
+        <div class="pcl-loader">
+          <svg class="pcl-pick" viewBox="0 0 1000 1000" aria-hidden="true">
+            <path class="pcl-pick-path" d="M963.6 858.2 410.8 305.5C508.1 213.3 609.2 196.8 711.1 128.6 837.1 49.6 879.3 50.3 751.5 49.5 611.3 52 471.8 96.2 353.3 182.4 309.8 155.7 252.1 161.2 214.5 198.9 176.9 236.6 171.3 294.2 198 337.7 111.8 456.3 67.6 595.8 65.1 735.9 63.3 883.8 65.1 837.3 144.2 695.5 212.4 593.6 228.9 492.4 321.1 395.2L873.9 948c0.6 0.6 1.6 0.6 2.2 0l87.5-87.5c0.6-0.7 0.6-1.6 0-2.3z"/>
+          </svg>
+          <span class="pcl-spark l"></span>
+          <span class="pcl-spark r"></span>
+        </div>
+        <div class="pcl-text">${escapeHtml(label)}</div>
+      </div>`;
+}
+
+function renderStore() {
+  const box = $('storeResults');
+  const hits = state.storeHits;
+
+  if (!hits.length) {
+    box.innerHTML = '<div class="empty">没有找到内容，换个关键词试试</div>';
+    return;
+  }
+
+  box.innerHTML = hits.map((h) => {
+    const versionLine = h.versions?.length
+      ? h.versions.slice(-3).join(', ')
+      : '';
+    return `
+      <div class="item-row">
+        ${h.iconUrl
+          ? `<img class="item-ico" src="${escapeHtml(h.iconUrl)}" alt="" loading="lazy">`
+          : '<div class="item-ico"></div>'}
+        <div class="item-main">
+          <div class="item-title" title="${escapeHtml(h.title)}">${escapeHtml(h.title)}</div>
+          <div class="item-desc">${escapeHtml(h.description)}</div>
+          <div class="item-meta">
+            <span>↓ ${fmtNum(h.downloads)}</span>
+            ${h.updated ? `<span title="最后更新 ${escapeHtml(String(h.updated).slice(0, 10))}">更新 ${fmtAge(h.updated)}</span>` : ''}
+            ${versionLine ? `<span>${escapeHtml(versionLine)}</span>` : ''}
+          </div>
+        </div>
+        <div class="item-act">
+          <button class="btn" data-pick="${escapeHtml(h.slug)}">装</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  box.querySelectorAll('[data-pick]').forEach((btn) => {
+    btn.addEventListener('click', () => pickVersion(btn.dataset.pick));
+  });
+}
+
+/* ---------------- 渲染：整合包 ---------------- */
+
+function renderPacks() {
+  const box = $('packResults');
+  if (!state.packs.length) {
+    box.innerHTML = '<div class="empty">没有找到整合包</div>';
+    return;
+  }
+
+  box.innerHTML = state.packs.map((p) => `
+    <div class="item-row">
+      ${p.iconUrl
+        ? `<img class="item-ico" src="${escapeHtml(p.iconUrl)}" alt="" loading="lazy">`
+        : '<div class="item-ico"></div>'}
+      <div class="item-main">
+        <div class="item-title" title="${escapeHtml(p.title)}">${escapeHtml(p.title)}</div>
+        <div class="item-desc">${escapeHtml(p.description)}</div>
+        <div class="item-meta">
+          <span>↓ ${fmtNum(p.downloads)}</span>
+          <span>${escapeHtml((p.versions ?? []).slice(-2).join(', '))}</span>
+        </div>
+      </div>
+      <div class="item-act">
+        <button class="btn" data-pickpack="${escapeHtml(p.slug)}">装</button>
+      </div>
+    </div>`).join('');
+
+  box.querySelectorAll('[data-pickpack]').forEach((btn) => {
+    btn.addEventListener('click', () => pickPack(btn.dataset.pickpack));
+  });
+}
+
+/* ---------------- 追更 ---------------- */
+
+/** 拉追更列表 */
+async function loadTrack() {
+  try {
+    const data = await api('/api/track');
+    state.tracked = data.items ?? [];
+    state.trackIntervalMs = data.intervalMs ?? 0;
+    renderTrack();
+  } catch (e) {
+    $('trackList').innerHTML = `<div class="empty">读取追更列表失败：${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderTrack() {
+  const box = $('trackList');
+  const items = state.tracked;
+
+  // 提示行带上轮询间隔，让人知道多久会自动查一次
+  const mins = Math.round((state.trackIntervalMs || 0) / 60000);
+  $('trackHint').textContent = items.length
+    ? `${items.length} 个项目中，每 ${mins} 分钟自动查一次`
+    : '盯住整合包，作者发新版本就在这里提示';
+
+  if (!items.length) {
+    box.innerHTML = '<div class="empty">还没有追更的项目</div>';
+    return;
+  }
+
+  box.innerHTML = items.map((it) => {
+    // 最新的那条更新记录（如果有）显示成醒目提示
+    const latest = (it.updates ?? [])[0];
+    const hasUpdate = Boolean(latest);
+
+    let sub;
+    if (it.lastError) {
+      sub = `<span class="err">检查失败：${escapeHtml(it.lastError)}</span>`;
+    } else if (hasUpdate) {
+      const when = fmtAge(latest.detectedAt);
+      sub = `当前 <b>${escapeHtml(it.currentVersion ?? '?')}</b> · ` +
+        `<span class="new">${escapeHtml(latest.from ?? '?')} → ${escapeHtml(latest.to)}</span>（${when}发现，${escapeHtml(latest.releaseType ?? '')}）`;
+    } else {
+      const added = it.addedAt ? `追更于 ${fmtAge(it.addedAt)}` : '';
+      const checked = it.lastCheckedAt ? `，上次检查 ${fmtAge(it.lastCheckedAt)}` : '';
+      sub = `当前 <b>${escapeHtml(it.currentVersion ?? '无版本')}</b> · ${added}${checked}`;
+    }
+
+    return `
+      <div class="track-item${hasUpdate ? ' has-update' : ''}">
+        ${it.iconUrl
+          ? `<img class="ti-icon" src="${escapeHtml(it.iconUrl)}" alt="" loading="lazy">`
+          : '<div class="ti-icon"></div>'}
+        <div class="ti-main">
+          <div class="ti-title">${escapeHtml(it.title)}</div>
+          <div class="ti-sub">${sub}</div>
+        </div>
+        <div class="ti-actions">
+          <button class="btn ghost" data-untrack="${escapeHtml(it.slug)}" title="不再追这个">取消</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  box.querySelectorAll('[data-untrack]').forEach((btn) => {
+    btn.addEventListener('click', () => untrackPack(btn.dataset.untrack));
+  });
+}
+
+async function addTrack() {
+  const input = $('trackQuery');
+  const slug = input.value.trim();
+  if (!slug) return;
+
+  const btn = $('trackAdd');
+  btn.disabled = true;
+  try {
+    const data = await api('/api/track/add', {
+      method: 'POST',
+      body: JSON.stringify({ slug, releaseOnly: $('trackReleaseOnly').checked }),
+    });
+    state.tracked = data.items ?? [];
+    state.trackIntervalMs = data.intervalMs ?? 0;
+    input.value = '';
+    renderTrack();
+  } catch (e) {
+    $('trackHint').textContent = '添加失败：' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function untrackPack(slug) {
+  try {
+    const data = await api('/api/track/remove', {
+      method: 'POST',
+      body: JSON.stringify({ slug }),
+    });
+    state.tracked = data.items ?? [];
+    state.trackIntervalMs = data.intervalMs ?? 0;
+    renderTrack();
+  } catch (e) {
+    $('trackHint').textContent = '取消失败：' + e.message;
+  }
+}
+
+async function checkTrackNow() {
+  const btn = $('trackCheck');
+  btn.disabled = true;
+  $('trackHint').textContent = '检查中…';
+  try {
+    const data = await api('/api/track/check', { method: 'POST' });
+    state.tracked = data.items ?? [];
+    state.trackIntervalMs = data.intervalMs ?? 0;
+    renderTrack();
+    // renderTrack 会把提示行覆盖成项目数，这里再盖回本次结果
+    const n = (data.found ?? []).length;
+    $('trackHint').textContent = n ? `发现 ${n} 个新版本！` : '暂无新版本';
+  } catch (e) {
+    $('trackHint').textContent = '检查失败：' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ---------------- 渲染：实例内容 ---------------- */
+
+const GROUP_LABEL = {
+  mods: 'Mod',
+  shaderpacks: '光影包',
+  resourcepacks: '资源包',
+};
+
+function renderContent(data) {
+  const box = $('contentGroups');
+  const groups = [];
+
+  for (const key of ['mods', 'shaderpacks', 'resourcepacks']) {
+    const items = data[key] ?? [];
+    if (!items.length) continue;
+    groups.push(`
+      <div>
+        <div class="group-title">${GROUP_LABEL[key]}（${items.length}）</div>
+        ${items.map((f) => `
+          <div class="file-row ${f.disabled ? 'off' : ''}">
+            <span class="file-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</span>
+            <span class="file-size">${fmtSize(f.size)}</span>
+            <button class="btn ghost" data-toggle="${escapeHtml(f.name)}" data-group="${key}" data-enable="${f.disabled ? '1' : '0'}">
+              ${f.disabled ? '启用' : '停用'}
+            </button>
+            <button class="btn danger" data-del="${escapeHtml(f.name)}" data-group="${key}">删</button>
+          </div>`).join('')}
+      </div>`);
+  }
+
+  box.innerHTML = groups.length
+    ? groups.join('')
+    : '<div class="empty">这个实例还没有安装任何 mod / 光影 / 资源包</div>';
+
+  box.querySelectorAll('[data-del]').forEach((btn) => {
+    btn.addEventListener('click', () => removeFile(btn.dataset.del, btn.dataset.group));
+  });
+  box.querySelectorAll('[data-toggle]').forEach((btn) => {
+    btn.addEventListener('click', () =>
+      toggleFile(btn.dataset.toggle, btn.dataset.group, btn.dataset.enable === '1')
+    );
+  });
+}
+
+/**
+ * 换一个实例的图标。
+ *
+ * 自动取封面只能覆盖 Modrinth 的整合包；CurseForge、自制包、
+ * 手动导入的实例都没有来源可查，只能让用户自己选图。
+ * 选完直接 POST 给服务端落盘，不用刷新页面就会换。
+ */
+function pickIconFor(versionId) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/png,image/jpeg,image/webp,image/gif';
+
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+
+    if (file.size > 4 * 1024 * 1024) {
+      alert('图片太大了，请选小于 4MB 的');
+      return;
+    }
+
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(String(fr.result));
+        fr.onerror = () => reject(new Error('读取图片失败'));
+        fr.readAsDataURL(file);
+      });
+
+      const r = await api(`/api/icon/${encodeURIComponent(versionId)}`, {
+        method: 'POST',
+        body: JSON.stringify({ dataUrl }),
+      });
+
+      // iconUrl 带 no-store，加个时间戳确保立刻看到新图
+      const d = (state.versionDetails || []).find((x) => x.id === versionId);
+      const bust = `?t=${Date.now()}`;
+      if (d) d.iconUrl = `/api/icon/${encodeURIComponent(versionId)}${bust}`;
+      renderInstalled();
+
+      if (r?.file) console.log(`图标已更新：${versionId} -> ${r.file}`);
+    } catch (e) {
+      alert('换图标失败：' + e.message);
+    }
+  });
+
+  input.click();
+}
+
+/* ---------------- 动作 ---------------- */
+
+async function loadInstalled() {
+  try {
+    const data = await api('/api/versions');
+    state.gameDir = data.gameDir;
+    state.versions = data.versions;
+    state.versionDetails = data.details ?? [];
+    $('gameDir').textContent = data.gameDir;
+    if ($('tbDirPath')) $('tbDirPath').textContent = data.gameDir;
+    renderInstalled();
+    // 装过的版本也能作为 Fabric 的基底
+    if (typeof renderFabricGameOptions === 'function') renderFabricGameOptions();
+  } catch (e) {
+    $('installedList').innerHTML =
+      `<div class="empty">读取失败：${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function loadRemote() {
+  $('remoteList').innerHTML = '<div class="empty">正在获取版本清单…</div>';
+  try {
+    const data = await api('/api/remote');
+    state.remote = data.releases;
+    renderRemote();
+    if (typeof renderFabricGameOptions === 'function') renderFabricGameOptions();
+  } catch (e) {
+    $('remoteList').innerHTML = `<div class="empty">获取失败：${escapeHtml(e.message)}</div>`;
+  }
+}
+
+/* ---------------- Fabric ---------------- */
+
+/** 用已加载的版本清单填充「基于哪个 MC 版本」下拉框 */
+function renderFabricGameOptions() {
+  const sel = $('fabricGame');
+  if (!sel) return;
+
+  // 没刷新过清单就先给个提示，别让下拉框空着让人猜
+  const list = state.remote.length ? state.remote : state.versions;
+  if (!list.length) {
+    sel.innerHTML = '<option value="">先刷新版本清单</option>';
+    return;
+  }
+
+  const prev = sel.value;
+  const ids = list.map((v) => (typeof v === 'string' ? v : v.id));
+  sel.innerHTML =
+    '<option value="">选择 MC 版本…</option>' +
+    ids.map((id) => `<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`).join('');
+  if (prev && ids.includes(prev)) sel.value = prev;
+}
+
+/** 选中 MC 版本后拉对应的 Fabric 加载器列表 */
+async function loadFabricLoaders() {
+  const gameVersion = $('fabricGame').value;
+  const sel = $('fabricLoader');
+  const hint = $('fabricHint');
+
+  if (!gameVersion) {
+    sel.innerHTML = '<option value="">先选 MC 版本</option>';
+    hint.textContent = '先在上面刷新清单，再选版本。';
+    return;
+  }
+
+  sel.innerHTML = '<option value="">正在获取…</option>';
+  sel.disabled = true;
+  try {
+    const data = await api('/api/fabric/loaders?gameVersion=' + encodeURIComponent(gameVersion));
+    if (!data.loaders?.length) {
+      sel.innerHTML = '<option value="">该版本没有可用加载器</option>';
+      hint.textContent = `Minecraft ${gameVersion} 没有找到 Fabric 加载器。`;
+      return;
+    }
+    sel.innerHTML =
+      `<option value="">最新稳定版</option>` +
+      data.loaders
+        .map((l) => `<option value="${escapeHtml(l.version)}">${escapeHtml(l.version)}${l.stable ? '' : '（测试版）'}</option>`)
+        .join('');
+    hint.textContent = `Minecraft ${gameVersion}：共 ${data.loaders.length} 个加载器版本。`;
+  } catch (e) {
+    sel.innerHTML = '<option value="">获取失败</option>';
+    hint.textContent = '获取加载器失败：' + e.message;
+  } finally {
+    sel.disabled = false;
+  }
+}
+
+/** 发起 Fabric 安装（进度走 SSE，这里只管发请求） */
+async function doFabricInstall() {
+  if (state.installing) {
+    alert('已有任务在进行，等它结束再装。');
+    return;
+  }
+
+  const gameVersion = $('fabricGame').value;
+  if (!gameVersion) {
+    alert('先选一个 Minecraft 版本。');
+    return;
+  }
+
+  const loaderVersion = $('fabricLoader').value || undefined;
+  const instanceName = $('fabricName').value.trim() || undefined;
+
+  try {
+    await api('/api/fabric/install', {
+      method: 'POST',
+      body: JSON.stringify({ gameVersion, loaderVersion, instanceName }),
+    });
+    // 进度条和完成提示由 fabric-start / fabric-done 事件驱动
+  } catch (e) {
+    alert('Fabric 安装请求失败：' + e.message);
+  }
+}
+
+async function doInstall(versionId) {
+  if (state.installing) return;
+  showProgress(true);
+  updateProgress({ stage: 'start', message: `准备安装 ${versionId}` });
+  try {
+    await api('/api/install', { method: 'POST', body: JSON.stringify({ versionId }) });
+  } catch (e) {
+    showProgress(false);
+    alert('安装请求失败：' + e.message);
+  }
+}
+
+async function doLaunch(versionId) {
+  try {
+    const r = await api('/api/launch', {
+      method: 'POST',
+      body: JSON.stringify({ versionId, username: state.username || 'Player' }),
+    });
+    appendLog(`>>> 启动 ${versionId}，PID ${r.pid}`);
+  } catch (e) {
+    alert('启动失败：' + e.message);
+  }
+}
+
+/* ---- 商店 ---- */
+
+/** 统一渲染分页控件：offset/limit/total -> 上一页/下一页 */
+function renderPager(which, { offset, limit, total }) {
+  const pager = $(`${which}Pager`);
+  const info = $(`${which}PageInfo`);
+  const prev = $(`${which}Prev`);
+  const next = $(`${which}Next`);
+
+  if (!total || total <= limit) {
+    pager.hidden = true;
+    return;
+  }
+
+  const page = Math.floor(offset / limit) + 1;
+  const pages = Math.ceil(total / limit);
+  pager.hidden = false;
+  info.innerHTML = `第 <b>${page}</b> / ${pages} 页 · 共 ${total} 条`;
+  prev.disabled = offset <= 0;
+  next.disabled = offset + limit >= total;
+}
+
+/** 按当前关键词和页码重新搜（翻页复用，不重读输入框） */
+async function doStoreSearch(offset = 0) {
+  const q = $('storeQuery').value.trim();
+  const type = $('storeType').value;
+  const sort = $('storeSort').value;
+  const versionId = $('storeInstance').value;
+
+  state.storeType = type;
+  state.storeInstance = versionId;
+  state.storePage.offset = offset;
+
+  renderSkeleton('storeResults', 6, '正在加载…');
+  $('storePager').hidden = true;
+
+  try {
+    const params = new URLSearchParams({
+      type,
+      q,
+      sort,
+      limit: String(state.storePage.limit),
+      offset: String(offset),
+    });
+    if (versionId) params.set('versionId', versionId);
+
+    const data = await api('/api/store/search?' + params);
+    state.storeHits = data.hits;
+    state.storePage.total = data.total ?? 0;
+
+    // 显示实际生效的过滤条件，避免以为搜不到是 bug
+    const f = data.filters || {};
+    if (f.gameVersion) {
+      $('storeHint').innerHTML = `目标实例 <b>${escapeHtml(versionId)}</b>：已按 MC <b>${escapeHtml(f.gameVersion)}</b>` +
+        (f.loader ? ` + <b>${escapeHtml(f.loader)}</b>` : '') +
+        ` 过滤，共 ${data.total} 条匹配。`;
+    } else {
+      updateStoreHint();
+    }
+
+    renderStore();
+    renderPager('store', state.storePage);
+  } catch (e) {
+    $('storeResults').innerHTML = `<div class="empty">搜索失败：${escapeHtml(e.message)}</div>`;
+    $('storePager').hidden = true;
+  }
+}
+
+/** 选中某个项目 -> 弹窗选版本 -> 下载 */
+async function pickVersion(slug) {
+  const versionId = $('storeInstance').value;
+  const type = $('storeType').value;
+
+  $('modalTitle').textContent = '选择版本';
+  $('modalBody').innerHTML = '<div class="empty">正在获取版本…</div>';
+  $('versionModal').hidden = false;
+
+  try {
+    const params = new URLSearchParams({ slug, type });
+    if (versionId) params.set('versionId', versionId);
+    const data = await api('/api/store/versions?' + params);
+
+    if (!data.versions.length) {
+      $('modalBody').innerHTML =
+        '<div class="empty">这个项目没有可用版本' +
+        (data.filters?.gameVersion ? `（MC ${escapeHtml(data.filters.gameVersion)}）` : '') +
+        '</div>';
+      return;
+    }
+
+    const note = data.filters?.gameVersion
+      ? `<div class="hint">匹配 <b>${escapeHtml(data.filters.gameVersion)}</b> 的版本 ${data.compatible} 个 / 共 ${data.total} 个
+         ${data.compatible === 0 ? '<span class="warn">— 没有完全兼容的，显示全部版本，装了可能不生效</span>' : ''}</div>`
+      : '';
+
+    $('modalBody').innerHTML = note + data.versions.map((v, i) => {
+      const f = v.files?.find((x) => x.primary) ?? v.files?.[0];
+      if (!f) return '';
+      return `
+        <div class="ver-row">
+          <div class="ver-main">
+            <div class="ver-name">${escapeHtml(v.versionNumber)}</div>
+            <div class="ver-sub">
+              ${escapeHtml((v.gameVersions ?? []).slice(-2).join(', '))}
+              · ${escapeHtml((v.loaders ?? []).join('/'))}
+              · ${fmtSize(f.size)}
+              · ${escapeHtml(v.releaseType)}
+            </div>
+          </div>
+          <button class="btn" data-install-file="${i}">安装</button>
+        </div>`;
+    }).join('');
+
+    $('modalBody').querySelectorAll('[data-install-file]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const v = data.versions[Number(btn.dataset.installFile)];
+        const f = v.files?.find((x) => x.primary) ?? v.files?.[0];
+        $('versionModal').hidden = true;
+        await installFiles(type, [{ url: f.url, filename: f.filename, sha1: f.sha1, size: f.size }], v.versionNumber);
+      });
+    });
+  } catch (e) {
+    $('modalBody').innerHTML = `<div class="empty">获取版本失败：${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function installFiles(type, files, label) {
+  const versionId = $('storeInstance').value;
+  if (!versionId) {
+    alert('请先在顶部选一个目标实例');
+    return;
+  }
+  showProgress(true);
+  updateProgress({ stage: 'content', message: `准备安装 ${label}` });
+  try {
+    await api('/api/content/install', {
+      method: 'POST',
+      body: JSON.stringify({ versionId, projectType: type, files }),
+    });
+  } catch (e) {
+    showProgress(false);
+    alert('安装失败：' + e.message);
+  }
+}
+
+/* ---- 整合包 ---- */
+
+async function doPackSearch(offset = 0) {
+  const q = $('packQuery').value.trim();
+  const sort = $('packSort').value;
+  state.packPage.offset = offset;
+
+  const isCF = state.packSource === 'curseforge';
+  renderSkeleton('packResults', 6, isCF ? '正在加载 CurseForge 整合包…' : '正在加载整合包…');
+  $('packPager').hidden = true;
+
+  try {
+    const params = new URLSearchParams({
+      type: 'modpack',
+      q,
+      sort,
+      limit: String(state.packPage.limit),
+      offset: String(offset),
+    });
+    const data = await api((isCF ? '/api/cf/search?' : '/api/store/search?') + params);
+
+    // 镜像挂了会回 200 + error，不能当“没结果”默默吞掉
+    if (data.error) {
+      $('packResults').innerHTML =
+        `<div class="empty">CurseForge 暂时不可用：${escapeHtml(data.error)}<br>` +
+        `可以切回 Modrinth。</div>`;
+      $('packHint').textContent = 'CurseForge 镜像连接失败';
+      return;
+    }
+
+    state.packs = data.hits;
+    state.packPage.total = data.total ?? 0;
+    renderPacks();
+    renderPager('pack', state.packPage);
+    $('packHint').textContent = isCF
+      ? `共 ${fmtNum(data.total)} 个 CurseForge 整合包。安装时会自动建实例并装好 loader。`
+      : `共 ${data.total} 个整合包。安装时会自动建独立实例并装好 loader。`;
+  } catch (e) {
+    $('packResults').innerHTML = `<div class="empty">搜索失败：${escapeHtml(e.message)}</div>`;
+    $('packPager').hidden = true;
+  }
+}
+
+async function pickPack(slug) {
+  $('modalTitle').textContent = '整合包版本';
+  $('modalBody').innerHTML = '<div class="empty">正在获取版本…</div>';
+  $('versionModal').hidden = false;
+
+  // 封面图要从搜索结果里拿：版本接口不带 icon
+  const pack = (state.packs ?? []).find((p) => p.slug === slug);
+  const packIcon = pack?.iconUrl ?? null;
+
+  if (state.packSource === 'curseforge') {
+    return pickCfPack(pack, packIcon);
+  }
+
+  try {
+    const data = await api('/api/store/versions?' + new URLSearchParams({ slug, type: 'modpack' }));
+
+    if (!data.versions.length) {
+      $('modalBody').innerHTML = '<div class="empty">没有可用版本</div>';
+      return;
+    }
+
+    $('modalBody').innerHTML = data.versions.map((v, i) => {
+      const f = v.files?.find((x) => x.primary) ?? v.files?.[0];
+      if (!f) return '';
+      return `
+        <div class="ver-row">
+          <div class="ver-main">
+            <div class="ver-name">${escapeHtml(v.versionNumber)}</div>
+            <div class="ver-sub">
+              MC ${escapeHtml((v.gameVersions ?? []).slice(-2).join(', '))}
+              · ${escapeHtml((v.loaders ?? []).join('/'))}
+              · ${fmtSize(f.size)}
+            </div>
+          </div>
+          ${v.datePublished ? `<div class="ver-date" title="最新更新时间">
+            <span>${escapeHtml(fmtDate(v.datePublished))}</span>
+            <small>${escapeHtml(fmtAge(v.datePublished))}</small>
+          </div>` : ''}
+          <button class="btn" data-install-pack="${i}">安装</button>
+        </div>`;
+    }).join('');
+
+    $('modalBody').querySelectorAll('[data-install-pack]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const v = data.versions[Number(btn.dataset.installPack)];
+        const f = v.files?.find((x) => x.primary) ?? v.files?.[0];
+        $('versionModal').hidden = true;
+
+        showProgress(true);
+        updateProgress({ stage: 'modpack', message: '准备安装整合包…' });
+        try {
+          await api('/api/modpack/install', {
+            method: 'POST',
+            body: JSON.stringify({
+              mrpackUrl: f.url,
+              mrpackSha1: f.sha1,
+              instanceName: slug,
+              iconUrl: packIcon,
+            }),
+          });
+        } catch (e) {
+          showProgress(false);
+          alert('整合包安装失败：' + e.message);
+        }
+      });
+    });
+  } catch (e) {
+    $('modalBody').innerHTML = `<div class="empty">获取失败：${escapeHtml(e.message)}</div>`;
+  }
+}
+
+/**
+ * CurseForge 整合包：先预览再装。
+ *
+ * 跟 Modrinth 不一样：CF 的版本列表只给文件名和大小，
+ * 「要多少 MC 版本、什么加载器、多少个文件」都写在包内的 manifest.json 里，
+ * 所以点「预览」时要真下载一次整包才能读出来（服务端读完立刻删）。
+ */
+async function pickCfPack(pack, packIcon) {
+  if (!pack?.id) {
+    $('modalBody').innerHTML = '<div class="empty">缺少 CurseForge 项目 id</div>';
+    return;
+  }
+
+  $('modalBody').innerHTML = '<div class="empty">正在获取文件列表…</div>';
+
+  try {
+    const data = await api('/api/cf/files?' + new URLSearchParams({ id: String(pack.id) }));
+
+    if (data.error) {
+      $('modalBody').innerHTML = `<div class="empty">CurseForge 不可用：${escapeHtml(data.error)}</div>`;
+      return;
+    }
+    if (!data.files?.length) {
+      $('modalBody').innerHTML = '<div class="empty">这个整合包没有可下载的文件</div>';
+      return;
+    }
+
+    $('modalBody').innerHTML = data.files.map((f, i) => `
+      <div class="ver-row">
+        <div class="ver-main">
+          <div class="ver-name">${escapeHtml(f.name)}</div>
+          <div class="ver-sub">
+            ${escapeHtml((f.gameVersions ?? []).slice(0, 2).join(', '))}
+            · ${fmtSize(f.size)}
+            · ${escapeHtml(f.releaseType)}
+            ${f.distributable ? '' : ' · <span class="err">不可自动下载</span>'}
+          </div>
+        </div>
+        ${f.datePublished ? `<div class="ver-date" title="发布日期">
+          <span>${escapeHtml(fmtDate(f.datePublished))}</span>
+          <small>${escapeHtml(fmtAge(f.datePublished))}</small>
+        </div>` : ''}
+        <button class="btn" data-install-cf="${i}" ${f.distributable ? '' : 'disabled'}>安装</button>
+      </div>`).join('');
+
+    $('modalBody').querySelectorAll('[data-install-cf]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const f = data.files[Number(btn.dataset.installCf)];
+        if (!f?.distributable) return;
+        $('versionModal').hidden = true;
+
+        showProgress(true);
+        updateProgress({ stage: 'cfpack', message: '准备安装 CurseForge 整合包…' });
+        try {
+          await api('/api/cf/pack/install', {
+            method: 'POST',
+            body: JSON.stringify({
+              modId: pack.id,
+              fileId: f.id,
+              instanceName: pack.slug || pack.title,
+              iconUrl: packIcon,
+            }),
+          });
+        } catch (e) {
+          showProgress(false);
+          alert('整合包安装失败：' + e.message);
+        }
+      });
+    });
+  } catch (e) {
+    $('modalBody').innerHTML = `<div class="empty">获取失败：${escapeHtml(e.message)}</div>`;
+  }
+}
+
+/* ---- 内容管理 ---- */
+
+async function openContent(versionId) {
+  state.contentVersion = versionId;
+  $('contentTitle').textContent = `${versionId} 的内容`;
+  $('contentPanel').hidden = false;
+  $('contentGroups').innerHTML = '<div class="empty">读取中…</div>';
+
+  try {
+    const data = await api('/api/content/list?' + new URLSearchParams({ versionId }));
+    renderContent(data);
+  } catch (e) {
+    $('contentGroups').innerHTML = `<div class="empty">读取失败：${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function removeFile(filename, group) {
+  const typeMap = { mods: 'mod', shaderpacks: 'shader', resourcepacks: 'resourcepack' };
+  const type = typeMap[group];
+  if (!type) return;
+  if (!confirm(`确定删除 ${filename}？`)) return;
+
+  try {
+    await api('/api/content/remove', {
+      method: 'POST',
+      body: JSON.stringify({ versionId: state.contentVersion, projectType: type, filename }),
+    });
+    await openContent(state.contentVersion);
+  } catch (e) {
+    alert('删除失败：' + e.message);
+  }
+}
+
+async function toggleFile(filename, group, enable) {
+  const typeMap = { mods: 'mod', shaderpacks: 'shader', resourcepacks: 'resourcepack' };
+  const type = typeMap[group];
+  if (!type) return;
+
+  try {
+    await api('/api/content/toggle', {
+      method: 'POST',
+      body: JSON.stringify({
+        versionId: state.contentVersion,
+        projectType: type,
+        filename,
+        enable,
+      }),
+    });
+    await openContent(state.contentVersion);
+  } catch (e) {
+    alert('操作失败：' + e.message);
+  }
+}
+
+/* ---- 模组批量更新 ---- */
+
+/**
+ * 检查更新：只读，不改任何文件。
+ * 结果先列出来让人挑，确认后才真下载 —— 批量换模组有风险，
+ * 不该点一下就自动全换。
+ */
+async function checkModUpdates() {
+  const versionId = state.contentVersion;
+  if (!versionId) return;
+
+  const box = $('modUpdates');
+  const btn = $('checkModUpdates');
+  if (btn.disabled) return;
+
+  btn.disabled = true;
+  btn.textContent = '扫描中…';
+  box.hidden = false;
+  box.innerHTML = '<div class="mu-empty">正在算文件指纹…</div>';
+
+  try {
+    const r = await api('/api/mods/check-updates', {
+      method: 'POST',
+      body: JSON.stringify({ versionId }),
+    });
+    renderModUpdates(r);
+  } catch (e) {
+    box.innerHTML = `<div class="mu-empty">检查失败：${escapeHtml(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '检查更新';
+  }
+}
+
+function renderModUpdates(r) {
+  const box = $('modUpdates');
+  box.hidden = false;
+
+  if (!r.total) {
+    box.innerHTML = '<div class="mu-empty">这个实例没有模组</div>';
+    return;
+  }
+
+  const ups = r.updates ?? [];
+  const parts = [];
+
+  parts.push(`
+    <div class="mu-head">
+      <span>共 <b>${r.total}</b> 个模组，识别出 <b>${r.identified}</b> 个</span>
+      <span>可更新 <b>${ups.length}</b></span>
+      <span class="grow"></span>
+      ${ups.length ? '<button class="btn" id="muSelectAll">全选</button>' : ''}
+      ${ups.length ? '<button class="btn" id="muApply">更新选中</button>' : ''}
+      <button class="btn ghost" id="muClose">收起</button>
+    </div>`);
+
+  if (!ups.length) {
+    parts.push('<div class="mu-empty">没有可更新的模组，都是最新的</div>');
+  } else {
+    parts.push(
+      ups.map((u, i) => {
+        const tag = u.releaseType && u.releaseType !== 'release'
+          ? `<span class="mu-tag ${u.releaseType}">${u.releaseType}</span>`
+          : '';
+        return `
+        <label class="mu-row ${u.disabled ? 'off' : ''}">
+          <input type="checkbox" class="mu-check" data-idx="${i}" checked>
+          <span class="mu-title" title="${escapeHtml(u.oldName)} → ${escapeHtml(u.newName)}">${escapeHtml(u.title)}</span>
+          ${tag}
+          <span class="mu-ver">${escapeHtml(u.from)} <span class="to">→ ${escapeHtml(u.to)}</span></span>
+        </label>`;
+      }).join('')
+    );
+  }
+
+  // 查不到 / 已最新的，折叠成一行说明，不占地方
+  const unknown = r.unknown ?? [];
+  const current = r.current ?? [];
+  if (unknown.length || current.length) {
+    const bits = [];
+    if (current.length) bits.push(`${current.length} 个已最新`);
+    if (unknown.length) bits.push(`${unknown.length} 个查不到（CF 独占/自制）`);
+    parts.push(`
+      <details class="mu-note">
+        <summary>其余 ${bits.join('、')}</summary>
+        ${current.map((c) => `<div>${escapeHtml(c.title)} ${escapeHtml(c.versionNumber)} — ${escapeHtml(c.note)}</div>`).join('')}
+        ${unknown.map((u) => `<div>${escapeHtml(u.name)} — ${escapeHtml(u.reason)}</div>`).join('')}
+      </details>`);
+  }
+
+  box.innerHTML = parts.join('');
+
+  $('muClose')?.addEventListener('click', () => { box.hidden = true; });
+  $('muSelectAll')?.addEventListener('click', () => {
+    const checks = [...box.querySelectorAll('.mu-check')];
+    const allOn = checks.every((c) => c.checked);
+    checks.forEach((c) => { c.checked = !allOn; });
+    $('muSelectAll').textContent = allOn ? '全选' : '全不选';
+  });
+  $('muApply')?.addEventListener('click', () => applyModUpdates(ups));
+}
+
+async function applyModUpdates(ups) {
+  const box = $('modUpdates');
+  const picked = [...box.querySelectorAll('.mu-check')]
+    .filter((c) => c.checked)
+    .map((c) => ups[Number(c.dataset.idx)])
+    .filter(Boolean);
+
+  if (!picked.length) {
+    alert('先选要更新的模组');
+    return;
+  }
+
+  const beta = picked.filter((u) => u.releaseType && u.releaseType !== 'release').length;
+  const msg = beta
+    ? `要更新 ${picked.length} 个模组，其中 ${beta} 个不是正式版（beta/alpha）。\n旧的会备份到 mods/.backup，确定吗？`
+    : `要更新 ${picked.length} 个模组？\n旧的会备份到 mods/.backup。`;
+  if (!confirm(msg)) return;
+
+  try {
+    await api('/api/mods/apply-updates', {
+      method: 'POST',
+      body: JSON.stringify({ versionId: state.contentVersion, items: picked }),
+    });
+    // 实际下载进度走 SSE；这里只把按钮防住，防止连点
+    $('muApply').disabled = true;
+    $('muApply').textContent = '更新中…';
+  } catch (e) {
+    alert('启动更新失败：' + e.message);
+  }
+}
+
+/* ---------------- 日志 ---------------- */
+
+function appendLog(text) {
+  const box = $('logBox');
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+  box.textContent += text + '\n';
+  const lines = box.textContent.split('\n');
+  if (lines.length > 800) box.textContent = lines.slice(-800).join('\n');
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+/* ---------------- SSE ---------------- */
+
+function connectEvents() {
+  const es = new EventSource('/api/events');
+
+  es.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+
+    switch (msg.type) {
+      case 'hello': {
+        const s = msg.state || {};
+        state.installing = s.installing;
+        state.running = s.running;
+        refreshStatus();
+        if (s.installing) {
+          showProgress(true);
+          updateProgress(s.installing);
+        }
+        break;
+      }
+
+      case 'install-start':
+        state.installing = { versionId: msg.versionId, stage: 'start' };
+        resetCancelButton();
+        showProgress(true);
+        updateProgress({ stage: 'start', message: `开始安装 ${msg.versionId}` });
+        refreshStatus();
+        break;
+
+      case 'install-stage':
+        updateProgress({ stage: msg.stage, message: msg.message });
+        break;
+
+      case 'install-progress':
+        updateProgress(msg);
+        break;
+
+      case 'install-done': {
+        const st = msg.report?.stages || {};
+        const libs = st.libraries || {};
+        const assets = st.assets || {};
+        const jv = st.java || {};
+        let detail = `库 ${libs.downloaded ?? 0} 个，资源 ${assets.downloaded ?? 0} 个`;
+        if (jv.installed) detail += `，顺带装了 Java ${jv.required}`;
+        updateProgress({ stage: 'done', message: `安装完成：${detail}` });
+        $('progressFill').style.width = '100%';
+        state.installing = null;
+        disableCancelButton();
+        refreshStatus();
+        setTimeout(() => showProgress(false), 3000);
+        loadInstalled();
+        loadRemote();
+        break;
+      }
+
+      case 'install-error':
+        updateProgress({ stage: 'error', message: `安装失败：${msg.error}` });
+        $('progressFill').style.width = '0%';
+        state.installing = null;
+        disableCancelButton();
+        refreshStatus();
+        setTimeout(() => showProgress(false), 5000);
+        break;
+
+      // 取消成功：不是失败，别报红。
+      // 进度条直接收掉，并告诉人“已下好的文件留着”。
+      case 'install-cancelled':
+        updateProgress({ stage: 'error', message: cancelText(msg.message) });
+        state.installing = null;
+        disableCancelButton();
+        refreshStatus();
+        setTimeout(() => showProgress(false), 1800);
+        break;
+
+      /* ---- 内容 ---- */
+      case 'content-start':
+        state.installing = { versionId: msg.versionId };
+        resetCancelButton();
+        showProgress(true);
+        updateProgress({ stage: 'content', message: `安装 ${msg.count} 个文件…` });
+        refreshStatus();
+        break;
+
+      case 'content-progress':
+        updateProgress(msg);
+        break;
+
+      case 'content-done': {
+        const r = msg.result || {};
+        updateProgress({
+          stage: 'done',
+          message: `完成：新装 ${r.installed?.length ?? 0}，已有 ${r.skipped?.length ?? 0}，失败 ${r.failed?.length ?? 0}`,
+        });
+        state.installing = null;
+        disableCancelButton();
+        refreshStatus();
+        setTimeout(() => showProgress(false), 2500);
+        if (state.contentVersion) openContent(state.contentVersion);
+        break;
+      }
+
+      case 'content-error':
+        updateProgress({ stage: 'error', message: `安装失败：${msg.error}` });
+        state.installing = null;
+        disableCancelButton();
+        refreshStatus();
+        setTimeout(() => showProgress(false), 5000);
+        break;
+
+      case 'content-cancelled':
+        updateProgress({ stage: 'error', message: cancelText(msg.message) });
+        state.installing = null;
+        disableCancelButton();
+        refreshStatus();
+        setTimeout(() => showProgress(false), 1800);
+        break;
+
+      /* ---- 模组批量更新 ---- */
+      case 'mods-update-start':
+        state.installing = { versionId: msg.versionId };
+        resetCancelButton();
+        showProgress(true);
+        updateProgress({ stage: 'mod-update', message: `开始更新 ${msg.count} 个模组…` });
+        refreshStatus();
+        break;
+
+      case 'mods-update-progress':
+        updateProgress({ stage: 'mod-update', done: msg.done, total: msg.total, message: msg.message });
+        break;
+
+      case 'mods-update-done': {
+        const r = msg.result || {};
+        const failed = r.failed?.length ?? 0;
+        updateProgress({
+          stage: failed ? 'error' : 'done',
+          message: `更新完成：成功 ${r.updated?.length ?? 0}，失败 ${failed}`,
+        });
+        state.installing = null;
+        disableCancelButton();
+        refreshStatus();
+        setTimeout(() => showProgress(false), failed ? 5000 : 2500);
+        // 更新完重新扫一遍：从列表里去掉已更新的，显示真实结果
+        if (state.contentVersion) {
+          openContent(state.contentVersion);
+          setTimeout(() => { if (state.contentVersion) checkModUpdates(); }, 600);
+        }
+        break;
+      }
+
+      case 'mods-update-error':
+        updateProgress({ stage: 'error', message: `模组更新失败：${msg.error}` });
+        state.installing = null;
+        disableCancelButton();
+        refreshStatus();
+        setTimeout(() => showProgress(false), 5000);
+        break;
+
+      case 'mods-update-cancelled':
+        updateProgress({ stage: 'error', message: cancelText(msg.message) });
+        state.installing = null;
+        disableCancelButton();
+        refreshStatus();
+        setTimeout(() => showProgress(false), 1800);
+        if (state.contentVersion) openContent(state.contentVersion);
+        break;
+
+      /* ---- Fabric ---- */
+      case 'fabric-start':
+        state.installing = { versionId: msg.gameVersion };
+        resetCancelButton();
+        showProgress(true);
+        updateProgress({ stage: 'fabric', message: '开始安装 Fabric…' });
+        refreshStatus();
+        break;
+
+      case 'fabric-stage':
+        updateProgress({ stage: msg.stage, message: msg.message });
+        break;
+
+      case 'fabric-progress':
+        updateProgress(msg);
+        break;
+
+      case 'fabric-done':
+        updateProgress({ stage: 'done', message: `Fabric 完成：${msg.result?.versionId}` });
+        state.installing = null;
+        disableCancelButton();
+        refreshStatus();
+        setTimeout(() => showProgress(false), 2500);
+        loadInstalled();
+        break;
+
+      case 'fabric-error':
+        updateProgress({ stage: 'error', message: `Fabric 失败：${msg.error}` });
+        state.installing = null;
+        disableCancelButton();
+        refreshStatus();
+        setTimeout(() => showProgress(false), 5000);
+        break;
+
+      case 'fabric-cancelled':
+        updateProgress({ stage: 'error', message: cancelText(msg.message) });
+        state.installing = null;
+        disableCancelButton();
+        refreshStatus();
+        setTimeout(() => showProgress(false), 1800);
+        break;
+
+      /* ---- 整合包 ---- */
+      case 'modpack-start':
+        state.installing = { versionId: 'modpack' };
+        resetCancelButton();
+        showProgress(true);
+        updateProgress({ stage: 'modpack', message: '开始安装整合包…' });
+        refreshStatus();
+        break;
+
+      case 'modpack-stage':
+        updateProgress({ stage: msg.stage, message: msg.message });
+        break;
+
+      case 'modpack-progress':
+        updateProgress(msg);
+        break;
+
+      case 'modpack-done': {
+        const r = msg.result || {};
+        updateProgress({
+          stage: 'done',
+          message: `整合包完成：${r.instanceId}（${r.files?.downloaded ?? 0} 个文件）`,
+        });
+        $('progressFill').style.width = '100%';
+        state.installing = null;
+        disableCancelButton();
+        refreshStatus();
+        setTimeout(() => showProgress(false), 3500);
+        loadInstalled();
+        break;
+      }
+
+      case 'modpack-error':
+        updateProgress({ stage: 'error', message: `整合包失败：${msg.error}` });
+        state.installing = null;
+        disableCancelButton();
+        refreshStatus();
+        setTimeout(() => showProgress(false), 5000);
+        break;
+
+      case 'modpack-cancelled':
+        updateProgress({ stage: 'error', message: cancelText(msg.message) });
+        state.installing = null;
+        disableCancelButton();
+        refreshStatus();
+        setTimeout(() => showProgress(false), 1800);
+        break;
+
+      /* ---- 游戏 ---- */
+      case 'game-start':
+        state.running = { versionId: msg.versionId, pid: msg.pid };
+        refreshStatus();
+        renderInstalled();
+        break;
+
+      case 'game-exit':
+        state.running = null;
+        refreshStatus();
+        renderInstalled();
+        appendLog(`<<< 游戏退出 code=${msg.code}`);
+        break;
+
+      case 'log':
+        appendLog(msg.line);
+        break;
+
+      case 'track-update': {
+        // 后台轮询发现新版本：本地列表立刻刷新，不用等用户手点
+        const found = msg.found ?? [];
+        if (found.length) {
+          for (const f of found) {
+            appendLog(`发现新版本：${f.title} ${f.from ?? '?'} → ${f.to}`);
+          }
+          loadTrack();
+        }
+        break;
+      }
+    }
+  };
+
+  es.onerror = () => {
+    setStatus('idle', '连接断开，重连中…');
+  };
+}
+
+/* ---------------- 设置 ---------------- */
+
+const settingsState = {
+  loaded: false,
+  settings: null,
+  defaults: null,
+  javas: [],
+};
+
+/** 512M / 4G -> MB */
+function memToMb(s) {
+  const v = String(s ?? '').trim().toUpperCase();
+  const n = Number(v.slice(0, -1));
+  if (!Number.isFinite(n)) return 0;
+  return v.endsWith('G') ? n * 1024 : n;
+}
+
+function flashSettings(text, kind) {
+  const el = $('settingsFoot');
+  const base = '设置保存在 ';
+  el.innerHTML = `<span class="settings-flash ${kind}">${escapeHtml(text)}</span>${base}<code id="settingsFile">${escapeHtml(settingsState.fileLabel ?? 'settings.json')}</code>`;
+  clearTimeout(flashSettings._t);
+  flashSettings._t = setTimeout(() => {
+    el.innerHTML = `${base}<code>${escapeHtml(settingsState.fileLabel ?? 'settings.json')}</code>`;
+  }, 4000);
+}
+
+function updateMemTotal() {
+  const min = memToMb($('setMemMin').value);
+  const max = memToMb($('setMemMax').value);
+  $('memTotal').textContent = max ? `${max - min >= 0 ? min + 'M ~ ' : ''}${max}M` : '-';
+}
+
+function renderJavaOptions(javas, selected) {
+  const sel = $('setJavaPath');
+  const opts = ['<option value="">自动选择（按版本要求扫描）</option>'];
+
+  const seen = new Set();
+  for (const j of javas ?? []) {
+    if (!j.path || seen.has(j.path)) continue;
+    seen.add(j.path);
+    const label = `Java ${j.major ?? '?'} — ${j.path}`;
+    opts.push(`<option value="${escapeHtml(j.path)}">${escapeHtml(label)}</option>`);
+  }
+
+  // 手动填的路径不在扫描结果里（比如刚装的），也要显示出来
+  if (selected && !seen.has(selected)) {
+    opts.push(`<option value="${escapeHtml(selected)}">手动指定 — ${escapeHtml(selected)}</option>`);
+  }
+
+  sel.innerHTML = opts.join('');
+  sel.value = selected ?? '';
+}
+
+async function loadSettings() {
+  try {
+    const data = await api('/api/settings');
+    settingsState.settings = data.settings;
+    settingsState.defaults = data.defaults;
+    settingsState.javas = data.javas ?? [];
+    settingsState.fileLabel = data.file ?? 'settings.json';
+    settingsState.loaded = true;
+    applySettingsToForm(data.settings);
+  } catch (e) {
+    $('settingsFoot').innerHTML =
+      `<span class="settings-flash err">读取设置失败：${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function applySettingsToForm(s) {
+  $('setGameDir').value = s.gameDir ?? '';
+  $('setUsername').value = s.username ?? '';
+  $('setMemMin').value = s.memoryMin ?? '';
+  $('setMemMax').value = s.memoryMax ?? '';
+  $('setConcurrency').value = s.concurrency ?? 16;
+  $('setDownloadSource').value = s.downloadSource ?? (s.preferMirror ? 'bmclapi' : 'auto');
+  $('setJavaMode').value = s.javaMode === 'auto' ? 'auto' : 'external';
+  $('setIsolated').value = s.isolated ?? 'auto';
+  $('setExtraJvm').value = s.extraJvm ?? '';
+  $('setExtraGame').value = s.extraGame ?? '';
+  // 界面透明度：不存时就按 46% 算（等于旧版写死的值，观感不变）
+  applyGlassAlpha(Number(s.glassOpacity ?? 42));
+  renderJavaOptions(settingsState.javas, s.javaPath ?? '');
+  updateMemTotal();
+
+  // 主页中间那个人物名就是这里的玩家名
+  state.username = s.username || 'Player';
+  if (typeof updateHome === 'function') updateHome();
+}
+
+function readSettingsForm() {
+  return {
+    gameDir: $('setGameDir').value.trim(),
+    username: $('setUsername').value.trim(),
+    memoryMin: $('setMemMin').value.trim().toUpperCase(),
+    memoryMax: $('setMemMax').value.trim().toUpperCase(),
+    concurrency: Number($('setConcurrency').value),
+    downloadSource: $('setDownloadSource').value,
+    isolated: $('setIsolated').value,
+    javaPath: $('setJavaPath').value,
+    javaMode: $('setJavaMode').value,
+    extraJvm: $('setExtraJvm').value.trim(),
+    extraGame: $('setExtraGame').value.trim(),
+    glassOpacity: Number($('setGlass').value),
+  };
+}
+
+/**
+ * 把界面不透明度写进 CSS 变量并更新右侧的百分比。
+ *
+ * 映射规则（v = 滑块值 30-90）：
+ *   --glass-alpha        = v / 100        46 → .46
+ *   --glass-strong-alpha = a + .14        46 → .60
+ *   --acrylic-base       = a + .12        46 → .58
+ *   --op-scale           = a / .46        46 → 1.0
+ *
+ * 为什么把亚克力底从 .65 降到 .58：
+ *   .65 是当初为了压住暖色壁纸的偏色算出来的安全值，但代价是糊得太实，
+ *   看起来像“深灰板”，不像亚克力。降低底色的同时把 saturate 再压一档，
+ *   偏色靠去色而不是靠堆黑来中和 —— 这才是亚克力该有的透光感。
+ *
+ * 为什么不直接把各层 alpha 乘同一个倍率：
+ *   实测拖到 75% 时 .58 × (75/46) = 0.95，接近纯黑，违背“通透”的初衷。
+ *   所以用加法错位 + 上限夹住。
+ */
+function applyGlassAlpha(pct) {
+  const v = Math.min(90, Math.max(30, Number.isFinite(pct) ? pct : 42));
+  const clamp = (lo, hi, x) => Math.min(hi, Math.max(lo, x));
+
+  const a = v / 100;
+  const strong = Math.min(0.94, a + 0.14);
+  const acrylic = clamp(0.36, 0.86, a + 0.12);
+  const scale = clamp(0.55, 1.35, a / 0.46);
+
+  const root = document.documentElement.style;
+  root.setProperty('--glass-alpha', a.toFixed(3));
+  root.setProperty('--glass-strong-alpha', strong.toFixed(3));
+  root.setProperty('--acrylic-base', acrylic.toFixed(3));
+  root.setProperty('--op-scale', scale.toFixed(3));
+
+  const slider = $('setGlass');
+  if (slider && Number(slider.value) !== v) slider.value = String(v);
+  const label = $('glassVal');
+  if (label) label.textContent = `${v}%`;
+}
+
+async function saveSettingsForm() {
+  const btn = $('settingsSave');
+  btn.disabled = true;
+  try {
+    const data = await api('/api/settings', {
+      method: 'POST',
+      body: JSON.stringify(readSettingsForm()),
+    });
+    settingsState.settings = data.settings;
+    applySettingsToForm(data.settings);
+
+    // 服务端会修正非法值（比如内存写反、并发超范围），要把结果讲清楚
+    const notes = data.notes ?? [];
+    if (notes.length) flashSettings('已保存，但有修正：' + notes.join('；'), 'err');
+    else flashSettings('已保存', 'ok');
+
+    // 游戏目录可能变了，实例列表要跟着刷新
+    await loadInstalled();
+  } catch (e) {
+    flashSettings('保存失败：' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function rescanJava() {
+  const btn = $('rescanJava');
+  btn.disabled = true;
+  btn.textContent = '扫描中…';
+  try {
+    const data = await api('/api/settings/javas?force=1');
+    settingsState.javas = data.javas ?? [];
+    renderJavaOptions(settingsState.javas, $('setJavaPath').value);
+    flashSettings(`扫到 ${settingsState.javas.length} 个 Java`, 'ok');
+  } catch (e) {
+    flashSettings('扫描失败：' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '重新扫描';
+  }
+}
+
+function resetSettingsForm() {
+  const d = settingsState.defaults;
+  if (!d) return;
+  if (!confirm('把表单恢复成默认值？（还要点「保存」才会生效）')) return;
+  applySettingsToForm(d);
+  flashSettings('已恢复默认值，点保存生效', 'ok');
+}
+
+/** 设置页「测速」：实测各源，把结果写在说明行里，并提示推荐哪个 */
+async function testSources() {
+  const btn = $('btnTestSource');
+  const note = $('sourceNote');
+  const original = note.innerHTML;
+  btn.disabled = true;
+  btn.textContent = '测速中…';
+  note.textContent = '正在实测各源（每个源拉 3 个真实文件校验内容）…';
+
+  try {
+    const data = await api('/api/sources/measure', { method: 'POST' });
+    const lines = (data.results ?? []).map((r) => {
+      const speed = r.kbps > 0 ? `<b>${r.kbps} KB/s</b>` : '不可用';
+      // 显示「实测下到多少数据 / 用了多久」，比单说一个数字可信
+      const detail = r.mb ? `（${r.mb} MB / ${r.seconds}s，${r.ok}/${r.total} 成功）` : '';
+      // ok/total 不一致时要标出来，不能让人以为全都下下来了
+      const partial = r.ok < r.total ? ` ⚠ ${r.total - r.ok} 个没成功` : '';
+      // 内容校验失败是最严重的：说明镜像给的文件是错的
+      const warn = r.badContent > 0 ? ` ⚠ ${r.badContent} 个文件内容不对` : '';
+      return `${r.name}：${speed}${detail}${partial}${warn}`;
+    });
+    note.innerHTML =
+      `<span class="mono">${lines.join('<br>')}</span>` +
+      `<br>推荐：<b>${escapeHtml(data.recommended ?? 'official')}</b>（已清空缓存，下次安装会重新决策）`;
+  } catch (e) {
+    note.innerHTML = original;
+    flashSettings('测速失败：' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '测速';
+  }
+}
+
+/* ---------------- 账号 ---------------- */
+
+const msLoginState = { polling: false, timer: null };
+
+const TYPE_LABEL = {
+  offline: '离线',
+  microsoft: '正版',
+  yggdrasil: '第三方',
+};
+
+/** 左侧卡片 + 主页人物同步当前账号 */
+function renderAccountCard() {
+  const acc = state.accounts.find((a) => a.key === state.selectedAccount) ?? null;
+  const nameEl = $('accountName');
+  const typeEl = $('accountType');
+
+  // 账号变了才重新拉皮肤，避免每次刷新都重建画布
+  const skinKey = acc ? `${acc.type}:${acc.uuid}` : null;
+  if (skinKey !== renderAccountCard._skinKey) {
+    renderAccountCard._skinKey = skinKey;
+    if (typeof window.refreshSkin === 'function') window.refreshSkin();
+  }
+  paintAccountAvatar(acc);
+  syncAccountActions(acc);
+
+  if (!acc) {
+    nameEl.textContent = '未登录';
+    typeEl.textContent = '点击添加账号';
+    typeEl.className = 'account-type';
+    state.username = 'Player';
+  } else {
+    nameEl.textContent = acc.name;
+    typeEl.className = 'account-type ' + (acc.type === 'microsoft' ? 'ms' : acc.type === 'yggdrasil' ? 'ygg' : '');
+    typeEl.textContent = acc.type === 'yggdrasil'
+      ? `第三方 · ${acc.serverName ?? ''}`
+      : TYPE_LABEL[acc.type] ?? acc.type;
+    state.username = acc.name;
+  }
+
+  if (typeof updateHome === 'function') updateHome();
+}
+
+/* ---------------- 头像：皮肤的脸，不是名字首字 ----------------
+   和主页同一个思路：从 64x64 皮肤图里裁 8x8 的脸，关掉插值放大，
+   保留像素硬边。拿不到皮肤（离线号/没登录/断网）就画官方史蒂夫的脸，
+   不退成名字首字母 —— 首字母不像头像。 */
+let avatarSeq = 0;
+let avatarObjectUrl = null;
+
+function paintAccountAvatar(acc) {
+  const canvas = $('accountAvatarCanvas');
+  const letter = $('accountAvatarLetter');
+  if (!canvas || !letter) return;
+
+  const mySeq = ++avatarSeq;
+
+  const useDefault = () => {
+    if (mySeq !== avatarSeq) return;
+    if (typeof window.paintDefaultFace === 'function') {
+      window.paintDefaultFace(canvas, { width: 64, height: 64 })
+        .then(() => {
+          if (mySeq !== avatarSeq) return;
+          canvas.hidden = false;
+          letter.hidden = true;
+        })
+        .catch(fallbackLetter);
+    } else {
+      fallbackLetter();
+    }
+  };
+
+  // 只有连默认贴图都加载失败才退首字母（基本不会发生）
+  const fallbackLetter = () => {
+    if (mySeq !== avatarSeq) return;
+    canvas.hidden = true;
+    letter.hidden = false;
+    letter.textContent = acc ? acc.name.slice(0, 1) : '?';
+  };
+
+  // 未登录：没有账号，直接给默认脸
+  if (!acc) {
+    useDefault();
+    return;
+  }
+
+  // 离线账号本来就没有官方皮肤，连请求都省了
+  if (acc.type !== 'microsoft' && acc.type !== 'yggdrasil') {
+    useDefault();
+    return;
+  }
+
+  fetch('/api/skin', { cache: 'no-cache' })
+    .then((res) => {
+      if (res.status === 204 || !res.ok) throw new Error('no skin');
+      return res.blob();
+    })
+    .then((blob) => {
+      if (mySeq !== avatarSeq) return;
+      const url = URL.createObjectURL(blob);
+      if (avatarObjectUrl) URL.revokeObjectURL(avatarObjectUrl);
+      avatarObjectUrl = url;
+
+      const img = new Image();
+      img.onload = () => {
+        if (mySeq !== avatarSeq) return;
+        // 和主页一致：裁 8x8 脸 + 帽子层，最近邻放大
+        paintFace(canvas, img, { width: 64, height: 64 });
+        canvas.hidden = false;
+        letter.hidden = true;
+      };
+      img.onerror = useDefault;
+      img.src = url;
+    })
+    .catch(useDefault);
+}
+
+/* 三个图标能点不能点，按当前账号情况定 */
+function syncAccountActions(acc) {
+  const skinBtn = document.querySelector('[data-acc-act="skin"]');
+  const switchBtn = document.querySelector('[data-acc-act="switch"]');
+  if (skinBtn) {
+    // 离线号没有可换的皮肤，点了也没地方去
+    skinBtn.disabled = !acc || acc.type === 'offline';
+    skinBtn.title = !acc
+      ? '先添加账号'
+      : acc.type === 'offline'
+        ? '离线账号没有皮肤，换正版或第三方账号才能换'
+        : '换装';
+  }
+  if (switchBtn) {
+    // 只有一个号也别锁死，点了就开账号弹窗加一个 —— 灰色按钮等于没做
+    switchBtn.disabled = false;
+    switchBtn.title = state.accounts.length < 2
+      ? '添加第二个账号后才能切换'
+      : '切换到下一个账号';
+  }
+
+  const editBtn = document.querySelector('[data-acc-act="edit"]');
+  if (editBtn) {
+    editBtn.disabled = !acc;
+    editBtn.title = !acc ? '先添加账号' : '编辑账号';
+  }
+}
+
+/* ---------------- 换装 ---------------- */
+
+/** 把一张皮肤图的脸画到画布上（预览用，和头像同一套裁剪） */
+function drawFace(canvas, img) {
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 8, 8, 8, 8, 0, 0, canvas.width, canvas.height);
+  if (img.naturalHeight >= 64) {
+    ctx.drawImage(img, 40, 8, 8, 8, 0, 0, canvas.width, canvas.height);
+  }
+}
+
+/** 把当前皮肤画到换装弹窗的预览上 */
+function refreshSkinPreview() {
+  const canvas = $('skinPreviewCanvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  fetch('/api/skin', { cache: 'no-cache' })
+    .then((res) => {
+      if (res.status === 204 || !res.ok) throw new Error('no skin');
+      return res.blob();
+    })
+    .then((blob) => {
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        drawFace(canvas, img);
+        URL.revokeObjectURL(url);
+      };
+      img.onerror = () => URL.revokeObjectURL(url);
+      img.src = url;
+    })
+    .catch(() => {
+      // 没皮肤就画个底色，别留白框
+      const ctx2 = canvas.getContext('2d');
+      ctx2.fillStyle = 'rgba(255,255,255,0.06)';
+      ctx2.fillRect(0, 0, canvas.width, canvas.height);
+    });
+}
+
+async function openSkinModal() {
+  const acc = state.accounts.find((a) => a.key === state.selectedAccount) ?? null;
+  if (!acc) return;
+
+  $('skinStatus').textContent = '';
+  $('skinPreviewName').textContent = acc.name;
+  $('skinModal').hidden = false;
+  refreshSkinPreview();
+
+  try {
+    const st = await api('/api/accounts/skin/state');
+    $('skinReset').disabled = !st.custom;
+    $('skinStatus').textContent = st.custom ? '当前用的是本地皮肤' : '';
+  } catch {
+    $('skinReset').disabled = true;
+  }
+}
+
+function closeSkinModal() {
+  $('skinModal').hidden = true;
+  $('skinStatus').textContent = '';
+}
+
+/** 选图 → 读成 base64 → 交给服务端存 */
+async function onSkinFileChosen(e) {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  e.target.value = '';   // 允许重复选同一张
+
+  if (file.type !== 'image/png') {
+    $('skinStatus').textContent = '只能是 PNG 格式';
+    return;
+  }
+  if (file.size > 900_000) {
+    $('skinStatus').textContent = '图片太大（要小于 900 KB）';
+    return;
+  }
+
+  $('skinStatus').textContent = '正在保存…';
+  try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result));
+      fr.onerror = () => reject(new Error('读取图片失败'));
+      fr.readAsDataURL(file);
+    });
+
+    await api('/api/accounts/skin', {
+      method: 'POST',
+      body: JSON.stringify({ data: dataUrl, model: 'classic' }),
+    });
+
+    $('skinStatus').textContent = '换好了';
+    $('skinReset').disabled = false;
+    refreshSkinPreview();
+    paintAccountAvatar(state.accounts.find((a) => a.key === state.selectedAccount) ?? null);
+    if (typeof window.refreshSkin === 'function') window.refreshSkin();
+  } catch (err) {
+    $('skinStatus').textContent = '保存失败：' + err.message;
+  }
+}
+
+async function resetSkin() {
+  $('skinStatus').textContent = '正在恢复…';
+  try {
+    await api('/api/accounts/skin', { method: 'DELETE' });
+    $('skinStatus').textContent = '已恢复官方皮肤';
+    $('skinReset').disabled = true;
+    refreshSkinPreview();
+    paintAccountAvatar(state.accounts.find((a) => a.key === state.selectedAccount) ?? null);
+    if (typeof window.refreshSkin === 'function') window.refreshSkin();
+  } catch (err) {
+    $('skinStatus').textContent = '恢复失败：' + err.message;
+  }
+}
+
+/* ---------------- 编辑账号 ---------------- */
+
+function openEditModal() {
+  const acc = state.accounts.find((a) => a.key === state.selectedAccount) ?? null;
+  if (!acc) return;
+
+  $('editName').value = acc.name;
+  $('editStatus').textContent = '';
+
+  const offline = acc.type === 'offline';
+  $('editSave').disabled = !offline;
+  $('editName').disabled = !offline;
+  $('editNote').textContent = offline
+    ? '离线账号改的就是启动器发给服务端的玩家名，改完立即生效'
+    : '正版/第三方账号的名字由认证服务器决定，本地改不了。想换名字要到对应网站改，或者在下面新加一个账号';
+
+  $('editModal').hidden = false;
+}
+
+function closeEditModal() {
+  $('editModal').hidden = true;
+  $('editStatus').textContent = '';
+}
+
+async function saveEditName() {
+  const name = $('editName').value.trim();
+  if (!/^[A-Za-z0-9_]{1,16}$/.test(name)) {
+    $('editStatus').textContent = '名字只能用字母/数字/下划线，最多 16 位';
+    return;
+  }
+
+  $('editStatus').textContent = '正在保存…';
+  try {
+    const data = await api('/api/accounts/rename', {
+      method: 'POST',
+      body: JSON.stringify({ key: state.selectedAccount, name }),
+    });
+    applyAccounts(data);
+    $('editStatus').textContent = '改好了';
+    setTimeout(closeEditModal, 600);
+  } catch (err) {
+    $('editStatus').textContent = '保存失败：' + err.message;
+  }
+}
+
+/* ---------------- 切换账号 ---------------- */
+
+async function cycleAccount() {
+  // 只有一个号时，点它就是去添加第二个，而不是装作没反应
+  if (state.accounts.length < 2) {
+    $('accountModal').hidden = false;
+    renderAccountList();
+    loadYggPresets();
+    return;
+  }
+  const idx = state.accounts.findIndex((a) => a.key === state.selectedAccount);
+  const next = state.accounts[(idx + 1) % state.accounts.length];
+  try {
+    await selectAccountByKey(next.key);
+  } catch (e) {
+    // 切换失败就保持原样，不弹窗打断
+  }
+}
+
+/** 账号弹窗里的列表 */
+function renderAccountList() {
+  const box = $('accList');
+  if (!state.accounts.length) {
+    box.innerHTML = '<div class="empty" style="padding:16px">还没有账号，在下面添加一个</div>';
+    return;
+  }
+
+  box.innerHTML = state.accounts.map((a) => {
+    const subCls = a.type === 'microsoft' ? 'ms' : a.type === 'yggdrasil' ? 'ygg' : '';
+    const sub = a.type === 'yggdrasil'
+      ? `第三方 · ${escapeHtml(a.serverName ?? a.server ?? '')}`
+      : TYPE_LABEL[a.type] ?? a.type;
+    return `
+      <div class="acc-row ${a.key === state.selectedAccount ? 'active' : ''}" data-key="${escapeHtml(a.key)}">
+        <div class="acc-row-avatar">${escapeHtml(a.name.slice(0, 1))}</div>
+        <div class="acc-row-main">
+          <div class="acc-row-name">${escapeHtml(a.name)}</div>
+          <div class="acc-row-sub ${subCls}">${sub}</div>
+        </div>
+        <button class="btn danger" data-delacc="${escapeHtml(a.key)}">删</button>
+      </div>`;
+  }).join('');
+
+  box.querySelectorAll('[data-key]').forEach((row) => {
+    row.addEventListener('click', async (e) => {
+      if (e.target.dataset.delacc) return;
+      await selectAccountByKey(row.dataset.key);
+    });
+  });
+
+  box.querySelectorAll('[data-delacc]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!confirm('确定删除这个账号？')) return;
+      const data = await api('/api/accounts/remove', {
+        method: 'POST',
+        body: JSON.stringify({ key: btn.dataset.delacc }),
+      });
+      applyAccounts(data);
+    });
+  });
+}
+
+/** 后端返回的账号数据统一落到 state */
+function applyAccounts(data) {
+  state.accounts = data.accounts ?? [];
+  state.selectedAccount = data.selected ?? null;
+  renderAccountCard();
+  renderAccountList();
+}
+
+async function selectAccountByKey(key) {
+  const data = await api('/api/accounts/select', {
+    method: 'POST',
+    body: JSON.stringify({ key }),
+  });
+  applyAccounts(data);
+}
+
+async function loadAccounts() {
+  try {
+    const data = await api('/api/accounts');
+    applyAccounts(data);
+  } catch (e) {
+    $('accountName').textContent = '未登录';
+    $('accountType').textContent = '读取失败，点击重试';
+  }
+}
+
+/** 切换账号弹窗里的三种模式 */
+function setAccountMode(mode) {
+  document.querySelectorAll('.acc-tab').forEach((t) => {
+    t.classList.toggle('active', t.dataset.mode === mode);
+  });
+  document.querySelectorAll('.acc-pane').forEach((p) => {
+    p.classList.toggle('active', p.id === 'pane-' + mode);
+  });
+}
+
+/* ---- 微软正版 ---- */
+
+function stopMsPolling() {
+  msLoginState.polling = false;
+  if (msLoginState.timer) {
+    clearTimeout(msLoginState.timer);
+    msLoginState.timer = null;
+  }
+}
+
+function resetMsPane() {
+  stopMsPolling();
+  $('msIdle').hidden = false;
+  $('msPending').hidden = true;
+  $('msCode').textContent = '--------';
+  $('msStatus').textContent = '等待你在浏览器完成授权…';
+}
+
+async function startMsLogin() {
+  $('msStart').disabled = true;
+  $('msStatus').textContent = '正在申请验证码…';
+  try {
+    const data = await api('/api/accounts/ms/start', { method: 'POST', body: '{}' });
+    $('msIdle').hidden = true;
+    $('msPending').hidden = false;
+    $('msCode').textContent = data.userCode;
+    $('msLink').textContent = data.verificationUri;
+    $('msLink').href = data.verificationUri;
+    $('msStatus').textContent = '等待你在浏览器完成授权…';
+
+    msLoginState.polling = true;
+    pollMsToken(data.interval ?? 5, data.expiresIn ?? 900);
+  } catch (e) {
+    $('msStatus').textContent = '申请失败：' + e.message;
+    $('msStart').disabled = false;
+  }
+}
+
+/** 按微软要求的 interval 轮询；pending 就继续等 */
+async function pollMsToken(intervalSec, expiresInSec) {
+  const deadline = Date.now() + expiresInSec * 1000;
+
+  const tick = async () => {
+    if (!msLoginState.polling) return;
+    if (Date.now() > deadline) {
+      stopMsPolling();
+      $('msStatus').textContent = '验证码超时，请重新点登录';
+      $('msStart').disabled = false;
+      return;
+    }
+
+    try {
+      const data = await api('/api/accounts/ms/poll', { method: 'POST', body: '{}' });
+      if (data.done) {
+        stopMsPolling();
+        applyAccounts(data);
+        resetMsPane();
+        $('msStart').disabled = false;
+        $('accountModal').hidden = true;
+        return;
+      }
+      $('msStatus').textContent = '等待你在浏览器完成授权…';
+    } catch (e) {
+      stopMsPolling();
+      $('msStatus').textContent = '登录失败：' + e.message;
+      $('msStart').disabled = false;
+      return;
+    }
+
+    msLoginState.timer = setTimeout(tick, intervalSec * 1000);
+  };
+
+  msLoginState.timer = setTimeout(tick, intervalSec * 1000);
+}
+
+/* ---- 第三方 ---- */
+
+/** 拉预设认证服务器列表（只需拉一次） */
+let yggPresetsLoaded = false;
+async function loadYggPresets() {
+  if (yggPresetsLoaded) return;
+  try {
+    const data = await api('/api/accounts/yggdrasil/presets');
+    const sel = $('yggPreset');
+    if (!sel) return;
+    for (const p of data.presets ?? []) {
+      const opt = document.createElement('option');
+      opt.value = p.url;
+      opt.textContent = p.name;
+      opt.title = p.note ?? '';
+      sel.appendChild(opt);
+    }
+    // 末尾留一个选项，提醒还能填自己的
+    const custom = document.createElement('option');
+    custom.value = '__custom__';
+    custom.textContent = '自定义（自建服务器）…';
+    sel.appendChild(custom);
+    yggPresetsLoaded = true;
+  } catch {
+    /* 拉不到就用手填，不阻止登录 */
+  }
+}
+
+/** 选预设 -> 填地址；选自定义 -> 清空让人自己填 */
+function onYggPresetChange() {
+  const sel = $('yggPreset');
+  const v = sel.value;
+  if (!v) return;
+  if (v === '__custom__') {
+    $('yggServer').value = '';
+    $('yggServer').focus();
+    $('yggMeta').textContent = '';
+    return;
+  }
+  $('yggServer').value = v;
+  $('yggMeta').textContent = '';
+  // 选中预设后直接探一次，让人马上知道这个站活着
+  checkYggServer();
+}
+
+async function checkYggServer() {
+  const server = $('yggServer').value.trim();
+  if (!server) return;
+  $('yggMeta').textContent = '检测中…';
+  try {
+    const m = await api('/api/accounts/yggdrasil/meta', {
+      method: 'POST',
+      body: JSON.stringify({ server }),
+    });
+    // 把实现名也带上：不同实现（如 Yggdrasil Connect）行为有差异，出问题时好看出来
+    const impl = m.implementation ? ` · ${m.implementation}` : '';
+    $('yggMeta').textContent = `✓ ${m.serverName}${impl}`;
+    if (m.registerUrl) $('yggNote').innerHTML =
+      `密码只发给你填的这个认证服务器，启动器不保存密码。没账号可以先去 <a href="${m.registerUrl}" target="_blank" rel="noopener">注册</a>`;
+  } catch (e) {
+    $('yggMeta').textContent = '✗ ' + e.message;
+  }
+}
+
+async function doYggLogin() {
+  const server = $('yggServer').value.trim();
+  const username = $('yggUser').value.trim();
+  const password = $('yggPass').value;
+
+  if (!server || !username || !password) {
+    $('yggMeta').textContent = '服务器、用户名、密码都要填';
+    return;
+  }
+
+  const btn = $('yggLogin');
+  btn.disabled = true;
+  $('yggMeta').textContent = '登录中…';
+
+  try {
+    const data = await api('/api/accounts/yggdrasil/login', {
+      method: 'POST',
+      body: JSON.stringify({ server, username, password }),
+    });
+    applyAccounts(data);
+    // 密码用完立刻从界面清掉，不留在 DOM 里
+    $('yggPass').value = '';
+    $('yggMeta').textContent = '✓ 登录成功';
+    $('accountModal').hidden = true;
+  } catch (e) {
+    $('yggMeta').textContent = '✗ ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ---- 离纾 ---- */
+
+async function addOfflineAccount() {
+  const name = $('offlineName').value.trim();
+  if (!name) {
+    $('offlineName').focus();
+    return;
+  }
+  const btn = $('offlineAdd');
+  btn.disabled = true;
+  try {
+    const data = await api('/api/accounts/offline', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    });
+    applyAccounts(data);
+    $('offlineName').value = '';
+    $('accountModal').hidden = true;
+  } catch (e) {
+    alert('添加失败：' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ---------------- 初始化 ---------------- */
+
+document.querySelectorAll('.nav-item').forEach((tab) => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.nav-item').forEach((t) => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach((p) => p.classList.remove('active'));
+    tab.classList.add('active');
+    $('panel-' + tab.dataset.tab).classList.add('active');
+  });
+});
+
+/** 切到指定面板（供「管理内容」等按钮调用） */
+function switchTab(name) {
+  const tab = document.querySelector(`.nav-item[data-tab="${name}"]`);
+  if (tab) tab.click();
+}
+
+$('launchBtn').addEventListener('click', () => {
+  if (state.selectedVersion) doLaunch(state.selectedVersion);
+});
+
+$('manageContent').addEventListener('click', () => {
+  if (state.selectedVersion) openContent(state.selectedVersion);
+});
+
+$('refreshInstalled').addEventListener('click', loadInstalled);
+$('refreshRemote').addEventListener('click', loadRemote);
+$('clearLogs').addEventListener('click', () => { $('logBox').textContent = ''; });
+
+/* ---- Fabric ---- */
+$('fabricGame').addEventListener('change', loadFabricLoaders);
+$('fabricInstall').addEventListener('click', doFabricInstall);
+
+$('storeSearch').addEventListener('click', () => doStoreSearch(0));
+$('storeQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') doStoreSearch(0); });
+$('storeType').addEventListener('change', () => {
+  // 换类型后从第一页重新搜
+  if (state.storeHits.length) doStoreSearch(0);
+});
+$('storeSort').addEventListener('change', () => {
+  if (state.storeHits.length) doStoreSearch(0);
+});
+$('storePrev').addEventListener('click', () => {
+  doStoreSearch(Math.max(0, state.storePage.offset - state.storePage.limit));
+});
+$('storeNext').addEventListener('click', () => {
+  doStoreSearch(state.storePage.offset + state.storePage.limit);
+});
+$('storeInstance').addEventListener('change', () => {
+  state.storeInstance = $('storeInstance').value;
+  updateStoreHint();
+});
+
+$('packSearch').addEventListener('click', () => doPackSearch(0));
+$('packQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') doPackSearch(0); });
+
+// 换来源（Modrinth / CurseForge）时直接从新来源拉一遍，不再要求手动再点搜索。
+// 旧结果必须先清空，否则两边的包会混在一起；清空后立刻发请求，
+// 中间的空窗由 renderSkeleton 的骨架屏盖住，看起来就是“切过去内容就来了”。
+$('packSource').addEventListener('change', () => {
+  state.packSource = $('packSource').value;
+  state.packs = [];
+  state.packPage = { offset: 0, limit: 24, total: 0 };
+  $('packPager').hidden = true;
+  $('packHint').textContent = state.packSource === 'curseforge'
+    ? 'CurseForge 通过国内镜像访问，需要网络能连到 mod.mcimirror.top'
+    : '整合包会创建独立实例，自带 mod 与配置';
+  // 搜索框空着也照样拉：后端空 q 返回当前来源的热门整合包
+  doPackSearch(0);
+});
+
+$('packSort').addEventListener('change', () => {
+  if (state.packs.length) doPackSearch(0);
+});
+$('packPrev').addEventListener('click', () => {
+  doPackSearch(Math.max(0, state.packPage.offset - state.packPage.limit));
+});
+$('packNext').addEventListener('click', () => {
+  doPackSearch(state.packPage.offset + state.packPage.limit);
+});
+
+/* ---- 追更 ---- */
+$('trackAdd').addEventListener('click', addTrack);
+$('trackQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') addTrack(); });
+$('trackCheck').addEventListener('click', checkTrackNow);
+
+$('closeContent').addEventListener('click', () => { $('contentPanel').hidden = true; });
+$('checkModUpdates').addEventListener('click', checkModUpdates);
+$('settingsSave').addEventListener('click', saveSettingsForm);
+$('settingsReset').addEventListener('click', resetSettingsForm);
+$('rescanJava').addEventListener('click', rescanJava);
+$('btnTestSource').addEventListener('click', testSources);
+$('setMemMin').addEventListener('input', updateMemTotal);
+$('setMemMax').addEventListener('input', updateMemTotal);
+// 透明度滑块：拖的时候实时预览，不用等点保存。
+$('setGlass').addEventListener('input', (e) => applyGlassAlpha(Number(e.target.value)));
+
+// 下载/安装页收起与展开。
+// 收起后底部那条还在，点它就能把整页叫回来（PCL 的习惯）。
+$('installCollapse').addEventListener('click', () => setInstallCollapsed(true));
+
+// 取消：先问一句，别让人手滑点掉跑到一半的下载。
+// 确认后再调接口；真正的收尾交给 SSE 的 install-cancelled 事件，
+// 不在这里直接改界面状态 —— 否则服务端还没停、界面已经说“已取消”了。
+$('installCancel').addEventListener('click', async (ev) => {
+  ev.stopPropagation();
+  const btn = ev.currentTarget;
+  if (btn.disabled || btn.classList.contains('busy')) return;
+
+  const ok = window.confirm('确定取消这次下载吗？\n已下载完的文件会保留，下次接着下。');
+  if (!ok) return;
+
+  btn.classList.add('busy');
+  btn.disabled = true;
+  try {
+    await api('/api/install/cancel', { method: 'POST' });
+  } catch (e) {
+    btn.classList.remove('busy');
+    btn.disabled = false;
+    // 409 = 已经没在跑了（可能刚好装完），当成正常情况处理
+    if (!/没有进行中的任务|已经在收尾/.test(e.message)) {
+      updateProgress({ stage: 'error', message: `取消失败：${e.message}` });
+    }
+  }
+});
+$('progressBar').addEventListener('click', (e) => {
+  // 只处理“收起状态下点底部条”；有条在跑才展开
+  if (!installCollapsed) return;
+  if (!e.target.closest('.progress-bar')) return;
+  setInstallCollapsed(false);
+});
+$('modalClose').addEventListener('click', () => { $('versionModal').hidden = true; });
+$('versionModal').addEventListener('click', (e) => {
+  if (e.target === $('versionModal')) $('versionModal').hidden = true;
+});
+
+/* ---- 账号 ---- */
+$('accountCard').addEventListener('click', (e) => {
+  // 点的是图标条里的按钮，别再弹账号弹窗
+  if (e.target.closest && e.target.closest('.acc-act')) return;
+  $('accountModal').hidden = false;
+  renderAccountList();
+  // 预设列表按需拉，拉不到也不影响手填地址
+  loadYggPresets();
+});
+
+/* 图标条上的三个按钮：换装 / 编辑 / 切换 */
+document.querySelectorAll('.acc-act').forEach((btn) => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (btn.disabled) return;
+    const act = btn.dataset.accAct;
+    if (act === 'skin') openSkinModal();
+    else if (act === 'edit') openEditModal();
+    else if (act === 'switch') cycleAccount();
+  });
+});
+$('accountClose').addEventListener('click', () => {
+  stopMsPolling();
+  resetMsPane();
+  $('msStart').disabled = false;
+  $('accountModal').hidden = true;
+});
+$('accountModal').addEventListener('click', (e) => {
+  if (e.target === $('accountModal')) {
+    stopMsPolling();
+    resetMsPane();
+    $('msStart').disabled = false;
+    $('accountModal').hidden = true;
+  }
+});
+
+document.querySelectorAll('.acc-tab').forEach((t) => {
+  t.addEventListener('click', () => setAccountMode(t.dataset.mode));
+});
+
+/* ---- 换装弹窗 ---- */
+$('skinClose').addEventListener('click', closeSkinModal);
+$('skinModal').addEventListener('click', (e) => {
+  if (e.target === $('skinModal')) closeSkinModal();
+});
+$('skinPick').addEventListener('click', () => $('skinFile').click());
+$('skinFile').addEventListener('change', onSkinFileChosen);
+$('skinReset').addEventListener('click', resetSkin);
+
+/* ---- 编辑账号弹窗 ---- */
+$('editClose').addEventListener('click', closeEditModal);
+$('editModal').addEventListener('click', (e) => {
+  if (e.target === $('editModal')) closeEditModal();
+});
+$('editSave').addEventListener('click', saveEditName);
+$('editName').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveEditName(); });
+
+$('offlineAdd').addEventListener('click', addOfflineAccount);
+$('offlineName').addEventListener('keydown', (e) => { if (e.key === 'Enter') addOfflineAccount(); });
+
+$('yggPreset').addEventListener('change', onYggPresetChange);
+
+$('msStart').addEventListener('click', startMsLogin);
+$('msOpen').addEventListener('click', () => {
+  const url = $('msLink').href;
+  window.open(url, '_blank', 'noopener');
+});
+$('msCancel').addEventListener('click', async () => {
+  stopMsPolling();
+  resetMsPane();
+  $('msStart').disabled = false;
+});
+
+$('yggCheck').addEventListener('click', checkYggServer);
+$('yggLogin').addEventListener('click', doYggLogin);
+$('yggPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') doYggLogin(); });
+
+connectEvents();
+loadTrack();
+// 注意：loadInstalled / loadSettings / loadAccounts 不要在这里单独调，
+// 它们在下面的启动进度里各发起一次（结果同时喂给进度条和页面）。
+// 两处都调会重复请求，还会让进度多走一遍。
+
+
+/* ---------------- 启动数据预加载 ----------------
+   启动动画已经搬到独立透明窗口（electron/main.js 的 createSplashWindow），
+   主页面里再没有任何 splash 元素，所以这里不需要"退场"逻辑。
+
+   但三个请求还是要在这里发起：主窗口虽然不显示，也在后台加载，
+   等动画播完揭开时就是有内容的一片，而不是空页。
+*/
+loadInstalled();
+loadSettings();
+loadAccounts();
+
+
+/* ---------------- 磨砂背景 ----------------
+   浏览器拿不到系统壁纸，靠服务端 /api/wallpaper 读当前主题壁纸。
+   取不到（204 / 报错）就标成 fallback，用暗色渐变顶上，
+   这时视觉效果和原来的纯色主题接近，不会露出空白。
+*/
+function initWallpaper() {
+  const el = document.getElementById('wallpaper');
+  if (!el) return;
+
+  const probe = new Image();
+  probe.onload = () => {
+    el.style.setProperty('--wallpaper', 'url("/api/wallpaper")');
+    el.classList.remove('fallback');
+  };
+  probe.onerror = () => {
+    el.classList.add('fallback');
+  };
+  probe.src = '/api/wallpaper?t=' + Date.now();
+}
+
+initWallpaper();
+
+
+/* ---------------- 窗口控制（只在 Electron 壳里生效） ----------------
+   浏览器里 window.mcWin 不存在，这段直接退回并把按钮藏起来，
+   否则网页版会多出三个点不动的按钮。
+*/
+function initWindowControls() {
+  const api = window.mcWin;
+  const ctrls = $('winCtrls');
+
+  if (!api) {
+    document.body.classList.add('no-shell');
+    return;
+  }
+
+  /* 窗口背面是 DWM 亚克力时，关掉自己画的那张假壁纸。
+     真模糊已经由系统做在窗口背面了，再贴一张模糊壁纸图
+     等于把它盖住 —— 看起来又在看图片，不在看桌面。 */
+  if (api.material && api.material !== 'none') {
+    document.body.classList.add(api.material);
+  }
+
+  if (ctrls) ctrls.hidden = false;
+
+  $('winMin')?.addEventListener('click', () => api.minimize());
+  $('winClose')?.addEventListener('click', () => api.close());
+  $('winMax')?.addEventListener('click', () => api.toggleMax());
+
+  // 最大化时去掉外圈留白，否则边上会露出一圈透明缝
+  const applyMax = (isMax) => {
+    document.body.classList.toggle('maximized', isMax);
+    const btn = $('winMax');
+    if (btn) {
+      btn.title = isMax ? '还原' : '最大化';
+      btn.setAttribute('aria-label', btn.title);
+    }
+  };
+
+  api.onMaximizedChange(applyMax);
+  Promise.resolve(api.isMaximized()).then(applyMax);
+}
+
+initWindowControls();
