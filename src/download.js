@@ -79,6 +79,108 @@ const AUTO_STALL_MS = 3000;
 const PROBE_BYTES = 1024 * 1024;
 const PROBE_TIMEOUT_MS = 3000;
 const STALL_TIMEOUT_MS = 30_000;
+const REQUEST_LIMIT = 66;
+
+const requestStats = {
+  active: 0,
+  peak: 0,
+  samples: 0,
+  activeSum: 0,
+  byHost: {},
+  rangedBatches: 0,
+  maxSegmentsPerBatch: 0,
+  limit429: 0,
+  timeouts: 0,
+  stalls: 0,
+  waiting: 0,
+};
+const requestQueue = [];
+
+function resetRequestStats() {
+  requestStats.active = 0;
+  requestStats.peak = 0;
+  requestStats.samples = 0;
+  requestStats.activeSum = 0;
+  requestStats.byHost = {};
+  requestStats.rangedBatches = 0;
+  requestStats.maxSegmentsPerBatch = 0;
+  requestStats.limit429 = 0;
+  requestStats.timeouts = 0;
+  requestStats.stalls = 0;
+  requestStats.waiting = 0;
+  requestQueue.length = 0;
+}
+
+function hostStats(host) {
+  if (!requestStats.byHost[host]) {
+    requestStats.byHost[host] = { active: 0, peak: 0, samples: 0, activeSum: 0 };
+  }
+  return requestStats.byHost[host];
+}
+
+async function acquireRequestSlot(host) {
+  if (requestStats.active >= REQUEST_LIMIT) {
+    requestStats.waiting++;
+    await new Promise((resolve) => requestQueue.push({ host, resolve }));
+  }
+  requestStats.active++;
+  const h = hostStats(host || '?');
+  h.active++;
+  h.peak = Math.max(h.peak, h.active);
+  requestStats.peak = Math.max(requestStats.peak, requestStats.active);
+}
+
+function releaseRequestSlot(host) {
+  requestStats.active = Math.max(0, requestStats.active - 1);
+  const h = hostStats(host || '?');
+  h.active = Math.max(0, h.active - 1);
+  const next = requestQueue.shift();
+  if (next) {
+    requestStats.waiting = Math.max(0, requestStats.waiting - 1);
+    // 交棒给排队者，下一轮由它的 acquire 路径继续计数。
+    next.resolve();
+  }
+}
+
+let requestSampler = null;
+function startRequestSampler() {
+  if (requestSampler) return;
+  requestSampler = setInterval(() => {
+    requestStats.samples++;
+    requestStats.activeSum += requestStats.active;
+    for (const h of Object.values(requestStats.byHost)) {
+      h.samples++;
+      h.activeSum += h.active;
+    }
+  }, 200);
+  requestSampler.unref?.();
+}
+function stopRequestSampler() {
+  if (requestSampler) clearInterval(requestSampler);
+  requestSampler = null;
+}
+
+export function getRequestMetrics() {
+  const average = requestStats.samples ? +(requestStats.activeSum / requestStats.samples).toFixed(2) : 0;
+  const byHost = {};
+  for (const [host, h] of Object.entries(requestStats.byHost)) {
+    byHost[host] = {
+      peak: h.peak,
+      average: h.samples ? +(h.activeSum / h.samples).toFixed(2) : 0,
+    };
+  }
+  return {
+    limit: REQUEST_LIMIT,
+    peak: requestStats.peak,
+    average,
+    byHost,
+    rangedBatches: requestStats.rangedBatches,
+    maxSegmentsPerBatch: requestStats.maxSegmentsPerBatch,
+    limit429: requestStats.limit429,
+    timeouts: requestStats.timeouts,
+    stalls: requestStats.stalls,
+  };
+}
 
 const sourceAffinityPath = path.join(os.homedir(), '.mclauncher', 'source-affinity.json');
 let sourceAffinity = {};
@@ -446,6 +548,8 @@ let currentJob = null; // { ctrl, reason, files:Set, dirs:[] }
 /** 开一个新任务，返回前一个若存在则先收尾 */
 export function startJob() {
   endJob();
+  resetRequestStats();
+  startRequestSampler();
   const preferred = getSettings().downloadSource === 'bmclapi' ? 'bmclapi' : 'official';
   sourceState = {
     preferred,
@@ -506,6 +610,7 @@ async function mkdirTracked(dir) {
 export { mkdirTracked };
 
 export function endJob() {
+  stopRequestSampler();
   stopSourceMonitor();
   if (sourceState) {
     abortActiveTransfers('job-end');
@@ -577,17 +682,27 @@ export function cancelJob(reason = '用户取消') {
 }
 
 /** 单次 GET，跟随重定向。全局取消和单个 transfer 的切源中断都能生效 */
-function requestOnce(url, { timeout = 30000, headers = {}, redirects = 0, deadlineMs = 0, signal: extraSignal = null } = {}) {
-  if (isCancelled()) return Promise.reject(new CancelledError());
+async function requestOnce(url, { timeout = 30000, headers = {}, redirects = 0, deadlineMs = 0, signal: extraSignal = null } = {}) {
+  if (isCancelled()) throw new CancelledError();
+
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    throw new Error(`无效 URL: ${url}`);
+  }
+  const host = u.hostname;
+  await acquireRequestSlot(host);
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    releaseRequestSlot(host);
+  };
 
   return new Promise((resolve, reject) => {
-    let u;
-    try {
-      u = new URL(url);
-    } catch {
-      return reject(new Error(`无效 URL: ${url}`));
-    }
     const mod = u.protocol === 'http:' ? http : https;
+    let hasResponse = false;
 
     const req = mod.request(
       {
@@ -600,10 +715,14 @@ function requestOnce(url, { timeout = 30000, headers = {}, redirects = 0, deadli
         timeout,
       },
       (res) => {
+        hasResponse = true;
         const { statusCode, headers: h } = res;
+        res.once('close', release);
+        res.once('end', release);
+        if (statusCode === 429) requestStats.limit429++;
         if (statusCode >= 300 && statusCode < 400 && h.location) {
           res.resume();
-          if (redirects >= 5) return reject(new Error('重定向次数过多'));
+          if (redirects >= 5) { release(); reject(new Error('重定向次数过多')); return; }
           const next = new URL(h.location, url).toString();
           return requestOnce(next, { timeout, headers, redirects: redirects + 1, deadlineMs, signal: extraSignal })
             .then(resolve)
@@ -634,9 +753,11 @@ function requestOnce(url, { timeout = 30000, headers = {}, redirects = 0, deadli
     });
 
     req.on('timeout', () => {
+      requestStats.timeouts++;
       req.destroy(new Error('TIMEOUT'));
     });
-    req.on('error', reject);
+    req.on('error', (e) => { release(); reject(e); });
+    req.on('close', () => { if (!hasResponse) release(); });
     req.end();
   });
 }
@@ -707,6 +828,8 @@ async function downloadRanged(url, destPath, size, sha1, source, sourceKey) {
     const end = Math.min(size - 1, start + chunk - 1);
     if (start <= end) segs.push({ start, end, path: `${partPath}.${i}` });
   }
+  requestStats.rangedBatches++;
+  requestStats.maxSegmentsPerBatch = Math.max(requestStats.maxSegmentsPerBatch, segs.length);
   const ctrl = new AbortController();
   const transfer = {
     controller: ctrl,
@@ -1079,6 +1202,7 @@ export async function downloadFile(url, destPath, opts = {}) {
         rememberSourceFailure(sourceKey, target);
         const stalled = String(e?.message ?? '').includes('STALL_TIMEOUT');
         if (stalled) {
+          requestStats.stalls++;
           if (sourceState) sourceState.lastTimeoutAt = Date.now();
           markDomainBad(target);
           logDownload(`[下载停滞] ${hostLabel(target)} 30 秒无字节增长，断开并换候选`);
