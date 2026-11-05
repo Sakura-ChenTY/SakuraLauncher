@@ -321,6 +321,115 @@
     }
   }
 
+  function showFixModal({ title, lines = [], confirmText = '', onConfirm = null, rollbackId = null }) {
+    document.getElementById('assistantFixModal')?.remove();
+    const box = document.createElement('div');
+    box.id = 'assistantFixModal';
+    box.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.42);display:flex;align-items:center;justify-content:center;padding:20px;';
+    const card = document.createElement('div');
+    card.style.cssText = 'width:min(460px,94vw);background:var(--panel,#1d1f24);color:var(--text,#eee);border:1px solid rgba(255,255,255,.16);border-radius:14px;padding:18px;box-shadow:0 20px 70px rgba(0,0,0,.45);';
+    card.innerHTML = `<div style="font-weight:700;margin-bottom:12px">${escapeHtml(title)}</div>`
+      + lines.map((x) => `<div style="font-size:13px;line-height:1.8">${escapeHtml(x)}</div>`).join('')
+      + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px"></div>';
+    const row = card.lastElementChild;
+    const close = () => box.remove();
+    if (rollbackId) {
+      const undo = document.createElement('button');
+      undo.className = 'btn ghost'; undo.textContent = '撤回';
+      undo.onclick = async () => {
+        undo.disabled = true;
+        try {
+          const r = await api('/api/assistant/fixes/rollback', { method: 'POST', body: JSON.stringify({ rollbackId }) });
+          close();
+          showAssistantToast(r.ok ? '已撤回。' : '撤回未完全成功，请查看修复记录。', { timeout: 6000 });
+        } catch (e) {
+          undo.disabled = false;
+          showAssistantToast('撤回失败：' + e.message, { timeout: 6000 });
+        }
+      };
+      row.appendChild(undo);
+    }
+    const cancel = document.createElement('button');
+    cancel.className = 'btn ghost'; cancel.textContent = rollbackId ? '关闭' : '取消';
+    cancel.onclick = close;
+    row.appendChild(cancel);
+    if (onConfirm) {
+      const ok = document.createElement('button');
+      ok.className = 'btn'; ok.textContent = confirmText || '确认';
+      ok.onclick = () => { close(); onConfirm(); };
+      row.appendChild(ok);
+    }
+    box.appendChild(card);
+    box.addEventListener('click', (ev) => { if (ev.target === box) close(); });
+    document.body.appendChild(box);
+  }
+
+  async function openFixPreview({ includeServerPort = false, serverPort = null, includeRestart = false } = {}) {
+    try {
+      const d = await api('/api/assistant/fixes/preview', {
+        method: 'POST',
+        body: JSON.stringify({
+          versionId: targetVersion(),
+          includeServerPort,
+          serverPort,
+          includeRestart,
+        }),
+      });
+      if (!d.actions?.length) {
+        showAssistantToast('现在没有可修复项。', { timeout: 4500 });
+        return;
+      }
+      showFixModal({
+        title: '一键修复预览',
+        lines: d.actions.map((a) => `${a.label}: ${a.before} → ${a.after}`),
+        confirmText: '应用',
+        onConfirm: async () => {
+          try {
+            const r = await api('/api/assistant/fixes/apply', {
+              method: 'POST',
+              body: JSON.stringify({ token: d.token }),
+            });
+            showFixModal({
+              title: r.ok ? '修复完成' : '修复未全部成功',
+              lines: (r.results || []).map((a) => `${a.label}: ${a.ok ? '成功' : '失败'}${a.error ? `（${a.error}）` : ''}`),
+              rollbackId: r.rollbackId,
+            });
+          } catch (e) {
+            showAssistantToast('修复失败：' + e.message, { timeout: 6500 });
+          }
+        },
+      });
+    } catch (e) {
+      showAssistantToast('生成预览失败：' + e.message, { timeout: 6500 });
+    }
+  }
+
+  async function openFixServerPort() {
+    const value = window.prompt('把 server.properties 的 server-port 改成多少？');
+    const port = Number(value);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      if (value !== null) showAssistantToast('端口需要是 1-65535。', { timeout: 4500 });
+      return;
+    }
+    await openFixPreview({ includeServerPort: true, serverPort: port });
+  }
+
+  async function openFixRecent() {
+    try {
+      const d = await api('/api/assistant/fixes');
+      if (!d.fixes?.length) {
+        showAssistantToast('还没有修复记录。', { timeout: 4000 });
+        return;
+      }
+      showFixModal({
+        title: '最近修复',
+        lines: d.fixes.map((x) => `${x.at} ${x.action}: ${x.before} → ${x.after} ${x.ok ? '成功' : '失败'}`),
+      });
+    } catch (e) {
+      showAssistantToast('读取修复记录失败：' + e.message, { timeout: 6000 });
+    }
+  }
+
   async function runAction(action) {
     if (!action) return;
     if (action.id === 'memory.set') {
@@ -651,6 +760,10 @@
         const action = btn.dataset.moreAction;
         if (action === 'analyze') runAnalyze();
         else if (action === 'diag') openDiagnosticPreview();
+        else if (action === 'fix') openFixPreview();
+        else if (action === 'fix-restart') openFixPreview({ includeRestart: true });
+        else if (action === 'fix-port') openFixServerPort();
+        else if (action === 'fix-recent') openFixRecent();
         else if (action === 'new') newSession();
       });
     });

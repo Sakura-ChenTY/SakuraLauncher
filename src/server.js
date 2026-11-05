@@ -84,6 +84,12 @@ import {
 import { installCurseForgePack, previewCurseForgePack } from './cfpack.js';
 import { createSession, getSession, chatSession } from './assistant-session.js';
 import { collectRuntimeSnapshot } from './runtime-snapshot.js';
+import {
+  previewAssistantFixes,
+  applyAssistantFixes,
+  rollbackAssistantFixes,
+  listAssistantFixes,
+} from './assistant-fixes.js';
 import { detectSymptom, guessSymptom, collectSymptomContext, SYMPTOMS, IMPLEMENTATION_NOTES } from './assistant-diagnostics.js';
 import { previewDiagnosticPackage, createDiagnosticPackage, createCrashDiagnosticPackage, sanitizeDiagnostic } from './diagnostic-package.js';
 import { snapshotCrashArtifacts, newCrashArtifacts } from './crash-watch.js';
@@ -3997,6 +4003,68 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         return json(res, 400, { error: e.message });
       }
+    }
+
+    if (p === '/api/assistant/fixes/preview' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (getSettings().assistantRuntimeState === false) {
+        return json(res, 400, { error: '运行时状态读取已关闭' });
+      }
+      try {
+        const versionId = String(body.versionId || state.running?.versionId || state.lastLaunch?.versionId || '').trim();
+        const snapshot = collectRuntimeSnapshot({
+          state,
+          room: getRoomState(),
+          online: onlineSnapshot(),
+        });
+        const result = previewAssistantFixes({
+          snapshot,
+          gameDir: state.gameDir,
+          versionId,
+          room: getRoomState(),
+          includeServerPort: Boolean(body.includeServerPort),
+          serverPort: body.serverPort,
+          includeRestart: Boolean(body.includeRestart),
+        });
+        return json(res, 200, result);
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
+    if (p === '/api/assistant/fixes/apply' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (getSettings().assistantRuntimeState === false) {
+        return json(res, 400, { error: '运行时状态读取已关闭' });
+      }
+      try {
+        const snapshot = collectRuntimeSnapshot({
+          state,
+          room: getRoomState(),
+          online: onlineSnapshot(),
+        });
+        const result = await applyAssistantFixes({
+          token: String(body.token || ''),
+          selectedIds: Array.isArray(body.selectedIds) ? body.selectedIds : [],
+          snapshot,
+        });
+        return json(res, 200, result);
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
+    if (p === '/api/assistant/fixes/rollback' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        return json(res, 200, await rollbackAssistantFixes(String(body.rollbackId || '')));
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
+    if (p === '/api/assistant/fixes' && req.method === 'GET') {
+      return json(res, 200, { fixes: listAssistantFixes(5) });
     }
 
     if (p === '/api/assistant/auto' && req.method === 'POST') {
