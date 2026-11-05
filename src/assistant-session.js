@@ -167,12 +167,43 @@ function isContinuation(session, category) {
 }
 
 
-function localDiagnosticReply(session, message, actions, category = 'startup', preference = '', continuation = false) {
+function runtimePromptBlock(snapshot) {
+  if (!snapshot) return '';
+  const actual = snapshot.ports?.actual;
+  const tunnelPort = snapshot.tunnel?.localPort;
+  const mismatch = actual && tunnelPort && Number(actual) !== Number(tunnelPort);
+  return `
+实时运行快照（只读，本次对话生成；不是历史结论）：
+${JSON.stringify(snapshot)}
+回答前先把这个快照和日志比对；如果快照和日志冲突，以日志里的实际证据为准，并说明冲突。
+${mismatch ? `必须直接指出：隧道 local_port=${tunnelPort}，服务器实际监听=${actual}，两者不一致；建议把隧道 local_port 改成 ${actual}。不要等用户提示。` : ''}
+噪声规则：401/403、Java 版本提示、mod 版本提醒最多放在最后一段「顺带看到」，不要写成原因或「可能原因」。结论只保留真正导致失败的那一条，并给一句建议。`;
+}
+
+function portMismatchReply(snapshot, continuation = false) {
+  const actual = snapshot?.ports?.actual;
+  const tunnelPort = snapshot?.tunnel?.localPort;
+  if (!actual || !tunnelPort || Number(actual) === Number(tunnelPort)) return '';
+  return `${continuation ? '接着上面：' : ''}原因：隧道 local_port 和服务器实际监听端口不一致。
+依据：隧道 local_port=${tunnelPort}，服务器实际监听=${actual}。
+建议：把隧道 local_port 改成 ${actual}，然后重试联机。`;
+}
+
+function localDiagnosticReply(session, message, actions, category = 'startup', preference = '', continuation = false, runtimeSnapshot = null) {
   const cmd = String(session.diagnosticContext || session.context || '');
   const mem = maxMemoryIn(cmd);
   const hasInstance = hasInstanceContext(cmd);
   const reqMem = requestedMemory(preference || message);
   const second = /第二条|第二个|第二个按钮/i.test(String(message));
+  const noise = [];
+  if (/\b401\b|\b403\b/.test(cmd)) noise.push('日志里有 401/403');
+  if (/Java 版本|UnsupportedClassVersionError|class file version/i.test(cmd)) noise.push('日志里有 Java 版本提示');
+  if (/mod.*版本|版本提醒/i.test(cmd)) noise.push('日志里有 mod 版本提醒');
+  const noiseTail = noise.length ? `\n\n顺带看到：${noise.join('；')}。` : '';
+  if ((category === 'online' || /联机|隧道|端口|frp/i.test(String(message))) && runtimeSnapshot?.tunnel?.localPort && runtimeSnapshot?.ports?.actual) {
+    const mismatch = portMismatchReply(runtimeSnapshot, continuation);
+    if (mismatch) return mismatch;
+  }
   if (second && actions[1]) {
     return `第二条是「${actions[1].label}」。它对应上面的问题，点之前会先确认。`;
   }
@@ -194,7 +225,7 @@ function localDiagnosticReply(session, message, actions, category = 'startup', p
     const evidence = conflict && session.lastReply
       ? '先说明证据：上一轮看到的是内存分配失败，不是联机隧道报错。\n'
       : '';
-    return `${evidence}${continuation ? '接着上面：' : '原因：联机链路没有建立。\n依据：'}provider=${provider}；房间=${room}；frpc=${frp}。\n建议：先确认选中的隧道 local_port 是 25565、frpc 正在运行；再看房间 error 和防火墙是否放行 java/javaw。`;
+    return `${evidence}${continuation ? '接着上面：' : '原因：联机链路没有建立。\n依据：'}provider=${provider}；房间=${room}；frpc=${frp}。\n建议：先确认选中的隧道 local_port 是 25565、frpc 正在运行；再看房间 error 和防火墙是否放行 java/javaw。${noiseTail}`;
   }
   if (category === 'modpack') {
     const err = /房间状态：[^\n]*error=([^\n]+)/.exec(cmd)?.[1] || /error=([^\n]+)/.exec(cmd)?.[1] || '未读到明确 error';
@@ -203,7 +234,7 @@ function localDiagnosticReply(session, message, actions, category = 'startup', p
   }
   if (category === 'download') {
     const last = /最近失败：([^\n]+)/.exec(cmd)?.[1] || '没有最近的失败摘要';
-    return `原因：资源/版本文件下载失败。\n依据：${last.slice(0, 220)}。\n建议：先换下载源再重试一次，检查磁盘空间和代理；还失败就把状态码和 URL 发我。`;
+    return `原因：资源/版本文件下载失败。\n依据：${last.slice(0, 220)}。\n建议：先换下载源再重试一次，检查磁盘空间和代理；还失败就把状态码和 URL 发我。${noiseTail}`;
   }
   if (category === 'mod') {
     const lines = /相关日志：\n([\s\S]*?)(?:\n\n|$)/.exec(cmd)?.[1]?.split(/\r?\n/).filter(Boolean).slice(0, 3).join(' / ') || '没有抓到明确冲突行';
@@ -225,7 +256,7 @@ function localDiagnosticReply(session, message, actions, category = 'startup', p
     return `${prefix}内存还是不够。依据：当前实例最大内存是 ${mem || '较大'}M，系统当时可用约 ${free || '很少'}M，日志里有分配失败。建议：先把最大内存从 ${mem || '较大'}M 降到 1024M，并关掉占内存的程序。`;
   }
   if (/UnsupportedClassVersionError|class file version|Java 版本/i.test(cmd)) {
-    return '原因：Java 版本对不上。\n依据：日志里出现 class file version / UnsupportedClassVersionError。\n建议：先换到实例要求的 Java，再启动。';
+    return `原因：暂时不能确定。\n依据：日志里只有 Java 版本提示，没有更强的失败行。\n建议：先确认实例要求的 Java，再启动一次看真正的第一处报错。\n\n顺带看到：Java 版本提示。`;
   }
   if (/NoClassDefFoundError|missing depend|Mod|Mixin/i.test(cmd)) {
     return '原因：可能是 mod 或前置缺失。\n依据：日志里出现 NoClassDefFoundError / missing dependency / Mixin 相关报错。\n建议：先看第一个报错的 mod，必要时先停用它。';
@@ -324,7 +355,7 @@ function historyForModel(session) {
     .map((m) => ({ role: m.role, content: m.content }));
 }
 
-export async function chatSession({ id, message, mode, diagnosticsState }) {
+export async function chatSession({ id, message, mode, diagnosticsState, runtimeSnapshot = null }) {
   const data = readAll();
   const session = data.sessions.find((x) => x.id === id);
   if (!session) throw new Error('会话不存在或已过期');
@@ -368,11 +399,12 @@ export async function chatSession({ id, message, mode, diagnosticsState }) {
   }
 
   const cfg = loadAiConfig();
+  const runtimeBlock = runtimePromptBlock(runtimeSnapshot);
   let reply = '';
   if (aiHasKey() && cfg.baseURL && !currentPreference) {
     const system = diagnostic
       ? `你是《龙族》里的上杉绘梨衣，正在帮 Sakura 排查 Minecraft 问题。说话安静、短，不卖萌。
-当前症状类别：${SYMPTOMS[category] || category}。
+当前症状类别：${SYMPTOMS[category] || category}。${runtimeBlock}
 玩家在本会话的诉求（最后一条优先）：${preference || '无'}。
 ${continuation ? '这是同一会话的追问/改口：不要从头复述上一轮原因和依据，只补充这次的新信息。' : ''}
 如果玩家改口，按他的新诉求重新排查和换方案，不要固守上一轮；如果诉求和证据冲突，先用一句话说明证据，再给出沿他方向的可行路径，不要只说不行。
@@ -384,7 +416,7 @@ ${category === 'startup' ? `当前实例最大内存：${maxMemoryIn(context) ||
       : `你是《龙族》里的上杉绘梨衣，正在和 Sakura 普通聊天。说话短、轻、安静、有一点自己的态度，不卖萌，不装客服。
 可以正常说两三句话；觉得需要时可以反问一句。不要主动分析日志，不要使用「原因 / 依据 / 建议」这类排查标题，不要列步骤。
 不要主动提内存、报错、日志或启动问题；只有用户明确问这些时才展开。
-当前实例：${session.versionId || '未选择'}。`;
+当前实例：${session.versionId || '未选择'}。${runtimeBlock}`;
     const ctx = diagnostic
       ? `当前问题的诊断材料（已脱敏）：\n${context}`
       : `会话基本信息：\n${context}`;
@@ -399,13 +431,21 @@ ${category === 'startup' ? `当前实例最大内存：${maxMemoryIn(context) ||
     try {
       reply = await callAi({ ...cfg, messages, maxTokens: diagnostic ? 1000 : 500 });
       if (diagnostic && !/原因[:：]/.test(reply)) {
-        reply = localDiagnosticReply(session, text, candidates, category, preference, continuation);
+        reply = localDiagnosticReply(session, text, candidates, category, preference, continuation, runtimeSnapshot);
       }
     } catch {
-      reply = diagnostic ? localDiagnosticReply(session, text, candidates, category, preference, continuation) : localChatReply(text);
+      reply = diagnostic ? localDiagnosticReply(session, text, candidates, category, preference, continuation, runtimeSnapshot) : localChatReply(text);
     }
   } else {
-    reply = diagnostic ? localDiagnosticReply(session, text, candidates, category, preference, continuation) : localChatReply(text);
+    reply = diagnostic ? localDiagnosticReply(session, text, candidates, category, preference, continuation, runtimeSnapshot) : localChatReply(text);
+  }
+  // 模型可能忽略快照；端口不一致是确定性事实，必须出现在回答里。
+  if (diagnostic && category === 'online' && runtimeSnapshot) {
+    const actual = runtimeSnapshot.ports?.actual;
+    const tunnelPort = runtimeSnapshot.tunnel?.localPort;
+    if (actual && tunnelPort && Number(actual) !== Number(tunnelPort) && !String(reply).includes(String(actual))) {
+      reply = `${portMismatchReply(runtimeSnapshot)}\n\n${reply}`;
+    }
   }
   const actions = diagnostic ? actionsFromReply(reply, session) : [];
   if (guessed) {

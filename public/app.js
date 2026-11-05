@@ -4163,6 +4163,7 @@ function applySettingsToForm(s) {
   if ($('setAutoBackupAfter')) $('setAutoBackupAfter').checked = s.autoBackupAfterExit !== false;
   if ($('setAutoBackupKeep')) $('setAutoBackupKeep').value = String(s.autoBackupKeep ?? 5);
   if ($('setAutoDiagnostic')) $('setAutoDiagnostic').checked = s.autoDiagnostic !== false;
+  if ($('setAssistantRuntime')) $('setAssistantRuntime').checked = s.assistantRuntimeState !== false;
   if ($('roomMemory')) $('roomMemory').value = String(Number(s.roomMemoryMb) > 0 ? s.roomMemoryMb : 2048);
   syncMemoryMode(false);
   $('setConcurrency').value = s.concurrency ?? 64;
@@ -4198,6 +4199,7 @@ function readSettingsForm() {
     autoBackupAfterExit: Boolean($('setAutoBackupAfter')?.checked),
     autoBackupKeep: Number($('setAutoBackupKeep')?.value || 5),
     autoDiagnostic: Boolean($('setAutoDiagnostic')?.checked),
+    assistantRuntimeState: Boolean($('setAssistantRuntime')?.checked),
     concurrency: Number($('setConcurrency').value),
     downloadSource: $('setDownloadSource').value === 'bmclapi' ? 'bmclapi' : 'official',
     isolated: $('setIsolated').value,
