@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { execFileSync } from 'node:child_process';
 
 import { getSettings, saveSettings } from './settings.js';
 
@@ -30,6 +31,51 @@ export function readClientMemoryMb(gameDir, versionId) {
   }
 }
 
+export function readSystemMemory() {
+  const fallback = {
+    totalMb: Math.round(os.totalmem() / 1024 / 1024),
+    availableMb: Math.round(os.freemem() / 1024 / 1024),
+    commitUsedMb: null,
+    commitLimitMb: null,
+    pagefileMb: null,
+    pagefileUsedMb: null,
+    pagefilePath: null,
+    pagefileManaged: null,
+    topProcesses: [],
+  };
+  try {
+    const script = [
+      '$os=Get-CimInstance Win32_OperatingSystem;',
+      '$pf=Get-CimInstance Win32_PageFileUsage | Select-Object -First 1;',
+      '$cs=Get-CimInstance Win32_ComputerSystem;',
+      '$c=Get-Counter "\\Memory\\Committed Bytes","\\Memory\\Commit Limit" -ErrorAction SilentlyContinue;',
+      '$cu=($c.CounterSamples|Where-Object Path -like "*committed bytes*").CookedValue;',
+      '$cl=($c.CounterSamples|Where-Object Path -like "*commit limit*").CookedValue;',
+      '$top=Get-Process|Sort-Object WorkingSet64 -Descending|Select-Object -First 8 Name,Id,WorkingSet64;',
+      '[pscustomobject]@{',
+      'totalMb=[math]::Round($os.TotalVisibleMemorySize/1024);',
+      'availableMb=[math]::Round($os.FreePhysicalMemory/1024);',
+      'commitUsedMb=[math]::Round($cu/1MB);',
+      'commitLimitMb=[math]::Round($cl/1MB);',
+      'pagefileMb=if($pf){$pf.AllocatedBaseSize}else{$null};',
+      'pagefileUsedMb=if($pf){$pf.CurrentUsage}else{$null};',
+      'pagefilePath=if($pf){$pf.Name}else{$null};',
+      'pagefileManaged=$cs.AutomaticManagedPagefile;',
+      'topProcesses=@($top|ForEach-Object{[pscustomobject]@{name=$_.Name;pid=$_.Id;workingSetMb=[math]::Round($_.WorkingSet64/1MB,1)}})',
+      '} | ConvertTo-Json -Compress',
+    ].join(' ');
+    const raw = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      encoding: 'utf8',
+      timeout: 5000,
+      windowsHide: true,
+    });
+    const data = JSON.parse(String(raw).trim());
+    return { ...fallback, ...data, topProcesses: Array.isArray(data.topProcesses) ? data.topProcesses : [data.topProcesses].filter(Boolean) };
+  } catch {
+    return fallback;
+  }
+}
+
 export function memoryCapMb() {
   return Math.max(1024, Math.min(40960, Math.floor((os.totalmem() / 1024 / 1024) * 0.8)));
 }
@@ -44,13 +90,30 @@ export function planMemory({
   clientMb = 2048,
   serverMb = 0,
   withClient = true,
+  commitUsedMb = null,
+  commitLimitMb = null,
+  pagefileMb = null,
+  pagefileUsedMb = null,
+  pagefilePath = null,
+  pagefileManaged = null,
+  topProcesses = [],
 } = {}) {
   const cap = memoryCapMb();
   const client = Math.max(1024, Math.min(cap, Number(clientMb) || 2048));
   const server = Math.max(1024, Math.min(cap, Number(serverMb) || 0));
   const roomClient = mode === 'room' ? withClient : true;
   const needed = ((roomClient ? client : 0) + (mode === 'room' ? server : 0)) + MEMORY_RESERVE_MB;
-  const ok = availableMb >= needed;
+  const commitHeadroom = commitLimitMb != null && commitUsedMb != null
+    ? Math.max(0, Number(commitLimitMb) - Number(commitUsedMb))
+    : null;
+  const commitShort = commitHeadroom != null && commitHeadroom < needed;
+  const physicalShort = availableMb < needed;
+  const ok = !physicalShort && !commitShort;
+  const pagefileShort = pagefileMb != null && commitShort && Number(pagefileMb) < needed;
+  const reasons = [];
+  if (physicalShort) reasons.push('physical');
+  if (commitShort) reasons.push('commit');
+  if (pagefileShort) reasons.push('pagefile');
   const budget = Math.max(0, availableMb - MEMORY_RESERVE_MB);
   let recClient = roomClient ? client : 0;
   let recServer = mode === 'room' ? server : 0;
@@ -73,6 +136,9 @@ export function planMemory({
     }
   }
   const recommendedNeeded = ((roomClient ? recClient : 0) + (mode === 'room' ? recServer : 0)) + MEMORY_RESERVE_MB;
+  const recommendPagefileGb = pagefileShort
+    ? Math.max(1, Math.ceil((Number(commitUsedMb || 0) + needed) / 1024))
+    : null;
   return {
     mode,
     availableMb,
@@ -85,6 +151,19 @@ export function planMemory({
     recommendRequiredMb: recommendedNeeded,
     capMb: cap,
     ok,
+    commitUsedMb,
+    commitLimitMb,
+    commitHeadroomMb: commitHeadroom,
+    commitShort,
+    pagefileMb,
+    pagefileUsedMb,
+    pagefilePath,
+    pagefileManaged,
+    pagefileShort,
+    physicalShort,
+    reasons,
+    topProcesses: Array.isArray(topProcesses) ? topProcesses : [],
+    recommendPagefileGb,
   };
 }
 
@@ -93,11 +172,14 @@ export function preflightMemory({ mode = 'game', gameDir, versionId, roomMemoryM
   const configuredRoom = Number(roomMemoryMb) > 0 ? Number(roomMemoryMb) : Number(getSettings().roomMemoryMb) > 0
     ? Number(getSettings().roomMemoryMb)
     : 2048;
+  const system = readSystemMemory();
   return planMemory({
     mode,
+    availableMb: system.availableMb,
     clientMb: client,
     serverMb: configuredRoom,
     withClient: mode === 'room' ? Boolean(joinGame) : true,
+    ...system,
   });
 }
 

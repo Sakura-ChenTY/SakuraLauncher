@@ -84,7 +84,7 @@ import {
 import { installCurseForgePack, previewCurseForgePack } from './cfpack.js';
 import { createSession, getSession, chatSession } from './assistant-session.js';
 import { collectRuntimeSnapshot } from './runtime-snapshot.js';
-import { preflightMemory, applyMemoryPlan } from './memory-preflight.js';
+import { preflightMemory, applyMemoryPlan, readSystemMemory } from './memory-preflight.js';
 import {
   previewAssistantFixes,
   applyAssistantFixes,
@@ -1507,12 +1507,15 @@ async function handleLaunch({ versionId, joinAddress, quickPlaySave, recentMeta,
     }
     const newArtifacts = forcedExit ? [] : newCrashArtifacts(state.gameDir, versionId, state.crashBaseline);
     if (!forcedExit && ((uiCode === null || (uiCode !== 0 && uiCode !== undefined)) || newArtifacts.length)) {
+      const oom = /insufficient memory|Native memory allocation|malloc failed|OutOfMemoryError|maximum heap/i.test(reasonLine)
+        || newArtifacts.some((a) => /hs_err_pid/i.test(a.file));
       const incident = {
         id: `crash-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
         versionId,
         code: uiCode,
         reason: sanitizeDiagnostic(reasonLine).slice(0, 500),
         artifacts: newArtifacts,
+        oom,
         at: Date.now(),
         prompted: false,
       };
@@ -4163,6 +4166,24 @@ const server = http.createServer(async (req, res) => {
       if (incident.prompted) return json(res, 200, { already: true, incident });
       incident.prompted = true;
       try {
+        const hsArtifact = (incident.artifacts || []).find((a) => /hs_err_pid.*\.log$/i.test(a.file));
+        let hsErr = '';
+        if (hsArtifact?.file) {
+          try {
+            hsErr = sanitizeDiagnostic(fs.readFileSync(hsArtifact.file, 'utf8').slice(0, 20000));
+          } catch { /* ignore */ }
+        }
+        const memoryNow = readSystemMemory();
+        const heapMatch = /-Xmx(\d+)[mMgG]/i.exec(String(state.lastLaunch?.command || ''));
+        const heapMb = heapMatch ? (/-Xmx\d+[gG]/i.test(state.lastLaunch.command) ? Number(heapMatch[1]) * 1024 : Number(heapMatch[1])) : null;
+        const crashContext = {
+          oom: Boolean(incident.oom),
+          hsErrPath: hsArtifact?.file || null,
+          hsErr,
+          heapMb,
+          serverHeapMb: getRoomState().memoryMb || null,
+          memory: memoryNow,
+        };
         const session = createSession({
           gameDir: state.gameDir,
           versionId: incident.versionId,
@@ -4175,6 +4196,8 @@ const server = http.createServer(async (req, res) => {
           message: `游戏异常退出，退出码 ${incident.code ?? '未知'}。请分析原因并给下一步建议。`,
           mode: 'diagnostic',
           diagnosticsState: state,
+          runtimeSnapshot: collectRuntimeSnapshot({ state, room: getRoomState(), online: onlineSnapshot() }),
+          crashContext,
         });
         return json(res, 200, { ...result, incident });
       } catch (e) {

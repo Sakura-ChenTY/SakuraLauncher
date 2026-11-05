@@ -2313,11 +2313,18 @@ function showMemoryPreflightDialog(plan, versionId = '') {
     const card = document.createElement('div');
     card.style.cssText = 'width:min(500px,94vw);background:var(--panel,#1d1f24);color:var(--text,#eee);border:1px solid rgba(255,255,255,.16);border-radius:14px;padding:18px;box-shadow:0 20px 70px rgba(0,0,0,.45);';
     const room = plan.mode === 'room';
+    const reasons = [];
+    if (plan.reasons?.includes('physical')) reasons.push(`物理内存：可用 ${memoryMb(plan.availableMb)}M`);
+    if (plan.reasons?.includes('commit')) reasons.push(`提交额度：剩余 ${memoryMb(plan.commitHeadroomMb)}M`);
+    if (plan.reasons?.includes('pagefile')) reasons.push(`页面文件：当前 ${memoryMb(plan.pagefileMb)}M`);
     const lines = [
       `现在可用：${memoryMb(plan.availableMb)} MB`,
       `这次需要：${memoryMb(plan.requiredMb)} MB${room ? `（客户端 ${memoryMb(plan.clientMb)} + 服务端 ${memoryMb(plan.serverMb)} + 2048 余量）` : '（客户端 + 2048 余量）'}`,
       `还差：${memoryMb(plan.shortfallMb)} MB`,
+      ...(reasons.length ? [`为什么缺：${reasons.join('；')}`] : []),
       `推荐：${room ? `客户端 ${memoryMb(plan.recommendClientMb)}M，服务端 ${memoryMb(plan.recommendServerMb)}M` : `客户端 ${memoryMb(plan.recommendClientMb)}M`}`,
+      ...(plan.recommendPagefileGb ? [`页面文件建议调到：${plan.recommendPagefileGb} GB（系统属性 → 高级 → 性能设置 → 高级 → 虚拟内存）`] : []),
+      ...((plan.topProcesses || []).slice(0, 5).map((p) => `可释放：${p.name}（${p.pid}）${p.workingSetMb} MB`)),
     ];
     card.innerHTML = `<div style="font-weight:700;margin-bottom:12px">内存不够，先别硬起</div>`
       + lines.map((x) => `<div style="font-size:13px;line-height:1.9">${escapeHtml(x)}</div>`).join('')
@@ -2331,7 +2338,7 @@ function showMemoryPreflightDialog(plan, versionId = '') {
     force.className = 'btn ghost'; force.textContent = '还是要启动';
     force.onclick = () => { close(); resolve({ ok: true, force: true, plan }); };
     const reduce = document.createElement('button');
-    reduce.className = 'btn'; reduce.textContent = '把堆降到推荐值再启动';
+    reduce.className = 'btn'; reduce.textContent = '按这个方案做';
     reduce.onclick = async () => {
       reduce.disabled = true;
       try {
