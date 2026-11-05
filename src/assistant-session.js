@@ -348,13 +348,13 @@ function actionsFromReply(reply, session) {
   const current = maxMemoryIn(context);
   const actions = [];
   const memory = /(?:降到|降至|改成|改为|调到|设置为)\s*(\d{3,4})\s*M/i.exec(text);
-  if (hasInstance && memory) {
+  if (memory) {
     const target = Number(memory[1]);
-    if (target >= 512 && target !== current) {
+    if (target >= 1024 && target !== current) {
       actions.push({
-        id: 'memory.set',
-        label: `把实例内存${target < current ? '降到' : '改为'} ${target}M`,
-        payload: { versionId: session.versionId, memoryMin: '512M', memoryMax: `${target}M` },
+        id: 'heap.fix',
+        label: `把堆${target < current ? '降到' : '改为'} ${target}M`,
+        payload: { versionId: session.versionId, targetMb: target },
       });
     }
   }

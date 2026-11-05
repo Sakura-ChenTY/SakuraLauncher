@@ -4110,6 +4110,13 @@ const server = http.createServer(async (req, res) => {
           room: getRoomState(),
           online: onlineSnapshot(),
         });
+        const memoryPlan = preflightMemory({
+          mode: state.running || getRoomState().status === 'running' ? 'room' : 'game',
+          gameDir: state.gameDir,
+          versionId,
+          roomMemoryMb: getRoomState().memoryMb,
+          joinGame: true,
+        });
         const result = previewAssistantFixes({
           snapshot,
           gameDir: state.gameDir,
@@ -4118,6 +4125,11 @@ const server = http.createServer(async (req, res) => {
           includeServerPort: Boolean(body.includeServerPort),
           serverPort: body.serverPort,
           includeRestart: Boolean(body.includeRestart),
+          heapTargetMb: body.heapTargetMb || memoryPlan.recommendClientMb,
+          closePids: Array.isArray(body.closePids) ? body.closePids : [],
+          topProcesses: memoryPlan.topProcesses || [],
+          memoryPlan,
+          incidentId: String(body.incidentId || state.crashIncident?.id || ''),
         });
         return json(res, 200, result);
       } catch (e) {
