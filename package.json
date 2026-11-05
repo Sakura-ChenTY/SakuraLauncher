@@ -22,6 +22,10 @@
   "build": {
     "appId": "com.sakura.launcher",
     "productName": "SakuraLauncher",
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ],
     "directories": {
       "output": "dist/eb",
       "buildResources": "build"
